@@ -25,3 +25,5 @@
 #graph-tasks li { margin-bottom: 0.5rem; }
 #graph-tasks .graph-task-meta { color: var(--ink-2); font-size: 0.9em; overflow-wrap: anywhere; }
 #graph-tasks .graph-task-brief { margin: 0.15rem 0 0; white-space: pre-wrap; }
+#graph-dialog details { margin-top: 0.6rem; }
+#graph-dialog summary { cursor: pointer; font-weight: 600; margin-bottom: 0.4rem; }

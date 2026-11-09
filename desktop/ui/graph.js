@@ -9,6 +9,8 @@
   const status = document.getElementById("graph-status");
   const output = document.getElementById("graph-output");
   const base = document.getElementById("graph-base");
+  const patchView = document.getElementById("graph-patch-view");
+  const logs = document.getElementById("graph-logs");
   const history = document.getElementById("graph-history");
   const retryNode = document.getElementById("graph-retry-node");
   const retry = document.getElementById("graph-retry");
@@ -65,8 +67,8 @@
     const runId = snapshot?.run?.id;
     if (showPatch.disabled || currentRun !== runId) {
       output.value = "";
-      output.hidden = true;
-      base.hidden = true;
+      patchView.hidden = true;
+      patchView.open = false;
     }
     currentRun = runId;
     history.value = runId ?? "";
@@ -95,6 +97,7 @@
       logNode.replaceChildren(...logged.map(id => new Option(id, id)));
     }
     showLog.disabled = logNode.disabled = logged.length === 0;
+    logs.hidden = logged.length === 0;
     if (shownLog && ![...logKeys.values()].includes(shownLog)) {
       shownLog = "";
       log.value = "";
@@ -159,8 +162,8 @@
         files: fields.get("files").split(/\r?\n/).map(line => line.trim()).filter(Boolean),
       });
       output.value = "";
-      output.hidden = true;
-      base.hidden = true;
+      patchView.hidden = true;
+      patchView.open = false;
       await refresh();
     });
   });
@@ -188,14 +191,15 @@
       log.value = await request("log", node);
       shownLog = logKeys.get(node) ?? "";
       log.hidden = false;
+      logs.open = true;
     });
   });
   showPatch.addEventListener("click", () => void action(async () => {
     const artifact = await request("patch");
     base.textContent = `Base ${artifact.baseSha}`;
-    base.hidden = false;
     output.value = artifact.patch;
-    output.hidden = false;
+    patchView.hidden = false;
+    patchView.open = true;
     output.focus();
   }));
 })();

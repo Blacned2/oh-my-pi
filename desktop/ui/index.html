@@ -205,13 +205,19 @@
     <button type="button" id="graph-retry" disabled>Retry node</button>
     <button type="button" id="graph-resume" hidden>Continue queued work</button>
   </div>
-  <div class="graph-actions">
-    <select id="graph-log-node" aria-label="Step with a log" disabled></select>
-    <button type="button" id="graph-show-log" disabled>Show log</button>
-  </div>
-  <textarea id="graph-log" aria-label="Step log" rows="8" readonly hidden></textarea>
-  <p id="graph-base" hidden></p>
-  <textarea id="graph-output" aria-label="Verified patch" rows="8" readonly hidden></textarea>
+  <details id="graph-logs" hidden>
+    <summary>Logs</summary>
+    <div class="graph-actions">
+      <select id="graph-log-node" aria-label="Step with a log" disabled></select>
+      <button type="button" id="graph-show-log" disabled>Show log</button>
+    </div>
+    <textarea id="graph-log" aria-label="Step log" rows="8" readonly hidden></textarea>
+  </details>
+  <details id="graph-patch-view" hidden>
+    <summary>Verified patch</summary>
+    <p id="graph-base"></p>
+    <textarea id="graph-output" aria-label="Verified patch" rows="8" readonly></textarea>
+  </details>
 </dialog>
 <script src="session.js"></script>
 <script src="layout.js"></script>

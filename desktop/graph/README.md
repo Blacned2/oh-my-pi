@@ -27,7 +27,7 @@ Each Coder may change only its own files and reads the approved files from the p
 
 **Recent runs** reopens saved runs after the sidecar restarts, including runs created with the earlier fixed single-Coder plan. **Retry node** reruns one eligible step. Steps downstream rerun only when their input artifacts change. **Continue queued work** resumes eligible work after an interruption. A run allows up to three attempts per node and set of inputs. Retries require the original clean base and matching `profile.json` settings. Older snapshots without a saved execution context can be inspected in the history.
 
-**Show log** displays the log of a step's latest attempt. The Tester records its exit code, run time, stdout and stderr, each stream capped at 64 KiB by the Docker backend. Coder and Reviewer attempts record a worker summary: each host tool call with its clipped arguments, each tool result or rejection, the assistant's replies, and the phase in which a failed attempt stopped. A failed attempt keeps its summary. ANSI sequences and control characters are removed before a log is saved. Logs are stored per attempt beside the run, survive a sidecar restart, and are not artifacts: a retried test with new output but the same exit code does not rerun review or release. A log from an interrupted or cancelled attempt is discarded.
+**Show log** displays the log of a step's latest attempt. The Tester records its exit code, run time, stdout and stderr, each stream capped at 64 KiB by the Docker backend. Coder and Reviewer attempts record a worker summary: each host tool call with its clipped arguments, each tool result or rejection, the assistant's replies, and the phase in which a failed attempt stopped. A failed attempt keeps its summary. ANSI sequences and control characters are removed before a log is saved. Logs are stored per attempt beside the run, survive a sidecar restart, and are not artifacts: a retried test with new output but the same exit code does not rerun review or release. A log from an interrupted or cancelled attempt is discarded. **Logs** and **Verified patch** are collapsible sections; showing a log or the patch opens its section.
 
 ## Current contracts
 
@@ -49,12 +49,15 @@ From the repository root, run:
 ```powershell
 bun test desktop/graph/test
 bun check --no-script -p desktop/graph/tsconfig.json
-bun x oxlint desktop/graph desktop/ui/graph.js
+bun x oxlint desktop/graph
+bun build --no-bundle desktop/ui/graph.js
 bun x oxfmt --check "desktop/graph/**/*.ts"
 cargo check --manifest-path desktop/Cargo.toml
 bun desktop/graph/smoke/omp-worker.ts
 bun desktop/graph/smoke/graph-service.ts sha256:<local-image-id>
 ```
+
+The repository lint configuration skips `.js` files, so the `bun build --no-bundle` line is the syntax check for the dialog script.
 
 Both smoke probes default to `desktop/target/release/runtime`. The worker probe takes another staged runtime directory as the first argument and optionally a different CLI entry point as the second. The mock provider listens on `127.0.0.1` and uses a fixture credential. The worker probe checks a completed host call, a denied target, the exact tools on the wire and cancellation of a launcher with an OMP child. It needs local loopback permission.
 
