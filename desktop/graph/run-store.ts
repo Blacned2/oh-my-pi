@@ -62,9 +62,16 @@ export interface GraphDraft {
 	profileHash: string;
 	plan: GraphTaskPlan;
 	hash: string;
+	plannerLog?: string;
 }
 
 type DraftIdentity = Pick<GraphDraft, "id" | "hash">;
+
+interface PlanningRecord {
+	id: string;
+	log: string;
+	error?: string;
+}
 
 export interface GraphAttempt {
 	runId: string;
@@ -86,6 +93,10 @@ const MAX_ARTIFACT_BYTES = 1024 * 1024;
 const MAX_LOG_CHARS = 256 * 1024;
 const MAX_AUTOMATIC_REPAIRS = 2;
 
+function boundedLog(text: string): string {
+	return text.length > MAX_LOG_CHARS ? `[Earlier log output omitted]\n${text.slice(-MAX_LOG_CHARS)}` : text;
+}
+
 /** Re-derive each Coder's write scope from the approved tasks. The plan's earlier admission is not trusted. */
 function coderScopes(run: GraphRun): Map<string, WriteScopeKeys> | undefined {
 	const tasks = run.context?.tasks;
@@ -101,6 +112,9 @@ export class GraphRunStore implements Disposable {
 			db.exec(`
 				PRAGMA synchronous = FULL;
 				CREATE TABLE IF NOT EXISTS graph_draft (
+					slot INTEGER PRIMARY KEY CHECK (slot = 1), snapshot TEXT NOT NULL
+				);
+				CREATE TABLE IF NOT EXISTS graph_planning (
 					slot INTEGER PRIMARY KEY CHECK (slot = 1), snapshot TEXT NOT NULL
 				);
 				CREATE TABLE IF NOT EXISTS graph_runs (id TEXT PRIMARY KEY, snapshot TEXT NOT NULL);
@@ -136,7 +150,29 @@ export class GraphRunStore implements Disposable {
 	}
 
 	discardDraft(): void {
-		this.#db.run("DELETE FROM graph_draft WHERE slot = 1");
+		this.#db
+			.transaction(() => {
+				this.#db.exec("DELETE FROM graph_draft WHERE slot = 1; DELETE FROM graph_planning WHERE slot = 1");
+			})
+			.immediate();
+	}
+
+	latestPlanning(): PlanningRecord | null {
+		const row = this.#db.query<{ snapshot: string }, []>("SELECT snapshot FROM graph_planning WHERE slot = 1").get();
+		return row ? (JSON.parse(row.snapshot) as PlanningRecord) : null;
+	}
+
+	recordPlanning(record: PlanningRecord, draft?: GraphDraft): void {
+		const log = boundedLog(record.log);
+		this.#db
+			.transaction(() => {
+				if (draft) this.saveDraft({ ...draft, plannerLog: log });
+				this.#db.run(
+					"INSERT INTO graph_planning (slot, snapshot) VALUES (1, ?) ON CONFLICT (slot) DO UPDATE SET snapshot = excluded.snapshot",
+					[JSON.stringify({ ...record, log })],
+				);
+			})
+			.immediate();
 	}
 
 	/** When approving a proposal, creating the run and consuming the proposal commit together. */
@@ -158,6 +194,12 @@ export class GraphRunStore implements Disposable {
 					const draft = this.draft();
 					if (draft?.id !== approval.id || draft.hash !== approval.hash) {
 						throw new Error("The proposed plan changed. Review it again before approving");
+					}
+					if (draft.plannerLog) {
+						this.#db.run(
+							"INSERT INTO graph_logs (run_id, node_id, attempt, content) VALUES (?, 'planner', 0, ?)",
+							[run.id, draft.plannerLog],
+						);
 					}
 					this.discardDraft();
 				}
@@ -229,8 +271,7 @@ export class GraphRunStore implements Disposable {
 			.transaction(() => {
 				const run = this.get(attempt.runId);
 				if (!run || !this.#runningAttempt(run, attempt)) return false;
-				const content =
-					text.length > MAX_LOG_CHARS ? `[Earlier log output omitted]\n${text.slice(-MAX_LOG_CHARS)}` : text;
+				const content = boundedLog(text);
 				this.#db.run("INSERT OR REPLACE INTO graph_logs (run_id, node_id, attempt, content) VALUES (?, ?, ?, ?)", [
 					attempt.runId,
 					attempt.nodeId,
@@ -250,16 +291,17 @@ export class GraphRunStore implements Disposable {
 					"SELECT node_id, attempt FROM graph_logs WHERE run_id = ?",
 				)
 				.all(run.id)
-				.filter(row => run.nodes[row.node_id]?.attempt === row.attempt)
+				.filter(row => row.attempt === (run.nodes[row.node_id]?.attempt ?? (row.node_id === "planner" ? 0 : -1)))
 				.map(row => row.node_id),
 		);
-		return run.plan.nodes.filter(node => logged.has(node.id)).map(node => node.id);
+		const nodes = run.plan.nodes.filter(node => logged.has(node.id)).map(node => node.id);
+		return logged.has("planner") && !run.nodes.planner ? ["planner", ...nodes] : nodes;
 	}
 
 	/** The log of the node's latest attempt. */
 	log(run: GraphRun, nodeId: string): string | null {
-		const attempt = run.nodes[nodeId]?.attempt;
-		if (!attempt) return null;
+		const attempt = run.nodes[nodeId]?.attempt ?? (nodeId === "planner" ? 0 : undefined);
+		if (attempt === undefined) return null;
 		return (
 			this.#db
 				.query<{ content: string }, [string, string, number]>(

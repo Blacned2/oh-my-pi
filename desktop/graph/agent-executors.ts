@@ -76,7 +76,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 		}
 	};
 	return {
-		async plan(workspace, input, validate, signal) {
+		async plan(workspace, input, validate, signal, log) {
 			let accepted: GraphTaskPlan | undefined;
 			const task = {
 				type: "object",
@@ -114,6 +114,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 					},
 				],
 				signal,
+				log,
 			);
 			if (!accepted) throw new Error("Planner did not submit a valid Graph plan");
 			return accepted;

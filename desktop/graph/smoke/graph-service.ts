@@ -84,6 +84,7 @@ const toolCalls: string[] = [];
 const coderStarts: string[] = [];
 let repairedBackend = false;
 let blockReview = false;
+let omitPlan = false;
 // Backend and frontend Coders each wait here for the other's first request, which proves they overlap.
 const parallel = Promise.withResolvers<void>();
 const server = Bun.serve({
@@ -112,6 +113,7 @@ const server = Bun.serve({
 			];
 			if (responses.length >= 2 && !JSON.stringify(responses[1].content).includes("outside the approved scope"))
 				throw new Error("Graph did not reject the out-of-scope plan");
+			if (omitPlan) steps.pop();
 		} else if (resultTool === "kostomp_graph_submit_patch") {
 			const owned = Object.keys(edits).find(file => prompt.includes(`Owned files:\\n[\\"${file}`))!;
 			if (owned === backend) strictEqual(prompt.includes(editedBrief), true, "The Coder receives the approved edit");
@@ -275,6 +277,9 @@ try {
 	strictEqual(status.run, undefined, "No run exists before approval");
 	const draft = status.draft;
 	if (!draft) throw new Error(`Planner produced no draft: ${JSON.stringify(status)}`);
+	deepStrictEqual(status.logs, ["planner"]);
+	const plannerLog = await request<string>({ op: "log", input: "planner" });
+	strictEqual(plannerLog.includes("outside the approved scope"), true, plannerLog);
 	deepStrictEqual(
 		draft.tasks.map(task => task.id),
 		["contract", "backend", "frontend"],
@@ -284,6 +289,7 @@ try {
 	request = startService();
 	status = await settle();
 	deepStrictEqual(status.draft, draft, "A restart restores the exact proposal without rerunning the Planner");
+	strictEqual(await request<string>({ op: "log", input: "planner" }), plannerLog);
 	strictEqual(status.run, undefined, "Restoring a draft does not authorize work");
 	strictEqual(draft.source, input.source);
 	const shownDraft = { draft: draft.id, hash: draft.hash };
@@ -316,7 +322,7 @@ try {
 	status = await settle();
 	strictEqual(status.status, "ready_to_export", JSON.stringify(status));
 	deepStrictEqual(coderStarts.sort(), [backend, backend, "src/frontend.txt"]);
-	deepStrictEqual(status.logs, ["code-contract", "code-backend", "code-frontend", "test", "review"]);
+	deepStrictEqual(status.logs, ["planner", "code-contract", "code-backend", "code-frontend", "test", "review"]);
 	const coderLog = await request<string>({ op: "log", input: "code-backend" });
 	strictEqual(/→ kostomp_graph_read_file[\s\S]*← kostomp_graph_submit_patch/.test(coderLog), true, coderLog);
 	strictEqual(coderLog.includes("token v2 with refresh"), true, "The Coder log shows the upstream contract it read");
@@ -342,6 +348,11 @@ try {
 	status = await request<Status>({ op: "status" });
 	strictEqual(status.run?.context?.planHash, edited.hash);
 	strictEqual(await request<string>({ op: "log", input: "test" }), testLog, "The log survives a restart");
+	strictEqual(
+		await request<string>({ op: "log", input: "planner" }),
+		plannerLog,
+		"Approval attaches the original transcript to the run",
+	);
 	const reviews = toolCalls.filter(name => name === "kostomp_graph_review").length;
 	await request({ op: "retry", input: "code-backend" });
 	status = await settle();
@@ -367,6 +378,17 @@ try {
 	await request({ op: "plan", input });
 	const discarded = (await settle()).draft;
 	if (!discarded) throw new Error("Planner produced no draft to discard");
+	omitPlan = true;
+	await request({ op: "plan", input });
+	await settle();
+	await stopService?.();
+	request = startService();
+	status = await settle();
+	deepStrictEqual(status.draft, discarded, "A failed Planner does not replace the previous draft");
+	strictEqual(status.planError?.includes("did not submit a valid Graph plan"), true);
+	const failedPlannerLog = await request<string>({ op: "log", input: "planner" });
+	strictEqual(failedPlannerLog.includes("outside the approved scope"), true, failedPlannerLog);
+	strictEqual(failedPlannerLog.includes(status.planError!), true, failedPlannerLog);
 	await request({ op: "discard" });
 	await stopService?.();
 	request = startService();

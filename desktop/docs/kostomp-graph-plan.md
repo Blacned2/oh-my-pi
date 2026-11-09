@@ -72,7 +72,6 @@ Paketlenmiş Desktop’ta görsel kontroller yapıldı. Sahte model ve gerçek D
 
 1. **Context Manager.** Daha büyük kapsamlar veya gerçek kullanımda bağlam sorunu görüldüğünde.
 2. **Jev.** Sidecar’a gözlem modunda bağlanmalı ve sonuç denemeyle birlikte kaydedilmeli.
-3. **Planner logu.** Planlama run kaydından önce çalıştığı için tutulmuyor.
 
 Kapsam dışı bırakılanlar: eşzamanlı run’lar ve birden fazla Tester komutu.
 
@@ -124,3 +123,7 @@ Sidecar, host doğrulamasından geçen son taslağı run veritabanında saklıyo
 ## Faz 7: Plan düzenleme
 
 Graph dialogunda Coder görevleri eklenip çıkarılabiliyor; talimatlar, bağımlılıklar ve dosya atamaları değiştirilebiliyor. Repo, hedef ve izin verilen dosya kapsamı ilk plan isteğine bağlı kalıyor. Sidecar düzenlemeyi kaydetmeden önce tabanı, profili, tekil dosya sahipliğini ve bağımlılıkları yeniden doğruluyor. Geçersiz düzenleme kaydedilen taslağı değiştirmiyor. Değişen içerik yeni plan hash’i üretiyor ve çalıştırmak için yeni bir açık onay gerekiyor.
+
+## Faz 8: Planner logları
+
+Planner’ın son tamamlanan denemesi, reddedilen öneriler ve hata ayrıntısıyla birlikte yeniden başlatma sonrasında da **Logs** bölümünden okunabiliyor. Onaylanan run, kendi taslağını üreten transcript’i saklıyor. Başarısız bir sonraki öneri mevcut taslağı ve ona ait transcript’i değiştirmiyor.

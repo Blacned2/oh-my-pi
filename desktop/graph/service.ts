@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { type } from "@oh-my-pi/omptype";
 import { isEnoent, isFullyQualifiedPath, readLines, toError, tryAcquireFileLock } from "@oh-my-pi/pi-utils";
 import { createApprovedGraphExecutors } from "./agent-executors";
+import { cleanDiagnostic } from "./review";
 import { type GraphRun, type GraphRunContext, GraphRunStore } from "./run-store";
 import { graphPlanForTasks, parseTaskPlan, taskPlanHash } from "./task-plan";
 import {
@@ -62,8 +63,8 @@ using store = new GraphRunStore(path.join(dataRoot, "runs.sqlite"));
 const profilePath = path.join(dataRoot, "profile.json");
 let active: ActiveRun | undefined;
 let planning: Job | undefined;
-let planError: string | undefined;
-let selected: string | undefined = store.draft() ? undefined : store.recent()[0]?.id;
+let planError = store.latestPlanning()?.error;
+let selected: string | undefined = store.draft() || planError ? undefined : store.recent()[0]?.id;
 let failure: { id: string; message: string } | undefined;
 const staleRuns = new Set<string>();
 
@@ -139,24 +140,34 @@ async function proposePlan(value: unknown) {
 	const { sourceRoot, baseSha } = await inspectGraphSource(input.source);
 	const scoped = { ...input, source: sourceRoot };
 	const controller = new AbortController();
+	const id = crypto.randomUUID();
 	planError = undefined;
 	selected = undefined;
 	const job = (async () => {
+		let log = "";
 		try {
 			await using workspace = await GraphWorkspace.pin(sourceRoot, controller.signal);
 			if (workspace.baseSha !== baseSha) throw new Error("The source changed while planning");
-			const plan = await proposeGraphPlan(workspace, scoped, profile.executors, controller.signal);
-			controller.signal.throwIfAborted();
-			store.saveDraft({
-				id: crypto.randomUUID(),
-				input: scoped,
-				baseSha,
-				profileHash: profile.hash,
-				plan,
-				hash: taskPlanHash(plan),
+			const plan = await proposeGraphPlan(workspace, scoped, profile.executors, controller.signal, text => {
+				log = cleanDiagnostic(text);
 			});
+			controller.signal.throwIfAborted();
+			store.recordPlanning(
+				{ id, log },
+				{
+					id,
+					input: scoped,
+					baseSha,
+					profileHash: profile.hash,
+					plan,
+					hash: taskPlanHash(plan),
+				},
+			);
 		} catch (error) {
-			if (!controller.signal.aborted) planError = toError(error).message.slice(0, 2048);
+			if (!controller.signal.aborted) {
+				planError = cleanDiagnostic(toError(error).message).slice(0, 2048) || "Graph planning failed";
+				store.recordPlanning({ id, error: planError, log: [log, planError].filter(Boolean).join("\n") });
+			}
 		} finally {
 			planning = undefined;
 		}
@@ -250,8 +261,12 @@ async function handle(request: typeof requestSchema.infer) {
 	}
 	const run = selectedRun();
 	if (request.op === "log") {
-		const log = run && store.log(run, request.input);
-		if (log == null) throw new Error("This Graph step has no log");
+		const log = run
+			? store.log(run, request.input)
+			: request.input === "planner"
+				? store.latestPlanning()?.log
+				: undefined;
+		if (!log) throw new Error("This Graph step has no log");
 		return log;
 	}
 	if (request.op === "retry" || request.op === "resume") {
@@ -303,7 +318,10 @@ async function handle(request: typeof requestSchema.infer) {
 			tasks: draft.plan.tasks,
 		},
 	};
-	if (!run) return { busy: !idle, ...proposal };
+	if (!run) {
+		const latest = store.latestPlanning();
+		return { busy: !idle, ...proposal, ...(latest?.log && { logs: ["planner"], plannerLogId: latest.id }) };
+	}
 	const status = staleRuns.has(run.id) ? "stale_base" : release?.status;
 	return {
 		run,

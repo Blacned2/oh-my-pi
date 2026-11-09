@@ -87,6 +87,7 @@ export interface ApprovedGraphExecutors {
 		input: ApprovedGraphInput,
 		validate: (proposal: unknown) => GraphTaskPlan,
 		signal: AbortSignal,
+		log?: GraphLog,
 	): Promise<unknown>;
 	code(
 		view: GraphFileView,
@@ -123,10 +124,11 @@ export async function proposeGraphPlan(
 	input: ApprovedGraphInput,
 	executors: ApprovedGraphExecutors,
 	signal: AbortSignal,
+	log?: GraphLog,
 ): Promise<GraphTaskPlan> {
 	workspace.checkScopes(new Map([["approved", input.files]]));
 	const validate = (proposal: unknown) => validateGraphTaskPlan(workspace, proposal, input.files);
-	return validate(await executors.plan(workspace, input, validate, signal));
+	return validate(await executors.plan(workspace, input, validate, signal, log));
 }
 
 interface CodeArtifact extends GraphCandidate {

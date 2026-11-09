@@ -152,7 +152,7 @@
     retry.disabled = retryNode.disabled = eligible.length === 0;
     resume.hidden = !snapshot?.resumable;
     const logged = snapshot?.logs ?? [];
-    logKeys = new Map(logged.map(id => [id, `${runId}:${id}:${snapshot.run.nodes[id].attempt}`]));
+    logKeys = new Map(logged.map(id => [id, `${runId ?? snapshot.plannerLogId}:${id}:${snapshot.run?.nodes[id]?.attempt ?? 0}`]));
     if (logged.join() !== [...logNode.options].map(option => option.value).join()) {
       logNode.replaceChildren(...logged.map(id => new Option(id, id)));
     }

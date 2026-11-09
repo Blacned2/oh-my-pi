@@ -35,6 +35,8 @@ The Reviewer submits a verdict and, when requesting changes, up to eight finding
 
 **Show log** displays the log of a step's latest attempt. The Tester records its exit code, run time, stdout and stderr, each stream capped at 64 KiB by the Docker backend. Coder and Reviewer attempts record a worker summary: each host tool call with its clipped arguments, each tool result or rejection, the assistant's replies, and the phase in which a failed attempt stopped. A failed attempt keeps its summary. ANSI sequences and control characters are removed before a log is saved. Logs are stored per attempt beside the run, survive a sidecar restart, and are not artifacts: a retried test with new output but the same exit code does not rerun review or release. A log from an interrupted or cancelled attempt is discarded. **Logs** and **Verified patch** are collapsible sections; showing a log or the patch opens its section.
 
+The **planner** log is available before approval and includes proposal rejections. The sidecar keeps the latest finished planning log across restarts. Approval attaches the transcript that produced the draft, even if a later planning attempt failed or the draft was edited. Discarding the draft clears the unapproved planning log.
+
 ## Current contracts
 
 | Module             | Contract                                                                                                                                                                                                                                                                       |
@@ -47,7 +49,7 @@ The Reviewer submits a verdict and, when requesting changes, up to eight finding
 | `failure-judge.ts` | Produces an opt-in Jev observation from a provider-approved error summary. The scheduler and release gate do not consume the observation yet.                                                                                                                                  |
 | `workflow.ts`      | Turns an approved run into executor calls. `proposeGraphPlan()` admits the Planner's proposal; `runApprovedGraph()` gives each Coder its view, captures and composes change sets, binds test and review evidence to one candidate tree and records display logs beside the artifacts. |
 | `agent-executors.ts` | Builds the Planner, Coder and Reviewer workers with their host tools and prompts, and the Docker Tester. Each worker gets read access to the approved files and exactly one result tool. |
-| `service.ts`       | The sidecar. Owns the data directory lease, the profile, the in-memory plan draft and the single active run. Answers one JSON request per stdin line (see below). |
+| `service.ts`       | The sidecar. Owns the data directory lease, the profile, the saved draft and the single active run. Answers one JSON request per stdin line (see below). |
 
 The workspace layer in `workspace.ts` pins a clean SHA-1 Git checkout in an independent object database. It applies declared changes to private indexes, verifies actual paths and blob IDs, and serves exact candidate blobs for review. Release requires a successful test and an accepted review for the same candidate tree. A changed source yields `stale_base`.
 
@@ -59,11 +61,11 @@ The Desktop bridge (`desktop/src/graph.rs`) exposes one Tauri command, `graph_re
 | --- | --- |
 | `status` | Selected run, node states, retryable and resumable steps, steps with logs, release status, active planning and the current draft. |
 | `list`, `open` | Recent runs (up to 50) and run selection. |
-| `plan`, `approve`, `discard` | Start the Planner, approve the shown draft by ID and hash, or drop it. |
+| `plan`, `edit`, `approve`, `discard` | Start the Planner, validate and save a draft revision, approve the shown draft by ID and hash, or drop it. |
 | `retry`, `resume`, `cancel` | Retry one eligible step, continue queued work, or stop planning or the active run. |
 | `log`, `patch` | The latest attempt's log for a step, and the verified patch after a fresh source check. |
 
-The data directory `%APPDATA%\dev.kostomp.desktop\graph` holds `profile.json`, `profile-home\`, `runs.sqlite` (runs, events, artifacts and logs) and the `sidecar` lock. The plan draft lives only in the sidecar's memory and is lost if the sidecar restarts before approval.
+The data directory `%APPDATA%\dev.kostomp.desktop\graph` holds `profile.json`, `profile-home\`, `runs.sqlite` (draft, latest planning result, runs, events, artifacts and logs) and the `sidecar` lock.
 
 ## Verification
 
@@ -137,6 +139,5 @@ These are known, not yet implemented, in rough priority order:
 
 - **Context Manager.** No context node exists. Coders read the approved files, at most 32 files and 64 KiB per read.
 - **Concurrent runs** are not supported. The sidecar runs one plan or run at a time. Parallel Coders run within that one run.
-- **Planner logs** are not recorded. Planning runs before a run record exists; its rejection or failure is shown as the planning error.
 - **Jev.** `failure-judge.ts` and `questions/test-failure.json` exist and are tested, but the sidecar does not call them, so no classification is recorded. It can classify the sanitized test log once a provider-approved summary is cut from it. Keep the initial integration in observation mode and verify hosted credentials and data policy before enabling it in a Desktop build.
 - **Tester profiles.** One host-approved test command per profile. Selecting among several commands would build on the profile consumed by `service.ts`.
