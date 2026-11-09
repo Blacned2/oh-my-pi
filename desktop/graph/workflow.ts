@@ -2,6 +2,7 @@ import { type } from "@oh-my-pi/omptype";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
 import { buildGraphContext, type GraphCoderContext, type GraphContextManifest } from "./context";
 import type { GraphTestResult } from "./docker-tester";
+import type { TestFailureObserver } from "./failure-judge";
 import { writablePathKey } from "./repo-path";
 import { cleanDiagnostic, type GraphReview } from "./review";
 import type { CoderRepairFeedback, GraphRunContext, GraphRunStore } from "./run-store";
@@ -190,6 +191,7 @@ export const DEFAULT_MAX_CODERS = 2;
 export interface RunGraphOptions {
 	/** Coders with disjoint write scopes that may run at once. Test, review and release wait for all Coders. */
 	maxCoders?: number;
+	observeFailure?: TestFailureObserver;
 	signal?: AbortSignal;
 }
 
@@ -200,7 +202,7 @@ export async function runApprovedGraph(
 	workspace: GraphWorkspace,
 	work: GraphWork,
 	executors: ApprovedGraphExecutors,
-	{ maxCoders = DEFAULT_MAX_CODERS, signal }: RunGraphOptions = {},
+	{ maxCoders = DEFAULT_MAX_CODERS, observeFailure, signal }: RunGraphOptions = {},
 ): Promise<void> {
 	const coders = new Map(work.tasks.map(task => [task.nodeId, task]));
 	const scopes = new Map(work.tasks.map(task => [task.nodeId, task.files]));
@@ -275,6 +277,10 @@ export async function runApprovedGraph(
 				if (result.treeId !== candidate.treeId) throw new Error("Graph test ran against a different candidate");
 				// The log is kept beside the artifact, so output noise never invalidates review or release.
 				store.recordLog(attempt, testLog(result));
+				if (result.exitCode !== 0 && observeFailure) {
+					const observation = await observeFailure(result, attemptSignal);
+					if (observation) store.recordTestObservation(attempt, observation);
+				}
 				return JSON.stringify({ treeId: result.treeId, exitCode: result.exitCode });
 			}
 			case "review": {

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { openSqliteDatabaseSync } from "@oh-my-pi/pi-utils";
+import type { FailureObservation } from "./failure-judge";
 import { type GraphNode, type GraphPlan, parseGraphPlan } from "./plan";
 import type { GraphReview } from "./review";
 import {
@@ -127,6 +128,9 @@ export class GraphRunStore implements Disposable {
 				CREATE TABLE IF NOT EXISTS graph_logs (
 					run_id TEXT NOT NULL, node_id TEXT NOT NULL, attempt INTEGER NOT NULL, content TEXT NOT NULL,
 					PRIMARY KEY (run_id, node_id, attempt)
+				);
+				CREATE TABLE IF NOT EXISTS graph_test_observations (
+					run_id TEXT NOT NULL, attempt INTEGER NOT NULL, observation TEXT NOT NULL, PRIMARY KEY (run_id, attempt)
 				);
 			`);
 			return db;
@@ -309,6 +313,31 @@ export class GraphRunStore implements Disposable {
 				)
 				.get(run.id, nodeId, attempt)?.content ?? null
 		);
+	}
+
+	/** Observations stay beside the test artifact so they cannot affect downstream artifact identity. */
+	recordTestObservation(attempt: GraphAttempt, observation: FailureObservation): void {
+		this.#db
+			.transaction(() => {
+				const run = this.get(attempt.runId);
+				if (!run || attempt.nodeId !== "test" || !this.#runningAttempt(run, attempt)) return;
+				this.#db.run(
+					"INSERT OR REPLACE INTO graph_test_observations (run_id, attempt, observation) VALUES (?, ?, ?)",
+					[attempt.runId, attempt.attempt, JSON.stringify(observation)],
+				);
+			})
+			.immediate();
+	}
+
+	testObservation(run: GraphRun): FailureObservation | undefined {
+		const test = run.nodes.test;
+		if (run.cancelled || test?.status !== "succeeded" || !this.#walk(run).current.has("test")) return undefined;
+		const row = this.#db
+			.query<{ observation: string }, [string, number]>(
+				"SELECT observation FROM graph_test_observations WHERE run_id = ? AND attempt = ?",
+			)
+			.get(run.id, test.attempt);
+		return row ? (JSON.parse(row.observation) as FailureObservation) : undefined;
 	}
 
 	/** Results whose entire dependency chain is still current. */

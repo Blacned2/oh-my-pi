@@ -28,12 +28,11 @@ Planner yalnızca öneri üretir. Scheduler şemayı, benzersiz düğüm kimlikl
 
 Test başarısız olduğunda yalnızca tek Coder’lı run otomatik düzeltmeye adaydır. Review değişiklik isterse otomatik deneme, tüm bulgular aynı Coder’ın dosyalarına ait olduğunda açılır. Run başına en fazla iki otomatik düzeltme vardır. Coder önceki patch’i ve boyutu sınırlı, temizlenmiş test logunu veya kendi bulgularını alır. Onaylanmış yazma kapsamı ve taban değişmez. Birden fazla olası hedef varsa veya bütçe bittiyse dialog testin çıkış kodunu ya da review’un değişiklik istediğini gösterir. Kullanıcı bir Coder seçerek ilgili kanıtla elle yeniden deneyebilir.
 
-## Jev ile hata yönlendirme
+## Jev ile hata gözlemi
 
-- **İlk kullanım** bir test hatasının `code_regression`, `flaky_test`, `environment_failure` veya `unknown` seçeneklerinden hangisine benzediğini sınıflandırmak. Örneğin JWT entegrasyon hatasında Jev bir kod regresyonu sinyali üretebilir. Scheduler ancak test ile düğüm sahipliği arasında doğrulanmış bir bağ ve kalan retry bütçesi varsa ilgili Coder’ı yeniden çalıştırır. Düşük güven, `unknown`, timeout veya sağlayıcı hatasında mevcut deterministik akış devreye girer. O akış hatayı bir düğüme bağlayamazsa run `needs_input` olur.
-- **Entegrasyon** Graph sidecar’ında, OMP’nin mevcut `@oh-my-pi/pi-ai/judgment` ihracındaki `createNativeJudge()` üzerinden yapılır. Model ve kimlik bilgisi Graph yapılandırmasından çözülür. Sorular statik JSON’da `judgeQuestions()` ile tanımlanır. İlk spike paketlenmiş Windows runtime’ında istemciyi ve kimlik doğrulamayı doğrular. Hosted çağrı opt-in olur ve yalnızca ayıklanmış hata özeti ile gereken en az bağlamı gönderir. Deneme kaydında soru sürümü, model, sonuç, güven ve gecikme tutulur.
-- **Karar yetkisi** scheduler ve deterministik Decision Gate’de kalır. Test sonucu, reviewer kararı, aday tree kimliği, dosya sahipliği ve retry bütçesi mevcut kurallarla doğrulanır. Jev’in yetkisi tipli bir yönlendirme sinyali üretmekle sınırlıdır. İlk aşamada sınıflandırma yalnızca kaydedilir. Geçmiş veya örnek hata vakalarında isabet, gereksiz retry ve ek gecikme ölçüldükten sonra yönlendirmede kullanılır.
-- **Durum:** `failure-judge.ts` ve `questions/test-failure.json` var ve testli. Sidecar bunları henüz çağırmıyor, bu yüzden sınıflandırma kaydedilmiyor.
+- Jev başarısız testleri `code_regression`, `flaky_test`, `environment_failure` veya `unknown` olarak gözlemler. `profile.json` içinde `failureJudge` etkinleştirildiğinde sidecar mevcut `createNativeJudge()` üzerinden çıkış kodu ve sabit tanı etiketlerini gönderir. Sağlayıcı kimlik bilgisi Desktop sürecinin ortamından çözülür.
+- Test denemesinde soru sürümü, yanıtlayan model, sınıflandırma, güven ve gecikme saklanır. Zaman aşımı, eksik kimlik bilgisi ve sağlayıcı hatası da gözlem durumu olarak kaydedilir. Scheduler ve deterministik Decision Gate kararlarını kendi kanıtlarıyla verir.
+- Windows smoke testi paketlenmiş runtime ve yerel System One uç noktasıyla istek içeriğini, kimlik doğrulamayı ve sağlayıcı hatasını doğrular.
 
 [TypeSafe System One dokümanı](https://docs.typesafe.ai/concepts/system-one), [OMP judge desteği](../../docs/environment-variables.md#typesafe-judgments).
 
@@ -60,19 +59,15 @@ Teslimat kapısı, Graph değişikliklerinin `desktop/` ile sınırlı kalması 
 | --- | --- | --- |
 | 1. RPC ve Windows izolasyon spike’ı | Tamam. Worker, Docker tester ve sidecar probları geçiyor. | `cb7dbe27c7` |
 | 2. Deterministik scheduler ve run deposu | Tamam. SQLite geçmişi, yeniden açma ve hedefli retry var. | `cb7dbe27c7`, `b70887c837` |
-| 3. Uçtan uca MVP | Kısmen. Planner ve kullanıcı onayı, Coder → Tester → Reviewer → Gate akışı, Tester/Coder/Reviewer logları, açılıp kapanan log ve patch bölümleri ve patch gösterimi çalışıyor. Aynı uygulamada sohbet ve Graph birlikte doğrulandı. | `7dda121165`, `5417a76a01`, `5836143a03`, `dc3eb47d63`, `8a57bb7054` |
+| 3. Uçtan uca MVP | Tamam. Planner, Context Manager, Coder, Tester, Reviewer ve Gate çalışıyor. Plan onayı, loglar, hedefli retry ve doğrulanmış patch Desktop dialogunda yer alıyor. | `7dda121165`, `8a57bb7054`, `f82d3aea73`, `9bfaec261a`, `44e156e5f2` |
 | 4. Paralel Coder | Tamam. Ayrık kapsamlı Coder’lar aynı anda çalışıyor. Ayrıntılar aşağıda. | `f9ab195125` |
 | Paketleme ve tanılama | Tamam. Staging bayat native addon’da duruyor; sidecar açılış hatası dialogda görünüyor. | `d697d53bc3` |
 
 Paketlenmiş Desktop’ta görsel kontroller yapıldı. Sahte model ve gerçek Docker kullanıldı. Plan önerisi, onay, paralel Coder’lar, test, review, loglar ve patch görüldü. Aynı uygulamada sohbet, Graph run’ından önce, iki Coder çalışırken ve release sonrasında yanıt verdi; sohbet de sahte modelle ve ayrı bir agent dizininde çalıştı. Kontroller, açık Kostomp’un yanında ayrı bir WebView2 profiliyle açılan ikinci örnekte yapıldı.
 
-### Açık işler
+### Kapsam sınırları
 
-Öncelik sırasıyla:
-
-1. **Jev.** Sidecar’a gözlem modunda bağlanmalı ve sonuç denemeyle birlikte kaydedilmeli.
-
-Kapsam dışı bırakılanlar: eşzamanlı run’lar ve birden fazla Tester komutu.
+Sidecar aynı anda tek run veya planlama çalıştırır. Her profil bir Tester komutu tanımlar. Jev gözlem modunda çalışır.
 
 ## Faz 4: Paralel Coder
 
@@ -130,3 +125,7 @@ Planner’ın son tamamlanan denemesi, reddedilen öneriler ve hata ayrıntısı
 ## Faz 9: Context Manager
 
 Yeni planlarda Context Manager, sabit Git tabanındaki onaylı dosyaları tarar. Görev brief’i ve hedefle eşleşen satırları önceliklendirip görev başına en fazla dört kısa kaynak referansı üretir. Başka Coder’ın sahip olduğu dosyanın taban alıntısı verilmez. Bağımlı Coder, o görevin değiştirdiği dosyaları ayrı bir listede görür ve güncel içeriklerini mevcut okuma aracıyla açar. Daha önce kaydedilen run’lar kendi planlarıyla devam eder.
+
+## Faz 10: Jev gözlem modu
+
+İsteğe bağlı Jev sonucu Tester denemesine bağlanır ve sidecar yeniden başladığında okunabilir. İstek yalnızca çıkış kodu ve sabit tanı etiketlerini içerir. Model ve ulaşım hataları için denemenin gözlem durumu kaydedilir. Test artifact kimliği ile Coder seçimi ve patch onayı deterministik kalır.

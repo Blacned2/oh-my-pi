@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { type } from "@oh-my-pi/omptype";
 import { isEnoent, isFullyQualifiedPath, readLines, toError, tryAcquireFileLock } from "@oh-my-pi/pi-utils";
 import { createApprovedGraphExecutors } from "./agent-executors";
+import { createTestFailureObserver, type TestFailureObserver } from "./failure-judge";
 import { cleanDiagnostic } from "./review";
 import { type GraphRun, type GraphRunContext, GraphRunStore } from "./run-store";
 import { graphPlanForTasks, parseTaskPlan, taskPlanHash } from "./task-plan";
@@ -29,6 +30,12 @@ const profileSchema = type({
 		timeoutMs: "1 <= number.integer <= 300000",
 	},
 	"maxCoders?": "1 <= number.integer <= 4",
+	"failureJudge?": {
+		provider: "string > 0",
+		model: "string > 0",
+		timeoutMs: "1 <= number.integer <= 5000",
+		"baseUrl?": "string > 0",
+	},
 });
 const draftSelection = type({ draft: "string", hash: "string" });
 const requestSchema = type({ op: "'status' | 'cancel' | 'patch' | 'list' | 'resume' | 'discard'" })
@@ -50,6 +57,7 @@ interface LoadedProfile {
 	hash: string;
 	maxCoders: number;
 	executors: ApprovedGraphExecutors;
+	observeFailure?: TestFailureObserver;
 }
 
 const [, , dataRoot, cliPath] = Bun.argv;
@@ -86,15 +94,21 @@ async function loadProfile(): Promise<LoadedProfile> {
 		model,
 		tester: { dockerPath, imageId, command: commands, timeoutMs },
 		maxCoders,
+		failureJudge,
 	} = profile;
 	const [command, ...args] = commands;
 	if (!command) throw new Error("Graph Tester profile requires a container command");
 	// An unset limit keeps the hash of runs saved before the field existed.
 	const identity: unknown[] = [provider, model, dockerPath, imageId, commands, timeoutMs];
 	if (maxCoders !== undefined) identity.push({ maxCoders });
+	if (failureJudge)
+		identity.push({
+			failureJudge: [failureJudge.provider, failureJudge.model, failureJudge.timeoutMs, failureJudge.baseUrl],
+		});
 	return {
 		hash: new Bun.CryptoHasher("sha256").update(JSON.stringify(identity)).digest("hex"),
 		maxCoders: maxCoders ?? DEFAULT_MAX_CODERS,
+		observeFailure: failureJudge && createTestFailureObserver(failureJudge),
 		executors: createApprovedGraphExecutors(
 			{
 				bunPath: process.execPath,
@@ -109,7 +123,7 @@ async function loadProfile(): Promise<LoadedProfile> {
 	};
 }
 
-function launch(run: GraphRun & { context: GraphRunContext }, { executors, maxCoders }: LoadedProfile) {
+function launch(run: GraphRun & { context: GraphRunContext }, { executors, maxCoders, observeFailure }: LoadedProfile) {
 	const controller = new AbortController();
 	const { context } = run;
 	selected = run.id;
@@ -122,7 +136,11 @@ function launch(run: GraphRun & { context: GraphRunContext }, { executors, maxCo
 			if (workspace.baseSha !== context.baseSha || workspace.sourceRoot !== context.sourceRoot) {
 				throw new Error("The source changed since the Graph run");
 			}
-			await runApprovedGraph(store, run.id, workspace, work, executors, { maxCoders, signal: controller.signal });
+			await runApprovedGraph(store, run.id, workspace, work, executors, {
+				maxCoders,
+				observeFailure,
+				signal: controller.signal,
+			});
 		} catch (error) {
 			if (!controller.signal.aborted) failure = { id: run.id, message: toError(error).message.slice(0, 2048) };
 		} finally {
@@ -333,6 +351,7 @@ async function handle(request: typeof requestSchema.infer) {
 		retryable: run.context && idle ? store.retryableNodes(run) : [],
 		resumable: !!run.context && idle && store.readyNodes(run).length > 0,
 		logs: store.loggedNodes(run),
+		failureObservation: store.testObservation(run),
 		...proposal,
 	};
 }

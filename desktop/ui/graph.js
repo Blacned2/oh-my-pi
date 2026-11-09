@@ -11,6 +11,7 @@
   const base = document.getElementById("graph-base");
   const patchView = document.getElementById("graph-patch-view");
   const logs = document.getElementById("graph-logs");
+  const failureObservation = document.getElementById("graph-failure-observation");
   const history = document.getElementById("graph-history");
   const retryNode = document.getElementById("graph-retry-node");
   const retry = document.getElementById("graph-retry");
@@ -158,6 +159,11 @@
     }
     showLog.disabled = logNode.disabled = logged.length === 0;
     logs.hidden = logged.length === 0;
+    const observation = snapshot?.failureObservation;
+    failureObservation.hidden = !observation;
+    failureObservation.textContent = !observation ? "" : observation.status === "observed"
+      ? `Test failure observation · ${observation.choice.replaceAll("_", " ")} · ${Math.round(observation.confidence * 100)}% · ${observation.model}`
+      : `Test failure observation unavailable · ${observation.reason.replaceAll("_", " ")}`;
     if (shownLog && ![...logKeys.values()].includes(shownLog)) {
       shownLog = "";
       log.value = "";

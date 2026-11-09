@@ -19,7 +19,7 @@
 #graph-dialog button { padding: 0.3rem 0.6rem; background: var(--raised); border: 1px solid var(--line-3); border-radius: 0.35rem; }
 #graph-dialog button:disabled { opacity: 0.55; cursor: default; }
 #graph-dialog #graph-output, #graph-dialog #graph-log { font-family: var(--mono); white-space: pre; }
-#graph-status, #graph-nodes, #graph-plan-summary, #graph-approved-scope, #graph-edit-error { overflow-wrap: anywhere; }
+#graph-status, #graph-nodes, #graph-plan-summary, #graph-approved-scope, #graph-edit-error, #graph-failure-observation { overflow-wrap: anywhere; }
 #graph-dialog h3 { margin: 0.4rem 0; font-size: 1rem; }
 #graph-tasks { padding-left: 1.2rem; }
 #graph-tasks li { margin-bottom: 0.5rem; }

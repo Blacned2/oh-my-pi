@@ -79,3 +79,13 @@ test("an out-of-contract classification is not published as an observation", asy
 	);
 	expect(result).toMatchObject({ status: "unavailable", reason: "provider_error" });
 });
+
+test("a stalled judgment transport cannot hold the Tester past its observation deadline", async () => {
+	const pending = Promise.withResolvers<Response>();
+	const result = await observeTestFailure(
+		{ exitCode: 1, summary: "Assertion failure" },
+		{ model, timeoutMs: 30, connection: { apiKey: "fixture", fetch: () => pending.promise } },
+	);
+	pending.resolve(new Response(null, { status: 401 }));
+	expect(result).toMatchObject({ status: "unavailable", reason: "timeout" });
+}, 1000);

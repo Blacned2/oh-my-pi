@@ -2,6 +2,7 @@ import { deepStrictEqual, rejects, strictEqual } from "node:assert";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { $which, ptree, readLines, TempDir } from "@oh-my-pi/pi-utils";
+import type { FailureObservation } from "../failure-judge";
 import { changeSet, fixture, original } from "../fixtures/git";
 import { completion, type CompletionRequest } from "../fixtures/openai";
 import type { GraphRun } from "../run-store";
@@ -85,6 +86,9 @@ const coderStarts: string[] = [];
 let repairedBackend = false;
 let blockReview = false;
 let omitPlan = false;
+let requireEditedBrief = true;
+let judgeAvailable = true;
+const judgeRequests: unknown[] = [];
 // Backend and frontend Coders each wait here for the other's first request, which proves they overlap.
 const parallel = Promise.withResolvers<void>();
 const server = Bun.serve({
@@ -92,8 +96,19 @@ const server = Bun.serve({
 	port: 0,
 	idleTimeout: 120,
 	async fetch(request) {
-		if (request.method !== "POST" || new URL(request.url).pathname !== "/v1/chat/completions")
-			return new Response(null, { status: 404 });
+		const route = new URL(request.url).pathname;
+		if (request.method === "POST" && route === "/v1/systemone") {
+			strictEqual(request.headers.get("authorization"), "Bearer graph-judge-fixture");
+			judgeRequests.push(await request.json());
+			if (!judgeAvailable) return new Response("private-provider-diagnostic", { status: 401 });
+			return Response.json({
+				model: "graph-judge-fixture-model",
+				answers: {
+					test_failure: { type: "choice", choice: "code_regression", confidence: 0.92 },
+				},
+			});
+		}
+		if (request.method !== "POST" || route !== "/v1/chat/completions") return new Response(null, { status: 404 });
 		const body = (await request.json()) as CompletionRequest;
 		const tools = body.tools?.map(tool => tool.function.name) ?? [];
 		const resultTool = ["kostomp_graph_submit_plan", "kostomp_graph_submit_patch", "kostomp_graph_review"].find(
@@ -122,7 +137,9 @@ const server = Bun.serve({
 				strictEqual(prompt.includes("code-contract"), true, "The Coder gets the prerequisite's changed files");
 				strictEqual(prompt.includes("token v1"), false, "Prerequisite context cannot supply a stale base excerpt");
 			}
-			if (owned === backend) strictEqual(prompt.includes(editedBrief), true, "The Coder receives the approved edit");
+			if (owned === backend && requireEditedBrief) {
+				strictEqual(prompt.includes(editedBrief), true, "The Coder receives the approved edit");
+			}
 			if (prompt.includes(finding.expectedChange)) {
 				strictEqual(owned, backend, "The review finding must reach only the file owner");
 				strictEqual(prompt.includes(initialBackend), true, "The previous patch must reach the Coder");
@@ -240,6 +257,7 @@ try {
 		const child = ptree.spawn([bunPath, "--no-env-file", service, data, cliPath], {
 			stdin: "pipe",
 			signal: deadline,
+			env: { ...Bun.env, TYPESAFE_API_KEY: "graph-judge-fixture" },
 		});
 		stopService = async () => {
 			child.stdin.end();
@@ -267,6 +285,7 @@ try {
 		error?: string;
 		planError?: string;
 		logs?: string[];
+		failureObservation?: FailureObservation;
 		draft?: { id: string; hash: string; source: string; tasks: GraphTask[] };
 	};
 	const settle = async () => {
@@ -404,8 +423,59 @@ try {
 	await Bun.write(editedSourceFile, "new user edit\n");
 	await rejects(request({ op: "patch" }), /source changed/);
 	strictEqual((await request<{ status: string }>({ op: "status" })).status, "stale_base");
+	strictEqual(judgeRequests.length, 0);
+	await Bun.write(editedSourceFile, files[backend]);
+	omitPlan = false;
+	requireEditedBrief = false;
+	await Bun.write(
+		path.join(data, "profile.json"),
+		JSON.stringify({
+			provider,
+			model,
+			tester: {
+				dockerPath,
+				imageId,
+				timeoutMs: 30_000,
+				command: ["/bin/sh", "-c", "echo 'AssertionError: private-test-log' >&2; exit 23"],
+			},
+			failureJudge: { provider: "typesafe", model: "jev-1.14.0", timeoutMs: 2500, baseUrl: server.url.origin },
+		}),
+	);
+	await request({ op: "plan", input });
+	const observedDraft = (await settle()).draft;
+	if (!observedDraft) throw new Error("Planner produced no draft for the failed test");
+	const observedRun = await request<{ id: string }>({
+		op: "approve",
+		input: { draft: observedDraft.id, hash: observedDraft.hash },
+	});
+	status = await settle();
+	strictEqual(status.status, "needs_input");
+	strictEqual(status.reason, "Tests failed (exit code 23).");
+	strictEqual(status.run?.nodes["code-backend"].attempt, 1, "A Jev classification cannot choose a Coder");
+	strictEqual(status.failureObservation?.status, "observed", JSON.stringify(status.failureObservation));
+	if (status.failureObservation.status === "observed") {
+		strictEqual(status.failureObservation.choice, "code_regression");
+		strictEqual(status.failureObservation.confidence, 0.92);
+	}
+	strictEqual(judgeRequests.length, 1);
+	deepStrictEqual((judgeRequests[0] as { state: unknown }).state, { exitCode: 23, summary: "Assertion failure" });
+	strictEqual(JSON.stringify(judgeRequests[0]).includes("private-test-log"), false);
+	strictEqual((await request<string>({ op: "log", input: "test" })).includes("private-test-log"), true);
+	const observed = status.failureObservation;
+	await stopService?.();
+	request = startService();
+	await request({ op: "open", input: observedRun.id });
+	deepStrictEqual((await settle()).failureObservation, observed);
+	judgeAvailable = false;
+	await request({ op: "retry", input: "test" });
+	status = await settle();
+	strictEqual(status.status, "needs_input");
+	strictEqual(status.run?.nodes.release.attempt, 1, "Jev metadata does not change the test artifact");
+	strictEqual(status.failureObservation?.status, "unavailable");
+	strictEqual(JSON.stringify(status.failureObservation).includes("private-provider-diagnostic"), false);
+	await rejects(request({ op: "patch" }), /no verified patch/);
 	process.stdout.write(
-		"Graph draft recovery, editing, approval, parallel Coders, scoped repair, logs, retry and release gates passed\n",
+		"Graph draft recovery, Context Manager, parallel Coders, scoped repair, logs, Jev observations and release gates passed\n",
 	);
 } finally {
 	try {

@@ -39,6 +39,20 @@ The Reviewer submits a verdict and, when requesting changes, up to eight finding
 
 The **planner** log is available before approval and includes proposal rejections. The sidecar keeps the latest finished planning log across restarts. Approval attaches the transcript that produced the draft, even if a later planning attempt failed or the draft was edited. Discarding the draft clears the unapproved planning log.
 
+To observe test failures with Jev, add the optional `failureJudge` object to `profile.json` and make the provider's API key available to the Desktop process. For TypeSafe, use `TYPESAFE_API_KEY`.
+
+```json
+{
+	"failureJudge": {
+		"provider": "typesafe",
+		"model": "jev-1.14.0",
+		"timeoutMs": 2500
+	}
+}
+```
+
+Choose a bundled native judgment model. `timeoutMs` accepts 1–5000 ms. An optional `baseUrl` overrides the catalog endpoint with HTTPS or loopback HTTP. After a nonzero test exit, Graph sends the exit code and fixed diagnostic labels such as `Assertion failure` or `Timeout`. Source code, patches, test commands, and raw output stay out of the request. The latest observation appears in **Logs** and is saved with its test attempt. Test, repair, review and release still use their original evidence. An unavailable judgment records its reason and the workflow continues.
+
 ## Current contracts
 
 | Module             | Contract                                                                                                                                                                                                                                                                       |
@@ -48,7 +62,7 @@ The **planner** log is available before approval and includes proposal rejection
 | `task-plan.ts`     | Admits a proposed task plan against the approved scope, hashes the approved plan and derives the node graph. A Coder node receives every transitive prerequisite's change set; test, review and release receive all Coder artifacts.                                       |
 | `run-store.ts`     | Persists attempts, artifacts, display logs and a monotonic event sequence in SQLite. Call `currentArtifacts()` for dependency-valid results. `claimReady()` admits a Coder only when its approved write scope is disjoint from every running Coder; without approved tasks, Coders run one at a time. `recordLog()` accepts a log only from the live attempt, and `log()` returns the latest attempt's log. The snapshot's node status describes the latest attempt, which may be waiting on a retried upstream node. |
 | `scheduler.ts`     | Drives ready work to quiescence up to the given concurrency and passes cancellation to every running executor. Use one driver per run. After exclusive ownership is acquired on restart and old workers have stopped, call `recoverInterrupted()` before dispatch.                     |
-| `failure-judge.ts` | Produces an opt-in Jev observation from a provider-approved error summary. The scheduler and release gate do not consume the observation yet.                                                                                                                                  |
+| `failure-judge.ts` | Classifies fixed test diagnostic labels with a configured native judge and records an optional observation beside the Tester result. |
 | `workflow.ts`      | Turns an approved run into executor calls. `proposeGraphPlan()` admits the Planner's proposal; `runApprovedGraph()` gives each Coder its view, captures and composes change sets, binds test and review evidence to one candidate tree and records display logs beside the artifacts. |
 | `agent-executors.ts` | Builds the Planner, Coder and Reviewer workers with their host tools and prompts, and the Docker Tester. Each worker gets read access to the approved files and exactly one result tool. |
 | `service.ts`       | The sidecar. Owns the data directory lease, the profile, the saved draft and the single active run. Answers one JSON request per stdin line (see below). |
@@ -61,7 +75,7 @@ The Desktop bridge (`desktop/src/graph.rs`) exposes one Tauri command, `graph_re
 
 | Operation | Effect |
 | --- | --- |
-| `status` | Selected run, node states, retryable and resumable steps, steps with logs, release status, active planning and the current draft. |
+| `status` | Selected run, node states, retryable and resumable steps, steps with logs, test failure observation, release status, active planning and the current draft. |
 | `list`, `open` | Recent runs (up to 50) and run selection. |
 | `plan`, `edit`, `approve`, `discard` | Start the Planner, validate and save a draft revision, approve the shown draft by ID and hash, or drop it. |
 | `retry`, `resume`, `cancel` | Retry one eligible step, continue queued work, or stop planning or the active run. |
@@ -135,10 +149,8 @@ bun desktop/graph/smoke/docker-tester.ts sha256:<local-image-id>
 
 The probe exercises an executable tracked file, attempted access to disposable source and other-run files, a nonzero exit, release gating and cancellation of a live container. It requires access to the local Docker Desktop named pipe.
 
-## Open gaps
+## Scope boundaries
 
-These are known, not yet implemented, in rough priority order:
-
-- **Concurrent runs** are not supported. The sidecar runs one plan or run at a time. Parallel Coders run within that one run.
-- **Jev.** `failure-judge.ts` and `questions/test-failure.json` exist and are tested, but the sidecar does not call them, so no classification is recorded. It can classify the sanitized test log once a provider-approved summary is cut from it. Keep the initial integration in observation mode and verify hosted credentials and data policy before enabling it in a Desktop build.
-- **Tester profiles.** One host-approved test command per profile. Selecting among several commands would build on the profile consumed by `service.ts`.
+- The sidecar runs one plan or run at a time. Parallel Coders work within that run.
+- Each profile specifies one host-approved Tester command.
+- Jev runs in observation mode. The Windows smoke probe uses a local System One fixture to verify request contents, authentication, persistence and provider failure.
