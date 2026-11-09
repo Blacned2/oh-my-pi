@@ -60,6 +60,25 @@ The service probe drives the sidecar over its stdin protocol with the mock model
 
 The workspace tests use disposable Git repositories and compare the source index before and after composition. They require a temporary directory where Windows permits Git's atomic index-lock replacement.
 
+### Packaged Desktop check
+
+The packaged runtime loads the native addon only when its version matches the checkout. Development runs warn about a mismatch, but a packaged sidecar exits before responding. Rebuild the addon with `bun run build:native` after a version bump. On this toolchain, CMake selects Ninja, so put a `ninja.exe` on `PATH` for that command, for example the one in Visual Studio Build Tools under `Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja`.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/stage-runtime.ps1 -NoStats
+cd desktop; bunx @tauri-apps/cli@2 build --no-bundle; cd ..
+```
+
+`--no-bundle` leaves the version, installer and local update folder unchanged. A second instance can run beside an open Kostomp when it gets its own WebView2 profile. A debugging port lets a CDP client inspect the dialog.
+
+```powershell
+$env:WEBVIEW2_USER_DATA_FOLDER = "$env:TEMP\kostomp-graph-visual-webview"
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9333"
+desktop\target\release\kostomp-desktop.exe
+```
+
+Both instances share `%APPDATA%\dev.kostomp.desktop`. Point the Graph profile at a loopback mock model, as the service probe does, then remove `graph\` afterwards. The last check covered the proposed plan, approval, two dependent Coders, Docker, review and the verified patch. The source checkout stayed clean.
+
 ## Tester backend
 
 `testCandidateInDocker()` uses the local Docker Desktop Linux engine on Windows. A host-approved profile supplies a preloaded image ID, an absolute container command and a timeout. The image needs `/bin/sh`, `tar`, `xargs` and the project's test runtime. The host never pulls an image during a test. Images with declared volumes are rejected.
@@ -76,6 +95,6 @@ The probe exercises an executable tracked file, attempted access to disposable s
 
 ## Next integration boundaries
 
-- **Parallel Coders** can build on the approved per-task ownership. The scheduler still serializes Coder attempts within a run. Keep the host ownership checks before dispatch.
+- **Parallel Coders** are the next phase. See the [plan](../docs/kostomp-graph-plan.md#sonraki-faz-paralel-coder). The per-task ownership approved in this phase is the dispatch contract. Coder attempts are still serialized in `GraphRunStore.claimReady()`, and `runApprovedGraph()` drives the run with a concurrency of 1.
 - **Tester profiles and logs** can build on the host-approved profile consumed by `service.ts`. The workflow stores the candidate tree and exit code as stable evidence. Raw logs stay with the test executor. Sanitize them before display or external classification.
 - **Jev** can be added after the Tester produces a sanitized summary. Keep the initial integration in observation mode and record the returned result with its attempt. Verify hosted credentials and data policy before enabling it in a Desktop build.

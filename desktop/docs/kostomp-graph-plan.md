@@ -50,3 +50,57 @@ Planner yalnızca öneri üretir. Scheduler şemayı, benzersiz düğüm kimlikl
 4. **Paralel Coder.** Ortak dosya, lockfile, Windows case varyasyonu, kapsam dışı yazma ve eşzamanlı run senaryoları doğrulandıktan sonra aç. İlk gerçek senaryo JWT yenileme düzeltmesidir. Backend ve frontend ayrı kapsamda çalışır, paylaşılan API sözleşmesi gerekiyorsa tek bir düğüme atanır. Entegrasyon testi birleşik adayı bekler. Backend yeniden denendiğinde frontend düğümü yalnızca girdileri değişirse tekrar çalışır.
 
 Teslimat kapısı, Graph değişikliklerinin `desktop/` ile sınırlı kalması ve paketlenmiş Desktop üzerinde hem normal sohbet hem Graph akışının doğrulanmasıdır. Bu sınır upstream ile ortak core dosyalarından kaynaklanan merge riskini ortadan kaldırır. Gelecekteki RPC uyumluluğu, desteklenen OMP sürümüyle yapılan başlangıç kontrolü ve paket smoke testiyle izlenir.
+
+### Durum
+
+| Adım | Durum | Commit |
+| --- | --- | --- |
+| 1. RPC ve Windows izolasyon spike’ı | Tamam. Worker, Docker tester ve sidecar probları geçiyor. | `cb7dbe27c7` |
+| 2. Deterministik scheduler ve run deposu | Tamam. SQLite geçmişi, yeniden açma ve hedefli retry var. | `cb7dbe27c7`, `b70887c837` |
+| 3. Uçtan uca MVP | Kısmen. Planner ve kullanıcı onayı, Coder → Tester → Reviewer → Gate akışı ve patch gösterimi çalışıyor. | `7dda121165` |
+| 4. Paralel Coder | Sıradaki faz. Ayrıntılar aşağıda. | — |
+
+3\. adımda kalanlar:
+- Context Manager düğümü yok. Coder’lar onaylı dosyaları, sabit tabanı ve bağımlı oldukları görevlerin değişikliklerini okuyor.
+- Desktop’ta log gösterimi yok.
+- Kullanıcı planı Desktop’ta düzenleyemiyor. Yalnızca onaylayabiliyor veya atabiliyor.
+
+Paketlenmiş Desktop’ta görsel kontrol yapıldı. Sahte model ve gerçek Docker kullanıldı. Plan önerisi, onay, bağımlı iki Coder, test, review ve patch adımları görüldü. Kontrol, açık Kostomp’un yanında ayrı bir WebView2 profiliyle açılan ikinci örnekte yapıldı. Aynı uygulamada sohbet akarken Graph çalıştırma senaryosu henüz doğrulanmadı.
+
+## Sonraki faz: Paralel Coder
+
+Bu bölüm fazın hazırlığıdır. Uygulama başlamadı.
+
+**Amaç:** Dosya kapsamları ayrık ve aralarında bağımlılık olmayan Coder görevleri aynı anda çalışsın. Onaylanan görev başına dosya sahipliği dispatch sözleşmesi olarak kalır. Test, review ve gate bütün Coder çıktılarını birleştiren tek aday üzerinde değişmeden çalışır.
+
+**Bugünkü serileştirme noktaları:**
+- `GraphRunStore.claimReady()` bir Coder çalışırken ikinci Coder’ı almaz (`coderRunning`).
+- `runApprovedGraph()`, `driveGraphRun()` fonksiyonunu eşzamanlılık 1 ile çağırır.
+- `scheduler.test.ts` içindeki “independent coders are serialized” testi bu davranışı sabitler. Testin yeni sözleşmeye göre değişmesi gerekir.
+- Sidecar aynı anda tek run veya tek planlama işi kabul eder (`assertIdle()`).
+
+**Yapılacaklar:**
+1. **Host’ta dispatch anı kontrolü:** Store, bir Coder’ı ancak dosya kapsamı çalışan diğer Coder’larınkiyle Windows anahtarları düzeyinde ayrıksa alır. Kapsam `run.context.tasks` kaydından yeniden türetilir. Planın daha önce doğrulanmış olmasına güvenilmez. Eski tek Coder’lı kayıtlar değişmeden çalışır.
+2. **Eşzamanlılık sınırı:** `runApprovedGraph()` sabit 1 yerine `profile.json` içindeki isteğe bağlı `maxCoders` değeriyle çalışır. Değer 1–4 arasında bir tam sayıdır, verilmezse 2 kullanılır. Bu alan profil hash’ine yalnızca tanımlıysa girer. Böylece mevcut kayıtların hash’i değişmez ve retry’ları çalışmaya devam eder.
+3. **Workspace eşzamanlılığı:** `captureChangeSet()` ve `compose()` her çağrıda ayrı bir private index kullanıyor. Aynı scratch nesne veritabanına eşzamanlı yazmanın güvenli olduğu bir testle doğrulanmalı.
+4. **Worker profili:** Her deneme ayrı bir geçici `HOME` alır. `profile-home/.omp/agent` bu dizine kopyalanır, `TEMP` ve `TMP` de bu dizini gösterir. Deneme bitince dizin silinir. Kaynak profil yalnızca okunur. Paylaşılan dizinin eşzamanlı kullanımda güvenli olduğu doğrulanmadığı için kopya tercih edildi. Bunun bedeli, denemede yenilenen OAuth token’larının kaynak profile geri yazılmamasıdır. API anahtarlı profiller etkilenmez.
+5. **İptal ve restart:** İptal, çalışan bütün Coder’ların süreç ağaçlarını kapatır. Restart sonrasında yarım kalan bütün denemeler `interrupted` olur.
+6. **Planner rehberliği:** Lockfile, ortak şema ve üretilen dosyalar tek göreve atanır. Bu dosyalara ihtiyaç duyan diğer görevler o göreve bağımlı olur. Benzersiz sahiplik kuralı host’ta zaten uygulanıyor. Buradaki değişiklik yalnızca prompt’u kapsar.
+7. **Desktop:** Dialog birden fazla çalışan Coder’ı gösterir. **Cancel** hepsini durdurur. Hedefli retry seçenekleri değişmez.
+
+**Kabul senaryoları:**
+- Sahte executor’daki bir bariyerle ayrık iki Coder’ın gerçekten çakışarak çalıştığı gösterilir. Bağımlı Coder, önkoşulu bitmeden başlamaz.
+- Bir Coder başarısız olduğunda ayrık kardeşi tamamlanır. Test, başarısız Coder yüzünden bekler.
+- Bir Coder kapsam dışına yazarsa yalnızca onun denemesi reddedilir.
+- Dispatch anında Windows büyük/küçük harf varyantı ve dizin çakışması yeniden reddedilir.
+- Backend yeniden denendiğinde frontend yalnızca girdileri değiştiyse tekrar çalışır. Aynı sonuç sonraki adımları tekrar çalıştırmaz.
+- İki Coder çalışırken yapılan iptal ve restart, iki denemeyi de durdurur veya `interrupted` olarak kaydeder.
+- Aktif run veya planlama varken ikinci onay ve ikinci planlama reddedilir. Eşzamanlı run desteği bu fazın kapsamı dışındadır.
+- JWT yenileme senaryosu sahte modelle smoke probunda çalışır. Backend ve frontend ayrı görevlerdir, paylaşılan API sözleşmesi tek göreve aittir. Kaynak checkout, index ve refs değişmez.
+- Paketlenmiş Desktop’ta iki Coder’ın aynı anda `running` göründüğü görsel olarak kontrol edilir.
+
+**Kararlar:**
+- Varsayılan paralel Coder sayısı 2’dir. Üst sınır 4’tür.
+- Sınır `profile.json` içindeki isteğe bağlı `maxCoders` alanından ayarlanır. Desktop dialogunda bu ayar için bir alan olmaz.
+- Her worker denemesi profilin kendine ait geçici bir kopyasını kullanır.
+- Sidecar aynı anda tek run veya tek planlama işi çalıştırır. Eşzamanlı run’lar ayrı bir fazdır.
