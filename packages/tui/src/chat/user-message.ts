@@ -262,7 +262,9 @@ export class UserMessageComponent extends Container implements ReactionTarget, T
 			});
 		}
 		const imageRow =
-			thumbs.length > 0 ? row(thumbs, { gap: "sm", wrap: true, align: "start", role: "omp.user.images" }) : undefined;
+			thumbs.length > 0
+				? row(thumbs, { gap: "sm", wrap: true, align: "start", role: "omp.user.images" })
+				: undefined;
 		const marks = this.#synthetic ? [] : tokenMarks(this.#text, this.#tokens, this.#imageLinks);
 		children.push(md(this.#text, marks.length > 0 ? { marks } : undefined));
 		const badges: NativeChild[] = [];

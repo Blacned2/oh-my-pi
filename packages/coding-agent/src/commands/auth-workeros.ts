@@ -82,9 +82,7 @@ export function readWorkerOsAccounts(dbPath: string): WorkerOsAccount[] {
 		throw new AuthTransferError(`cannot open Worker OS database ${dbPath}: ${String(error)}`);
 	}
 	try {
-		const row = db.query("SELECT value FROM Setting WHERE key = ?").get(SETTINGS_KEY) as
-			| { value?: unknown }
-			| null;
+		const row = db.query("SELECT value FROM Setting WHERE key = ?").get(SETTINGS_KEY) as { value?: unknown } | null;
 		if (!row || typeof row.value !== "string") {
 			throw new AuthTransferError(`${dbPath} has no "${SETTINGS_KEY}" settings row.`);
 		}
