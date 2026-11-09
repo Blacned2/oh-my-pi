@@ -39,8 +39,25 @@ Each Coder may change only its own files and reads the approved files from the p
 | `run-store.ts`     | Persists attempts, artifacts, display logs and a monotonic event sequence in SQLite. Call `currentArtifacts()` for dependency-valid results. `claimReady()` admits a Coder only when its approved write scope is disjoint from every running Coder; without approved tasks, Coders run one at a time. `recordLog()` accepts a log only from the live attempt, and `log()` returns the latest attempt's log. The snapshot's node status describes the latest attempt, which may be waiting on a retried upstream node. |
 | `scheduler.ts`     | Drives ready work to quiescence up to the given concurrency and passes cancellation to every running executor. Use one driver per run. After exclusive ownership is acquired on restart and old workers have stopped, call `recoverInterrupted()` before dispatch.                     |
 | `failure-judge.ts` | Produces an opt-in Jev observation from a provider-approved error summary. The scheduler and release gate do not consume the observation yet.                                                                                                                                  |
+| `workflow.ts`      | Turns an approved run into executor calls. `proposeGraphPlan()` admits the Planner's proposal; `runApprovedGraph()` gives each Coder its view, captures and composes change sets, binds test and review evidence to one candidate tree and records display logs beside the artifacts. |
+| `agent-executors.ts` | Builds the Planner, Coder and Reviewer workers with their host tools and prompts, and the Docker Tester. Each worker gets read access to the approved files and exactly one result tool. |
+| `service.ts`       | The sidecar. Owns the data directory lease, the profile, the in-memory plan draft and the single active run. Answers one JSON request per stdin line (see below). |
 
 The workspace layer in `workspace.ts` pins a clean SHA-1 Git checkout in an independent object database. It applies declared changes to private indexes, verifies actual paths and blob IDs, and serves exact candidate blobs for review. Release requires a successful test and an accepted review for the same candidate tree. A changed source yields `stale_base`.
+
+### Sidecar protocol and data
+
+The Desktop bridge (`desktop/src/graph.rs`) exposes one Tauri command, `graph_request`, and forwards each request as one JSON line to the sidecar; the sidecar answers `{ ok, data }` or `{ ok: false, error }` on one line. The dialog polls `status` every 800 ms; there is no event stream.
+
+| Operation | Effect |
+| --- | --- |
+| `status` | Selected run, node states, retryable and resumable steps, steps with logs, release status, active planning and the current draft. |
+| `list`, `open` | Recent runs (up to 50) and run selection. |
+| `plan`, `approve`, `discard` | Start the Planner, approve the shown draft by ID and hash, or drop it. |
+| `retry`, `resume`, `cancel` | Retry one eligible step, continue queued work, or stop planning or the active run. |
+| `log`, `patch` | The latest attempt's log for a step, and the verified patch after a fresh source check. |
+
+The data directory `%APPDATA%\dev.kostomp.desktop\graph` holds `profile.json`, `profile-home\`, `runs.sqlite` (runs, events, artifacts and logs) and the `sidecar` lock. The plan draft lives only in the sidecar's memory and is lost if the sidecar restarts before approval.
 
 ## Verification
 
@@ -108,9 +125,17 @@ bun desktop/graph/smoke/docker-tester.ts sha256:<local-image-id>
 
 The probe exercises an executable tracked file, attempted access to disposable source and other-run files, a nonzero exit, release gating and cancellation of a live container. It requires access to the local Docker Desktop named pipe.
 
-## Next integration boundaries
+## Open gaps
 
+These are known, not yet implemented, in rough priority order:
+
+- **No correction loop.** A failed test or a `changes_requested` review ends the run as `needs_input`. Retrying a Coder repeats its original brief; it does not receive the test log or the review. The plan's automatic, bounded Coder retry after a failure is not implemented.
+- **Reviewer findings.** The Reviewer returns only `accepted` or `changes_requested`, without structured findings. Its worker log is the only explanation.
+- **`needs_input` reason.** The dialog shows "Graph needs input" without saying whether the test failed or the review asked for changes; the node list and logs carry that information.
+- **Plan draft persistence.** A proposed plan is not saved until approval.
+- **Plan editing.** The plan can be approved or discarded, not edited.
+- **Context Manager.** No context node exists. Coders read the approved files, at most 32 files and 64 KiB per read.
 - **Concurrent runs** are not supported. The sidecar runs one plan or run at a time. Parallel Coders run within that one run.
-- **Tester profiles** can build on the host-approved profile consumed by `service.ts`. The workflow stores the candidate tree and exit code as stable evidence and the sanitized output as a separate display log.
 - **Planner logs** are not recorded. Planning runs before a run record exists; its rejection or failure is shown as the planning error.
-- **Jev** can classify the sanitized test log once a provider-approved summary is cut from it. Keep the initial integration in observation mode and record the returned result with its attempt. Verify hosted credentials and data policy before enabling it in a Desktop build.
+- **Jev.** `failure-judge.ts` and `questions/test-failure.json` exist and are tested, but the sidecar does not call them, so no classification is recorded. It can classify the sanitized test log once a provider-approved summary is cut from it. Keep the initial integration in observation mode and verify hosted credentials and data policy before enabling it in a Desktop build.
+- **Tester profiles.** One host-approved test command per profile. Selecting among several commands would build on the profile consumed by `service.ts`.

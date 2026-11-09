@@ -6,7 +6,7 @@ Kaynak kapsamı, paylaşılan konuşmadaki Planner, Context Manager, Coder, Test
 
 ## Entegrasyon sınırı
 
-- **Graph servisi** `desktop/graph/` altında ayrı bir Bun süreci olur. Scheduler, run deposu, çalışma alanları ve OMP adaptörü burada bulunur. Tauri servisin yaşam döngüsünü ve ayrı `graph_*` komutlarını yönetir. WebView sürümlü Graph olaylarını dinler ve bir snapshot ile yeniden bağlanabilir. Graph olayları sohbetin `rpc-frame` akışına girmez.
+- **Graph servisi** `desktop/graph/` altında ayrı bir Bun süreci olur. Scheduler, run deposu, çalışma alanları ve OMP adaptörü burada bulunur. Tauri servisin yaşam döngüsünü yönetir ve tek bir `graph_request` komutuyla istekleri satır başına bir JSON olarak sidecar’a iletir. WebView durumu `status` isteğiyle 800 ms’de bir sorgular; ayrı bir olay akışı yoktur. Graph istekleri sohbetin `rpc-frame` akışına girmez.
 - **OMP adaptörü** mevcut paketlenmiş runtime’ı kullanarak her agent denemesi için ayrı `omp --mode rpc --no-ui` süreci açar. Mevcut `RpcClient` üzerinden `setCustomTools()` ile role özel host araçları kaydedilir. Düğüm sonucu için `promptAndWait()` ve ardından `waitForSettled()` kullanılır. Kapanış, timeout ve iptal worker’ın süreç ağacını kapsar. Protokol veya worker profili doğrulanamazsa Graph çalışmayı başlatmaz.
 - **Core sınırı** `packages/`, `crates/` ve OMP RPC şeması Graph için değişmez. Yerleşik `/vibe`, `task`, plan ve goal modları Graph tarafından etkinleştirilmez. Yerleşik `task` otomatik uygulama açıldığında ebeveyn checkout’ına değişiklik taşıyabildiği için Graph yazma veya birleştirme yolu olarak kullanılmaz.
 - **Worker profili** Graph işlerine özel, kullanıcı oturumundan ayrı bir profil ve çalışma dizini kullanır. Gerekli model/kimlik doğrulama yetkisi ayrı sağlanır. Uzantı, MCP, komut, skill ve proje kaynaklarının yüklenmesi mevcut desteklenen kontrollerle sınırlandırılır. İlk spike, paketlenmiş Windows sürümünde bu profilin gerçekten sadece beklenen araçları sunabildiğini ve RPC host çağrılarının çalıştığını doğrular. `--no-ui` ve uzantı allowlist’i tek başına izolasyon sağlamaz.
@@ -15,29 +15,32 @@ Dayanaklar: [Desktop RPC köprüsü](../src/rpc.rs), [runtime seçimi](../src/ru
 
 ## Graph sözleşmesi
 
-| Düğüm | Girdi ve çıktı |
-| --- | --- |
-| Planner | Kullanıcı isteği ve repo özeti → düğümler, gerçek bağımlılıklar, önerilen yazma kapsamı ve kabul kriterleri |
-| Context Manager | Sabit repo snapshot’ı ve düğüm brief’i → ilgili dosya ve sembol referansları, gerekli upstream artifact’ler ve boyutu sınırlı bağlam |
-| Coder | Kendi brief’i ve bağımlılık çıktıları → çalışma kopyasından host tarafından çıkarılan değişiklik seti |
-| Tester | Birleştirilmiş aday snapshot → komut, exit code, süre, log referansı ve test edilen tree kimliği |
-| Reviewer | Aynı aday snapshot ve kabul kriterleri → ayrı OMP oturumundan yapılandırılmış bulgular ve karar |
-| Decision Gate | Adayın tree kimliği, test ve review kanıtları → `ready_to_export`, `retry`, `needs_input` veya `failed` |
+| Düğüm | Girdi ve çıktı | Bugünkü durum |
+| --- | --- | --- |
+| Planner | Kullanıcı isteği ve repo özeti → düğümler, gerçek bağımlılıklar, önerilen yazma kapsamı ve kabul kriterleri | Var. Hedef ve onaylı dosyalardan görevler, bağımlılıklar ve görev başına dosya sahipliği önerir. Kabul kriteri görev brief’inin içindedir. |
+| Context Manager | Sabit repo snapshot’ı ve düğüm brief’i → ilgili dosya ve sembol referansları, gerekli upstream artifact’ler ve boyutu sınırlı bağlam | Yok. Coder’lar onaylı dosyaları doğrudan okur. |
+| Coder | Kendi brief’i ve bağımlılık çıktıları → çalışma kopyasından host tarafından çıkarılan değişiklik seti | Var. Ayrık kapsamlar paralel çalışır. |
+| Tester | Birleştirilmiş aday snapshot → komut, exit code, süre, log referansı ve test edilen tree kimliği | Var. Log artifact’ten ayrı saklanır. |
+| Reviewer | Aynı aday snapshot ve kabul kriterleri → ayrı OMP oturumundan yapılandırılmış bulgular ve karar | Kısmen. Yalnızca `accepted` veya `changes_requested` kararı döner; bulgular worker logunda kalır. |
+| Decision Gate | Adayın tree kimliği, test ve review kanıtları → `ready_to_export`, `retry`, `needs_input` veya `failed` | Kısmen. `ready_to_export`, `needs_input` ve `stale_base` üretir; `retry` ve `failed` yoktur. |
 
 Planner yalnızca öneri üretir. Scheduler şemayı, benzersiz düğüm kimliklerini, bağımlılıkları, döngüleri ve kaynak sınırlarını doğrular. MVP’de kullanıcı doğrulanmış planı başlatır. Düğümler upstream transcript’leri yerine tipli artifact referansları alır. Bir denemenin kimliği `runId/nodeId/attempt` olur. Graph döngüsüz kalır. Düzeltme gerektiğinde scheduler ilgili Coder için sınırlı yeni deneme açar, değişen çıktıya bağımlı sonuçları geçersiz kılar ve birleşik aday için test ile review’u tekrar üretir. Başarısızlık belirli bir düğüme bağlanamıyorsa run `needs_input` durumuna geçer.
+
+Bugün otomatik düzeltme döngüsü yoktur. Test başarısız olursa veya review değişiklik isterse run `needs_input` olur. Kullanıcı bir Coder’ı elle yeniden deneyebilir, ancak Coder aynı brief’i alır; test logu veya review ona iletilmez. Değişen çıktıya bağımlı sonuçların geçersiz kılınması çalışır.
 
 ## Jev ile hata yönlendirme
 
 - **İlk kullanım** bir test hatasının `code_regression`, `flaky_test`, `environment_failure` veya `unknown` seçeneklerinden hangisine benzediğini sınıflandırmak. Örneğin JWT entegrasyon hatasında Jev bir kod regresyonu sinyali üretebilir. Scheduler ancak test ile düğüm sahipliği arasında doğrulanmış bir bağ ve kalan retry bütçesi varsa ilgili Coder’ı yeniden çalıştırır. Düşük güven, `unknown`, timeout veya sağlayıcı hatasında mevcut deterministik akış devreye girer. O akış hatayı bir düğüme bağlayamazsa run `needs_input` olur.
 - **Entegrasyon** Graph sidecar’ında, OMP’nin mevcut `@oh-my-pi/pi-ai/judgment` ihracındaki `createNativeJudge()` üzerinden yapılır. Model ve kimlik bilgisi Graph yapılandırmasından çözülür. Sorular statik JSON’da `judgeQuestions()` ile tanımlanır. İlk spike paketlenmiş Windows runtime’ında istemciyi ve kimlik doğrulamayı doğrular. Hosted çağrı opt-in olur ve yalnızca ayıklanmış hata özeti ile gereken en az bağlamı gönderir. Deneme kaydında soru sürümü, model, sonuç, güven ve gecikme tutulur.
 - **Karar yetkisi** scheduler ve deterministik Decision Gate’de kalır. Test sonucu, reviewer kararı, aday tree kimliği, dosya sahipliği ve retry bütçesi mevcut kurallarla doğrulanır. Jev’in yetkisi tipli bir yönlendirme sinyali üretmekle sınırlıdır. İlk aşamada sınıflandırma yalnızca kaydedilir. Geçmiş veya örnek hata vakalarında isabet, gereksiz retry ve ek gecikme ölçüldükten sonra yönlendirmede kullanılır.
+- **Durum:** `failure-judge.ts` ve `questions/test-failure.json` var ve testli. Sidecar bunları henüz çağırmıyor, bu yüzden sınıflandırma kaydedilmiyor.
 
 [TypeSafe System One dokümanı](https://docs.typesafe.ai/concepts/system-one), [OMP judge desteği](../../docs/environment-variables.md#typesafe-judgments).
 
 ## Çakışmayı önleyen kurallar
 
 1. **Kaynak repo salt okunur.** Run bir Git commit SHA’sına sabitlenir. MVP, kirli checkout’tan başlamayı reddeder. Graph kaynak repo dosyalarını, index’ini, refs’ini ve Git metadata’sını yazmaz. Her Coder denemesi ayrı Graph çalışma kopyasına, her Tester denemesi ayrı test kopyasına sahip olur. Çalışma kopyaları kaynak `.git` dizinine yazma erişimi paylaşmaz.
-2. **Aynı dosyanın tek yazarı olur.** MVP’de paralellik okuma yapan düğümlerle sınırlıdır. Paralel Coder açıldığında scheduler normalleştirilmiş, birbirinden ayrık dosya kapsamlarını dispatch öncesi ayırır. Ortak dosyayı değiştiren işler aynı sahip altında toplanır veya plan açık bağımlılık ve yeni bir kapsam ile yeniden hazırlanır. Lockfile, ortak şema ve üretilen dosyaların sahibi ayrıca belirlenir. Host yazma araçları kapsamı her çağrıda, çıktı toplayıcı ise gerçek değişiklik setinde tekrar doğrular. Windows’ta case eşdeğerliği, `..`, reparse point/symlink ve dizin sınırı kontrol edilir. MVP, desteklenmeyen symlink ve submodule değişikliklerini reddeder.
+2. **Aynı dosyanın tek yazarı olur.** Paralel Coder’lar yalnızca normalleştirilmiş, birbirinden ayrık dosya kapsamlarıyla çalışır; scheduler kapsamları her dispatch öncesinde kayıttaki görevlerden yeniden türetir. Ortak dosyayı değiştiren işler aynı sahip altında toplanır veya plan açık bağımlılık ve yeni bir kapsam ile yeniden hazırlanır. Lockfile, ortak şema ve üretilen dosyaların sahibi ayrıca belirlenir. Host yazma araçları kapsamı her çağrıda, çıktı toplayıcı ise gerçek değişiklik setinde tekrar doğrular. Windows’ta case eşdeğerliği, `..`, reparse point/symlink ve dizin sınırı kontrol edilir. MVP, desteklenmeyen symlink ve submodule değişikliklerini reddeder.
 3. **Dosyaya ve süreçlere erişimi host sınırlar.** Coder yalnızca Graph’ın dosya araçlarını alır. Serbest shell, eval, alt ajan ve harici mutasyon araçları worker’a verilmez. Test komutları yapılandırılmış izinli komutlardan seçilir. İzinli komutların çağırdığı repo kodu da çalışabildiği için test süreci, kaynak checkout’a ve diğer run’lara yazmayı OS düzeyinde engelleyen ayrı bir ortam gerektirir. Paketlenmiş Windows sürümünde bu sınır doğrulanamazsa Graph test düğümü çalışmaz ve run dışa aktarıma hazır sayılmaz.
 4. **Birleştirmeyi tek koordinatör yapar.** Host, onaylanan değişiklikleri sabit tabana bağlı, tipli `baseBlob → newBlob` dosya işlemlerine dönüştürür. Bu işlemleri geçici adayda bağımlılık sırasıyla ve beklenen eski blob kimliklerini kontrol ederek uygular. Kapsam dışı çıktı veya taban uyuşmazlığı adayın tamamını reddeder. Aday hazır olduğunda Tester ve Reviewer aynı tree kimliğini doğrular. OMP’nin merkezi VCS API’si kullanılır.
 5. **Teslimat ayrı bir artifact olur.** Graph başarılı adaydan `baseSha`, `treeId` ve değişiklikleri içeren bir patch üretir. Desktop kaynak checkout’a otomatik `merge`, `cherry-pick`, `stash` veya patch uygulaması yapmaz. Dışa aktarımda kaynak `HEAD` değişmişse veya checkout kirlenmişse çıktı `stale_base` olarak işaretlenir ve eski tabana ait artifact olarak gösterilir. Yeni taban için yeni aday oluşturulur ve test/review tekrar çalışır. Böylece kaynak checkout hiçbir Graph çalışması sonucunda merge-conflict durumuna girmez.
@@ -57,15 +60,26 @@ Teslimat kapısı, Graph değişikliklerinin `desktop/` ile sınırlı kalması 
 | --- | --- | --- |
 | 1. RPC ve Windows izolasyon spike’ı | Tamam. Worker, Docker tester ve sidecar probları geçiyor. | `cb7dbe27c7` |
 | 2. Deterministik scheduler ve run deposu | Tamam. SQLite geçmişi, yeniden açma ve hedefli retry var. | `cb7dbe27c7`, `b70887c837` |
-| 3. Uçtan uca MVP | Kısmen. Planner ve kullanıcı onayı, Coder → Tester → Reviewer → Gate akışı, Tester logu ve patch gösterimi çalışıyor. | `7dda121165`; Tester logu: `feat(desktop): show sanitized Graph test logs` |
+| 3. Uçtan uca MVP | Kısmen. Planner ve kullanıcı onayı, Coder → Tester → Reviewer → Gate akışı, Tester/Coder/Reviewer logları, açılıp kapanan log ve patch bölümleri ve patch gösterimi çalışıyor. Aynı uygulamada sohbet ve Graph birlikte doğrulandı. | `7dda121165`, `5417a76a01`, `5836143a03`, `dc3eb47d63`, `8a57bb7054` |
 | 4. Paralel Coder | Tamam. Ayrık kapsamlı Coder’lar aynı anda çalışıyor. Ayrıntılar aşağıda. | `f9ab195125` |
-
-3\. adımda kalanlar:
-- Context Manager düğümü yok. Coder’lar onaylı dosyaları, sabit tabanı ve bağımlı oldukları görevlerin değişikliklerini okuyor.
-- Desktop Tester, Coder ve Reviewer denemelerinin logunu gösteriyor. Loglar ANSI ve kontrol karakterlerinden temizlenip deneme başına saklanıyor ve artifact kimliğine girmiyor. Planner logu tutulmuyor; planlama hatası dialogda gösteriliyor.
-- Kullanıcı planı Desktop’ta düzenleyemiyor. Yalnızca onaylayabiliyor veya atabiliyor.
+| Paketleme ve tanılama | Tamam. Staging bayat native addon’da duruyor; sidecar açılış hatası dialogda görünüyor. | `d697d53bc3` |
 
 Paketlenmiş Desktop’ta görsel kontroller yapıldı. Sahte model ve gerçek Docker kullanıldı. Plan önerisi, onay, paralel Coder’lar, test, review, loglar ve patch görüldü. Aynı uygulamada sohbet, Graph run’ından önce, iki Coder çalışırken ve release sonrasında yanıt verdi; sohbet de sahte modelle ve ayrı bir agent dizininde çalıştı. Kontroller, açık Kostomp’un yanında ayrı bir WebView2 profiliyle açılan ikinci örnekte yapıldı.
+
+### Açık işler
+
+Öncelik sırasıyla:
+
+1. **Düzeltme döngüsü.** Test başarısız olduğunda veya review değişiklik istediğinde ilgili Coder’a temizlenmiş test logu ve review gerekçesi verilerek sınırlı yeni deneme açılmalı. Bugün Coder retry’ı aynı brief’le çalışıyor.
+2. **Reviewer bulguları.** Review kararı yapılandırılmış bulgularla (dosya, sorun, beklenen değişiklik) dönmeli. Bu, düzeltme döngüsünün girdisi olur.
+3. **`needs_input` gerekçesi.** Dialog run’ın neden durduğunu (test hatası, review reddi) yazmalı.
+4. **Taslak kalıcılığı.** Onaylanmamış plan sidecar yeniden başlarsa kayboluyor.
+5. **Plan düzenleme.** Plan yalnızca onaylanabiliyor veya atılabiliyor; düzenlenen plan da host doğrulamasından geçmeli.
+6. **Context Manager.** Daha büyük kapsamlar veya gerçek kullanımda bağlam sorunu görüldüğünde.
+7. **Jev.** Sidecar’a gözlem modunda bağlanmalı ve sonuç denemeyle birlikte kaydedilmeli.
+8. **Planner logu.** Planlama run kaydından önce çalıştığı için tutulmuyor.
+
+Kapsam dışı bırakılanlar: eşzamanlı run’lar ve birden fazla Tester komutu.
 
 ## Faz 4: Paralel Coder
 
