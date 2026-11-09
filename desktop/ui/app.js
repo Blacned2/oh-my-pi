@@ -8,9 +8,9 @@
   let layout = null; // set up below; showView() runs before that
   const sessions = new Map(); // sid -> { sid, api, tab, cwd, status: { text, kind } }
   const focusChat = () => sessions.get(layout?.focused)?.api.focus();
-  // ---- tabs: Chat | Stats | Settings (settings.js fills the last) --------
+  // ---- tabs: Chat | Stats | Graph | Settings (settings.js fills the last) --------
   const VIEW_KEY = "kostomp-view";
-  const VIEWS = ["chat", "stats", "settings"];
+  const VIEWS = ["chat", "stats", "graph", "settings"];
   const tabs = [...document.querySelectorAll(".tabs [role=tab]")];
   const gear = $("gear");
   function showView(name) {

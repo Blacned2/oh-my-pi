@@ -4,6 +4,8 @@ The [implementation plan](../docs/kostomp-graph-plan.md) defines the workflow an
 
 ## Run from Desktop
 
+Open **Graph** in the Desktop view tabs. The left **Runs** list opens saved runs, and **New run** or **Plan draft** returns to the composer. Pick the Git repository with the shared project browser, write the objective, and enter or paste the approved paths. The composer shows each added path as a removable item.
+
 Use a full Desktop build with the bundled OMP runtime. Create `graph/profile.json` under the app data directory, normally `%APPDATA%\dev.kostomp.desktop`. The sidecar reports the exact path when the profile is missing. Set a model provider and model ID plus a host-approved Docker profile. A profile looks like this with local values substituted.
 
 ```json
@@ -19,7 +21,7 @@ Use a full Desktop build with the bundled OMP runtime. Create `graph/profile.jso
 }
 ```
 
-Provision the model and credentials in `graph/profile-home/.omp/agent/` using the normal OMP profile files. Each worker attempt runs headless in its own process with a private copy of that directory, which is deleted afterwards. The source profile is never written, so a token refreshed during an attempt is not saved back. API-key profiles are unaffected. The optional `"maxCoders"` field (an integer from 1 to 4, default 2) limits how many Coders run at once. The Graph dialog accepts a clean checkout, an objective and up to 32 approved repository-relative file paths.
+Provision the model and credentials in `graph/profile-home/.omp/agent/` using the normal OMP profile files. Each worker attempt runs headless in its own process with a private copy of that directory, which is deleted afterwards. The source profile is never written, so a token refreshed during an attempt is not saved back. API-key profiles are unaffected. The optional `"maxCoders"` field (an integer from 1 to 4, default 2) limits how many Coders run at once. The Graph composer accepts a clean checkout, an objective and up to 32 approved repository-relative file paths.
 
 **Propose plan** runs a Planner that reads the approved files and proposes Coder tasks with dependencies and per-task file ownership. The host admits a proposal only if every written path is an approved spelling, each file has one owner, dependencies name existing tasks and form no cycle, and no path collides on Windows by case, Unicode form, directory overlap, an 8.3 short name or a differently spelled file in the pinned tree. A rejected proposal is returned to the Planner for correction. The dialog shows the admitted plan. No Coder runs until you choose **Approve and run**. Approval names the exact plan shown. The host rejects it if the plan, `profile.json` settings or source commit changed, then saves the plan and its hash with the run. **Discard plan** drops the proposal and **Cancel** stops planning or the active run.
 
@@ -71,12 +73,13 @@ The workspace layer in `workspace.ts` pins a clean SHA-1 Git checkout in an inde
 
 ### Sidecar protocol and data
 
-The Desktop bridge (`desktop/src/graph.rs`) exposes one Tauri command, `graph_request`, and forwards each request as one JSON line to the sidecar; the sidecar answers `{ ok, data }` or `{ ok: false, error }` on one line. The dialog polls `status` every 800 ms; there is no event stream.
+The Desktop bridge (`desktop/src/graph.rs`) exposes one Tauri command, `graph_request`, and forwards each request as one JSON line to the sidecar. The sidecar answers `{ ok, data }` or `{ ok: false, error }` on one line. The Graph view polls `status` while visible.
 
 | Operation | Effect |
 | --- | --- |
 | `status` | Selected run, node states, retryable and resumable steps, steps with logs, test failure observation, release status, active planning and the current draft. |
 | `list`, `open` | Recent runs (up to 50) and run selection. |
+| `compose` | Return to the composer and retain the current draft. |
 | `plan`, `edit`, `approve`, `discard` | Start the Planner, validate and save a draft revision, approve the shown draft by ID and hash, or drop it. |
 | `retry`, `resume`, `cancel` | Retry one eligible step, continue queued work, or stop planning or the active run. |
 | `log`, `patch` | The latest attempt's log for a step, and the verified patch after a fresh source check. |

@@ -1,7 +1,20 @@
 (() => {
   const { invoke } = window.__TAURI__.core;
-  const dialog = document.getElementById("graph-dialog");
+  const { browseFolder, folderName, saveRecent } = window.KostompFolders;
+  const panel = document.getElementById("graph");
+  const workspace = panel.querySelector(".graph-workspace");
+  const title = document.getElementById("graph-title");
+  const intro = document.getElementById("graph-intro");
+  const runRepo = document.getElementById("graph-run-repo");
   const form = document.getElementById("graph-form");
+  const repoButton = document.getElementById("graph-repository");
+  const repoValue = document.getElementById("graph-repository-value");
+  const repoPath = document.getElementById("graph-repository-path");
+  const objective = document.getElementById("graph-objective");
+  const fileInput = document.getElementById("graph-files-input");
+  const fileList = document.getElementById("graph-files");
+  const fileCount = document.getElementById("graph-files-count");
+  const addFilesButton = document.getElementById("graph-add-files");
   const start = document.getElementById("graph-start");
   const cancel = document.getElementById("graph-cancel");
   const showPatch = document.getElementById("graph-patch");
@@ -13,6 +26,11 @@
   const logs = document.getElementById("graph-logs");
   const failureObservation = document.getElementById("graph-failure-observation");
   const history = document.getElementById("graph-history");
+  const historyEmpty = document.getElementById("graph-history-empty");
+  const newRun = document.getElementById("graph-new");
+  const newLabel = document.getElementById("graph-new-label");
+  const activityActions = document.getElementById("graph-activity-actions");
+  const runActions = document.getElementById("graph-run-actions");
   const retryNode = document.getElementById("graph-retry-node");
   const retry = document.getElementById("graph-retry");
   const resume = document.getElementById("graph-resume");
@@ -34,9 +52,17 @@
   const showLog = document.getElementById("graph-show-log");
   const log = document.getElementById("graph-log");
   const states = { ready_to_export: "Verified patch ready", needs_input: "Graph needs input", stale_base: "Source checkout changed" };
+  const maxFiles = 32;
+  const approvedFiles = new Set();
+  let repository = "";
+  let formBusy = false;
+  let submittingPlan = false;
+  let browsing = false;
   let polling;
   let pending = Promise.resolve();
   let generation = 0;
+  let historyLoaded = false;
+  let interactionError = "";
   let currentRun;
   let shownPlan = "";
   /** The proposal on screen. Approval names it so the host rejects a plan the user has not seen. */
@@ -45,6 +71,64 @@
   /** `run:node:attempt` of the log on screen. A newer attempt hides it. */
   let shownLog = "";
   let logKeys = new Map();
+
+  function setRepository(path) {
+    repository = path;
+    repoValue.textContent = folderName(path) || "Choose a repository";
+    repoPath.textContent = path;
+    repoPath.hidden = !path;
+    repoButton.title = path;
+  }
+
+  function pathsFromInput() {
+    return fileInput.value.split(/\r?\n/).map(line => line.trim().replaceAll("\\", "/")).filter(Boolean);
+  }
+
+  function updateComposer() {
+    const pendingPaths = pathsFromInput();
+    const count = new Set([...approvedFiles, ...pendingPaths]).size;
+    fileCount.textContent = `${count} / ${maxFiles}`;
+    fileCount.classList.toggle("over-limit", count > maxFiles);
+    fileInput.setCustomValidity(count > maxFiles ? `Use at most ${maxFiles} approved files.` : "");
+    addFilesButton.disabled = !pendingPaths.length;
+    start.disabled = formBusy || submittingPlan || !repository || !objective.value.trim() || !count || count > maxFiles;
+  }
+
+  function renderFiles() {
+    fileList.replaceChildren(...[...approvedFiles].map(path => {
+      const item = document.createElement("li");
+      const label = document.createElement("span");
+      label.textContent = path;
+      label.title = path;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `Remove ${path}`);
+      remove.textContent = "×";
+      remove.addEventListener("click", () => {
+        approvedFiles.delete(path);
+        renderFiles();
+        fileInput.focus();
+      });
+      item.append(label, remove);
+      return item;
+    }));
+    fileList.hidden = !approvedFiles.size;
+    updateComposer();
+  }
+
+  function addFiles(focusInput = true) {
+    if (!fileInput.reportValidity()) return;
+    for (const path of pathsFromInput()) approvedFiles.add(path);
+    fileInput.value = "";
+    renderFiles();
+    if (focusInput) fileInput.focus();
+  }
+
+  function showStatus(label, kind = "") {
+    if (status.textContent !== label) status.textContent = label;
+    status.hidden = !label;
+    status.dataset.kind = kind;
+  }
 
   function renderTasks(list) {
     tasks.replaceChildren(...list.map(task => {
@@ -119,25 +203,46 @@
 
   async function refresh() {
     const snapshot = await request("status");
-    start.disabled = !!snapshot?.busy;
-    cancel.disabled = !snapshot?.running && !snapshot?.planning;
-    showPatch.disabled = snapshot?.status !== "ready_to_export";
     const runId = snapshot?.run?.id;
-    if (showPatch.disabled || currentRun !== runId) {
+    const composing = !runId;
+    const planning = composing && !!snapshot?.planning;
+    form.hidden = !composing;
+    formBusy = !!snapshot?.busy;
+    updateComposer();
+    cancel.hidden = !snapshot?.running && !planning;
+    showPatch.hidden = snapshot?.status !== "ready_to_export";
+    activityActions.hidden = cancel.hidden && showPatch.hidden;
+    if (showPatch.hidden || currentRun !== runId) {
       output.value = "";
       patchView.hidden = true;
       patchView.open = false;
     }
     currentRun = runId;
-    history.value = runId ?? "";
-    const draft = snapshot?.draft;
+    for (const button of history.querySelectorAll("button")) {
+      if (button.dataset.run === runId) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    }
+    if (composing) newRun.setAttribute("aria-current", "page");
+    else newRun.removeAttribute("aria-current");
+    newLabel.textContent = snapshot?.draft ? "Plan draft" : "New run";
+    const draft = composing ? snapshot?.draft : undefined;
     const context = snapshot?.run?.context;
+    title.textContent = composing ? "Plan a change" : context?.objective.trim().replace(/\s+/g, " ").slice(0, 200) || "Saved run";
+    intro.hidden = !composing;
+    runRepo.hidden = !context?.sourceRoot;
+    runRepo.textContent = context?.sourceRoot ?? "";
     const planTasks = draft?.tasks ?? context?.tasks;
     const planKey = draft ? `draft:${draft.id}:${draft.hash}` : context?.planHash ? `run:${runId}` : "";
     if (planKey !== shownPlan) {
       shownPlan = planKey;
       shownDraft = draft;
       if (editingDraft) closeEditor();
+      if (draft && !repository && !objective.value && !approvedFiles.size && !fileInput.value) {
+        setRepository(draft.source);
+        objective.value = draft.objective;
+        for (const path of draft.files) approvedFiles.add(path);
+        renderFiles();
+      }
       planSummary.hidden = !draft;
       planSummary.textContent = draft ? `${draft.objective} · ${draft.source}` : "";
       renderTasks(planTasks ?? []);
@@ -152,6 +257,8 @@
     }
     retry.disabled = retryNode.disabled = eligible.length === 0;
     resume.hidden = !snapshot?.resumable;
+    runActions.hidden = retry.disabled && resume.hidden;
+    retryNode.hidden = retry.hidden = retry.disabled;
     const logged = snapshot?.logs ?? [];
     logKeys = new Map(logged.map(id => [id, `${runId ?? snapshot.plannerLogId}:${id}:${snapshot.run?.nodes[id]?.attempt ?? 0}`]));
     if (logged.join() !== [...logNode.options].map(option => option.value).join()) {
@@ -178,60 +285,121 @@
       item.textContent = `${role} · ${phase}${state.error ? ` · ${state.error}` : ""}`;
       return item;
     }));
-    const label =
-      snapshot?.error ||
-      snapshot?.planError ||
-      (snapshot?.planning ? "Planning…" : "") ||
+    const error = interactionError || snapshot?.error || (composing && snapshot?.planError);
+    const label = error ||
+      (planning ? "Planning…" : "") ||
       (draft && !snapshot?.run ? "Review the plan. Coders start only after approval." : "") ||
       snapshot?.reason ||
       states[snapshot?.status] ||
       (snapshot?.running ? "Graph running" : snapshot?.run?.cancelled ? "Run cancelled" : snapshot?.run ? "Run finished" : "");
-    if (status.textContent !== label) status.textContent = label;
+    showStatus(label, error ? "error" : snapshot?.status ?? "");
   }
 
   async function refreshHistory() {
     const runs = await request("list");
-    history.replaceChildren(new Option("Select a run", ""), ...runs.map(run => {
-      const objective = run.context?.objective.trim().replace(/\s+/g, " ").slice(0, 70);
-      return new Option(`${objective || "Saved run"} · ${run.id.slice(0, 8)}`, run.id);
+    history.replaceChildren(...runs.map(run => {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.run = run.id;
+      button.className = "graph-run-item";
+      const name = document.createElement("span");
+      name.className = "graph-run-name";
+      name.textContent = run.context?.objective.trim().replace(/\s+/g, " ") || "Saved run";
+      const detail = document.createElement("span");
+      detail.className = "graph-run-detail";
+      detail.textContent = folderName(run.context?.sourceRoot ?? "") || run.id.slice(0, 8);
+      button.title = name.textContent;
+      button.append(name, detail);
+      item.append(button);
+      return item;
     }));
+    historyEmpty.hidden = runs.length > 0;
+    historyLoaded = true;
     await refresh();
   }
 
-  function action(run) {
-    pending = pending.then(run).catch(error => {
-      status.textContent = error.message || String(error);
+  function action(run, background = false) {
+    pending = pending.then(() => {
+      if (!background) interactionError = "";
+      return run();
+    }).catch(error => {
+      const message = error?.message || String(error);
+      if (!background) interactionError = message;
+      showStatus(message, "error");
     });
     return pending;
   }
 
   function tick(current) {
-    if (!dialog.open || current !== generation) return;
-    void action(refresh).finally(() => {
-      if (dialog.open && current === generation) polling = setTimeout(() => tick(current), 800);
+    if (panel.hidden || current !== generation) return;
+    void action(historyLoaded ? refresh : refreshHistory, true).finally(() => {
+      if (!panel.hidden && current === generation) {
+        polling = setTimeout(() => tick(current), status.dataset.kind === "error" ? 2500 : 800);
+      }
     });
   }
 
-  document.getElementById("graph-open").addEventListener("click", () => {
-    dialog.showModal();
-    void action(refreshHistory);
-    tick(++generation);
+  function onView() {
+    clearTimeout(polling);
+    const current = ++generation;
+    if (panel.hidden) return;
+    historyLoaded = false;
+    tick(current);
+  }
+
+  document.addEventListener("kostomp-view", onView);
+  onView();
+  newRun.addEventListener("click", () => void action(async () => {
+    await request("compose");
+    await refresh();
+    workspace.scrollTop = 0;
+    repoButton.focus();
+  }));
+  repoButton.addEventListener("click", async () => {
+    if (browsing) return;
+    browsing = true;
+    try {
+      const picked = await browseFolder(repository, { allowCreate: false });
+      if (picked) {
+        setRepository(picked);
+        saveRecent(picked);
+        updateComposer();
+      }
+    } catch (error) {
+      showStatus(error?.message || String(error), "error");
+    } finally {
+      browsing = false;
+    }
   });
-  document.getElementById("graph-close").addEventListener("click", () => dialog.close());
-  dialog.addEventListener("close", () => { generation++; clearTimeout(polling); });
+  objective.addEventListener("input", updateComposer);
+  fileInput.addEventListener("input", updateComposer);
+  addFilesButton.addEventListener("click", addFiles);
+  fileInput.addEventListener("keydown", event => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      addFiles();
+    }
+  });
   form.addEventListener("submit", event => {
     event.preventDefault();
+    if (start.disabled) return;
+    const input = {
+      source: repository,
+      objective: objective.value.trim(),
+      files: [...new Set([...approvedFiles, ...pathsFromInput()])],
+    };
+    addFiles(false);
+    submittingPlan = true;
+    updateComposer();
     void action(async () => {
-      const fields = new FormData(form);
-      await request("plan", {
-        source: fields.get("source").trim(),
-        objective: fields.get("objective").trim(),
-        files: fields.get("files").split(/\r?\n/).map(line => line.trim()).filter(Boolean),
-      });
-      output.value = "";
-      patchView.hidden = true;
-      patchView.open = false;
-      await refresh();
+      try {
+        await request("plan", input);
+        await refresh();
+      } finally {
+        submittingPlan = false;
+        updateComposer();
+      }
     });
   });
   approve.addEventListener("click", () => {
@@ -279,9 +447,13 @@
     await request("cancel");
     await refresh();
   }));
-  history.addEventListener("change", () => {
-    const id = history.value;
-    if (id) void action(async () => { await request("open", id); await refresh(); });
+  history.addEventListener("click", event => {
+    const id = event.target.closest("button[data-run]")?.dataset.run;
+    if (id) void action(async () => {
+      await request("open", id);
+      await refresh();
+      workspace.scrollTop = 0;
+    });
   });
   retry.addEventListener("click", () => {
     const node = retryNode.value;

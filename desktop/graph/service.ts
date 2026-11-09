@@ -38,7 +38,7 @@ const profileSchema = type({
 	},
 });
 const draftSelection = type({ draft: "string", hash: "string" });
-const requestSchema = type({ op: "'status' | 'cancel' | 'patch' | 'list' | 'resume' | 'discard'" })
+const requestSchema = type({ op: "'status' | 'cancel' | 'patch' | 'list' | 'resume' | 'discard' | 'compose'" })
 	.or({ op: "'plan'", input: "unknown" })
 	.or({ op: "'approve'", input: draftSelection })
 	.or({ op: "'edit'", input: draftSelection.and({ plan: "unknown" }) })
@@ -252,6 +252,10 @@ function selectedRun(): GraphRun | null {
 
 async function handle(request: typeof requestSchema.infer) {
 	if (request.op === "list") return store.recent();
+	if (request.op === "compose") {
+		selected = undefined;
+		return null;
+	}
 	if (request.op === "open") {
 		if (!store.get(request.input)) throw new Error("Unknown Graph run");
 		selected = request.input;

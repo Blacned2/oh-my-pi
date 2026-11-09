@@ -405,6 +405,12 @@ try {
 	await request({ op: "plan", input });
 	const discarded = (await settle()).draft;
 	if (!discarded) throw new Error("Planner produced no draft to discard");
+	await request({ op: "open", input: id });
+	strictEqual((await settle()).run?.id, id);
+	await request({ op: "compose" });
+	status = await settle();
+	strictEqual(status.run, undefined, "Returning to the composer clears the historical run selection");
+	deepStrictEqual(status.draft, discarded, "Returning to the composer preserves the saved draft");
 	omitPlan = true;
 	await request({ op: "plan", input });
 	await settle();
