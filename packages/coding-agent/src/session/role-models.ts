@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
 import type { ModelRegistry } from "../config/model-registry";
+import { cfgModelRoleStorage } from "../config/model-settings";
 import { formatModelSelectorValue, parseModelString } from "@oh-my-pi/pi-tui/overlays/model-selector";
 import {
 	extractExplicitThinkingSelector,
@@ -31,6 +32,26 @@ export function formatRoleModelValue(
 		},
 	});
 	return formatModelSelectorValue(modelKey, thinkingLevel);
+}
+
+/**
+ * Remember an explicit model pick as the `default` role so the next new session
+ * starts on it, in the scope `modelRoleStorage` selects (global by default).
+ * The role's existing thinking suffix is preserved by
+ * {@link formatRoleModelValue}.
+ */
+export function rememberDefaultModel(
+	settings: Settings,
+	modelRegistry: ModelRegistry,
+	model: Model,
+	selector?: string,
+): void {
+	const value = formatRoleModelValue(settings, modelRegistry, "default", model, selector);
+	if (cfgModelRoleStorage.get(settings) === "project") {
+		settings.setProjectModelRole("default", value);
+	} else {
+		settings.setModelRole("default", value);
+	}
 }
 
 /** Resolves a configured model target relative to the current provider. */

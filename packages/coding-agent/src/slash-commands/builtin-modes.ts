@@ -26,6 +26,7 @@ import { describeLoopLimitRuntime } from "../modes/loop-limit";
 import type { InteractiveModeContext } from "../modes/types";
 import ratchetKickoffPrompt from "../prompts/ratchet-kickoff.md" with { type: "text" };
 import type { AgentSession } from "../session/agent-session";
+import { rememberDefaultModel } from "../session/role-models";
 import { CLI_THINKING_LEVELS, getConfiguredThinkingLevelMetadata } from "@oh-my-pi/pi-tui/thinking";
 import { noThinkingMessage, resolveThinkingArgument } from "./helpers/effort";
 import { commandConsumed, errorMessage, usage } from "./helpers/parse";
@@ -432,6 +433,7 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 				}
 				try {
 					await runtime.session.setModel(match);
+					rememberDefaultModel(runtime.settings, runtime.session.modelRegistry, match);
 					if (resolved.thinkingLevel !== undefined) runtime.session.setThinkingLevel(resolved.thinkingLevel);
 					await runtime.output(`Model set to ${match.provider}/${match.id}.`);
 					await runtime.notifyTitleChanged?.();
@@ -457,9 +459,9 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		name: "switch",
 		icon: "swap",
 		get description() {
-			return `Switch model for this session (same as ${formatKeyHint("alt+p")}); accepts fuzzy ids, provider/id, @role, :level`;
+			return `Switch model (same as ${formatKeyHint("alt+p")}); new sessions remember it; accepts fuzzy ids, provider/id, @role, :level`;
 		},
-		acpDescription: "Switch model for this session only",
+		acpDescription: "Switch model; new sessions remember it",
 		acpInputHint: "[model]",
 		inlineHint: "[model]",
 		allowArgs: true,
@@ -479,8 +481,10 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 			const resolved = resolveSessionModelSelector(selector, runtime.session, runtime.settings);
 			if (!resolved.model) return usage(`Unknown model: ${selector}`, runtime);
 			try {
-				await runtime.session.setModelTemporary(resolved.model, resolved.thinkingLevel);
-				await runtime.output(`Session-only model: ${formatModelString(resolved.model)}.`);
+				await runtime.session.setModelTemporary(resolved.model, resolved.thinkingLevel, {
+					rememberAsDefault: true,
+				});
+				await runtime.output(`Model: ${formatModelString(resolved.model)} (remembered for new sessions).`);
 				await runtime.notifyTitleChanged?.();
 				await runtime.notifyConfigChanged?.();
 				return commandConsumed();

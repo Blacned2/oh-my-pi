@@ -2,7 +2,7 @@
  * Discover local Collab hosts and retrieve a link on explicit request.
  */
 import { Args, CliUsageError, Command, Flags } from "@oh-my-pi/pi-utils/cli";
-import { runCollabLinkCommand, runCollabListCommand } from "../cli/collab-cli";
+import { runCollabLinkCommand, runCollabListCommand, runCollabPairCommand } from "../cli/collab-cli";
 import { collabHelp as commandHelp } from "../cli/command-help";
 import { CollabLinkError } from "../collab/registry";
 
@@ -11,9 +11,9 @@ export default class Collab extends Command {
 
 	static args = {
 		action: Args.string({
-			description: "list (default) or link",
+			description: "list (default), link, or pair",
 			required: false,
-			options: ["list", "link"],
+			options: ["list", "link", "pair"],
 		}),
 		selector: Args.string({ description: "Host instance ID or PID (link only)", required: false }),
 	};
@@ -31,6 +31,7 @@ export default class Collab extends Command {
 		"omp collab list --json",
 		"omp collab link <instanceId|pid>",
 		"omp collab link <pid> --view",
+		"omp collab pair",
 	];
 
 	async run(): Promise<void> {
@@ -40,6 +41,14 @@ export default class Collab extends Command {
 				throw new CliUsageError("collab list accepts no selector or --view (usage: collab list [--json])");
 			}
 			await runCollabListCommand({ json: flags.json });
+			return;
+		}
+
+		if (args.action === "pair") {
+			if (argv.length > 1 || flags.view || flags.json) {
+				throw new CliUsageError("collab pair accepts no selector or flags (usage: collab pair)");
+			}
+			await runCollabPairCommand();
 			return;
 		}
 

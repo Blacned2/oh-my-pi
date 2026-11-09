@@ -51,6 +51,17 @@ export interface TurnUsageSummary {
 	readonly output: number;
 	/** Billed cost in dollars. */
 	readonly cost: number;
+	/** Prompt tokens read back from the provider cache across the turn's requests. */
+	readonly cacheRead?: number;
+	/**
+	 * Share of the turn's prompt tokens served from cache (0..1): cache reads
+	 * over reads + writes + uncached input. Undefined when no prompt tokens were sent.
+	 */
+	readonly cacheHit?: number;
+	/** Tool calls the model issued during the turn. */
+	readonly tools?: number;
+	/** Tool calls whose result came back as an error. */
+	readonly toolErrors?: number;
 }
 
 /**
@@ -61,12 +72,26 @@ export class TurnUsageTally {
 	#input = 0;
 	#output = 0;
 	#cost = 0;
+	#cacheRead = 0;
+	/** Main-request prompt tokens (uncached input + cache writes + cache reads), the cache-hit denominator. */
+	#prompt = 0;
+	#tools = 0;
+	#toolErrors = 0;
 
 	/** Drop a partial turn (a new prompt, a fresh run). */
 	reset(): void {
 		this.#input = 0;
 		this.#output = 0;
 		this.#cost = 0;
+		this.#cacheRead = 0;
+		this.#prompt = 0;
+		this.#tools = 0;
+		this.#toolErrors = 0;
+	}
+
+	/** Record a tool result of the running turn; errors show on the turn's receipt. */
+	noteToolResult(isError: boolean): void {
+		if (isError) this.#toolErrors++;
 	}
 
 	add(message: AssistantMessage, turnStartedAt: number | undefined): TurnUsageSummary | undefined {
@@ -74,14 +99,21 @@ export class TurnUsageTally {
 		this.#input += usage.input + usage.cacheWrite + (usage.orchestration?.input ?? 0);
 		this.#output += usage.output + (usage.orchestration?.output ?? 0);
 		this.#cost += usage.cost.total;
+		this.#cacheRead += usage.cacheRead;
+		this.#prompt += usage.input + usage.cacheWrite + usage.cacheRead;
+		for (const block of message.content) if (block.type === "toolCall") this.#tools++;
 		if (message.stopReason === "toolUse") return undefined;
-		const summary =
+		const summary: TurnUsageSummary | undefined =
 			this.#input + this.#output > 0 || this.#cost > 0
 				? {
 						elapsedMs: turnElapsedMs(turnStartedAt, message),
 						input: this.#input,
 						output: this.#output,
 						cost: this.#cost,
+						cacheRead: this.#cacheRead,
+						cacheHit: this.#prompt > 0 ? this.#cacheRead / this.#prompt : undefined,
+						tools: this.#tools,
+						toolErrors: this.#toolErrors,
 					}
 				: undefined;
 		this.reset();

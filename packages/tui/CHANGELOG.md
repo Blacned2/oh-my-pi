@@ -45,6 +45,10 @@
 - Fixed unnecessary repainting in the setup wizard while waiting for input in ANSI terminals.
 - Fixed Windows ConPTY event handling so delayed terminal event data no longer appears in the composer.
 - Fixed OSC 8 hyperlink support in Rex terminals so transcript URLs and file paths are command-clickable.
+### Fixed
+
+- Attached images in user prompts render below the message box instead of inside it
+- Agent transcripts opened in the native Agent Hub viewer start at the newest message instead of the top of the conversation
 
 ## [18.18.1] - 2026-11-08
 

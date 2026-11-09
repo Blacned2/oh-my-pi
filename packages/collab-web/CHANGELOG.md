@@ -7,6 +7,17 @@
 ### Changed
 
 - `ask` tool cards show the HTML form's fieldset legends and field count while pending, and each question with its submitted answer (or "(no answer)") once answered, flagging submissions made by the timeout
+### Added
+
+- After pasting the token from `omp collab pair`, the sessions live on this machine appear as tabs next to the pasted ones; the link is fetched only when you select a tab
+- Sessions joined in this browser tab appear as tabs above the chat, with a `+` button and per-tab close
+- Prompt composer recalls previously sent prompts with ArrowUp/ArrowDown and shows a keyboard hint bar
+- Settings menu with a language selector (Turkish by default, English available), theme choice and the list of sessions joined in this browser tab; prompt history now survives a page reload within the tab
+
+### Changed
+
+- The standalone theme toggle is replaced by the settings menu
+- Redesigned the guest chat as "Ink Rails": centred 760px transcript with coloured left rails per role, blue inline code, colour-coded tool cards, a slim info row and a raised gradient-send composer
 
 ## [18.15.0] - 2026-11-01
 

@@ -2583,15 +2583,6 @@ export interface InlineSloppyRegion {
   payload: string
 }
 
-/**
- * Moves this process's SQLite record locks onto open-file-description locks.
- *
- * No other close of the file can release those (see `ofd_locks.rs`). Call it
- * before the process opens any SQLite database. Returns whether SQLite now
- * uses them: `false` outside Linux, or when Bun's SQLite is not found.
- */
-export declare function installSqliteLockShim(): boolean
-
 /** Options for `IpcConnection.connect`. */
 export interface IpcConnectOptions {
   /**
@@ -2604,17 +2595,6 @@ export interface IpcConnectOptions {
   /** Max bytes of one received line (lines framing). Default 64 MiB. */
   maxFrameBytes?: number
 }
-
-/**
- * Platform endpoint for `name` scoped to directory `dir`.
- *
- * Unix: `<dir>/<stem>.sock`; when that path does not fit `sun_path` (104 bytes
- * on macOS/BSD, 108 on Linux, including NUL), `/tmp/omp-<euid>/<hash16>.sock`.
- * Windows: `\\.\pipe\omp-<stem>-<hash16(lowercase(resolve(dir)))>`.
- * `stem` is `name` with every char outside `[A-Za-z0-9._-]` replaced by "_".
- * Pure and deterministic: every process computes the same endpoint.
- */
-export declare function ipcEndpoint(dir: string, name: string): string
 
 /** Options for `IpcServer.listen`. */
 export interface IpcListenOptions {
@@ -2629,9 +2609,6 @@ export interface IpcListenOptions {
    */
   maxFrameBytes?: number
 }
-
-/** Kind enum of the backend selected by default for this build target. */
-export declare function isoBackend(): IsoBackendKind
 
 /**
  * Isolation backend identifier. Numeric so the JS side can `switch` on
@@ -2655,16 +2632,6 @@ export declare enum IsoChangeKind {
   Removed = 2
 }
 
-/**
- * Capture the changes between `lower` and `merged`.
- *
- * Uses [`pi_iso::IsolationBackend::diff`]'s default implementation —
- * `git diff` when `merged/.git` exists, otherwise a mtime-skipped tree
- * walk. The backend selection only affects the lifecycle methods; diff
- * behaviour is uniform.
- */
-export declare function isoDiff(lower: string, merged: string): Promise<IsoDiff>
-
 export interface IsoDiff {
   files: Array<IsoFileChange>
 }
@@ -2681,19 +2648,6 @@ export interface IsoFileChange {
   diff?: string
 }
 
-/**
- * True if `message` is an error message produced by [`IsoError::Unavailable`].
- * Use this to distinguish "this backend isn't installed" from a hard
- * failure when handling caught errors on the JS side.
- */
-export declare function isoIsUnavailableError(message: string): boolean
-
-/**
- * Probe whether the requested backend can start on this host. Pass
- * `null`/omit `kind` to probe the platform-native backend.
- */
-export declare function isoProbe(kind?: IsoBackendKind | undefined | null): IsoProbeResult
-
 /** Probe result for a specific isolation backend. */
 export interface IsoProbeResult {
   /** True when the backend's prerequisites are satisfied. */
@@ -2703,15 +2657,6 @@ export interface IsoProbeResult {
   /** Resolved backend kind. */
   kind: IsoBackendKind
 }
-
-/**
- * Pick the best backend available right now.
- *
- * `preferred` is treated as a hint — see [`pi_iso::resolve`] for the exact
- * priority rules. Backend probes may spawn CLIs, so they run on the native
- * blocking pool.
- */
-export declare function isoResolve(preferred?: IsoBackendKind | undefined | null): Promise<IsoResolveResult>
 
 /** Outcome of [`iso_resolve`]. */
 export interface IsoResolveResult {
@@ -2727,6 +2672,61 @@ export interface IsoResolveResult {
   /** Human-readable reason for the fallback, if any. */
   reason?: string
 }
+
+/**
+ * Moves this process's SQLite record locks onto open-file-description locks.
+ *
+ * No other close of the file can release those (see `ofd_locks.rs`). Call it
+ * before the process opens any SQLite database. Returns whether SQLite now
+ * uses them: `false` outside Linux, or when Bun's SQLite is not found.
+ */
+export declare function installSqliteLockShim(): boolean
+
+/**
+ * Platform endpoint for `name` scoped to directory `dir`.
+ *
+ * Unix: `<dir>/<stem>.sock`; when that path does not fit `sun_path` (104 bytes
+ * on macOS/BSD, 108 on Linux, including NUL), `/tmp/omp-<euid>/<hash16>.sock`.
+ * Windows: `\\.\pipe\omp-<stem>-<hash16(lowercase(resolve(dir)))>`.
+ * `stem` is `name` with every char outside `[A-Za-z0-9._-]` replaced by "_".
+ * Pure and deterministic: every process computes the same endpoint.
+ */
+export declare function ipcEndpoint(dir: string, name: string): string
+
+/** Kind enum of the backend selected by default for this build target. */
+export declare function isoBackend(): IsoBackendKind
+
+/**
+ * Capture the changes between `lower` and `merged`.
+ *
+ * Uses [`pi_iso::IsolationBackend::diff`]'s default implementation —
+ * `git diff` when `merged/.git` exists, otherwise a mtime-skipped tree
+ * walk. The backend selection only affects the lifecycle methods; diff
+ * behaviour is uniform.
+ */
+export declare function isoDiff(lower: string, merged: string): Promise<IsoDiff>
+
+/**
+ * True if `message` is an error message produced by [`IsoError::Unavailable`].
+ * Use this to distinguish "this backend isn't installed" from a hard
+ * failure when handling caught errors on the JS side.
+ */
+export declare function isoIsUnavailableError(message: string): boolean
+
+/**
+ * Probe whether the requested backend can start on this host. Pass
+ * `null`/omit `kind` to probe the platform-native backend.
+ */
+export declare function isoProbe(kind?: IsoBackendKind | undefined | null): IsoProbeResult
+
+/**
+ * Pick the best backend available right now.
+ *
+ * `preferred` is treated as a hint — see [`pi_iso::resolve`] for the exact
+ * priority rules. Backend probes may spawn CLIs, so they run on the native
+ * blocking pool.
+ */
+export declare function isoResolve(preferred?: IsoBackendKind | undefined | null): Promise<IsoResolveResult>
 
 /**
  * Materialise `merged` as a writable view of `lower` using the requested

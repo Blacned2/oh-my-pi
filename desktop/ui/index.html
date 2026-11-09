@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kostomp</title>
+<!-- Apply the stored theme before first paint so the window never flashes the wrong palette. -->
+<script>
+  (() => {
+    const p = localStorage.getItem("kostomp-theme");
+    const pref = p === "light" || p === "dark" ? p : "system";
+    const dark = pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    // Window material (glass|opaque), injected by the Rust side before any page script runs.
+    const m = window.__KOSTOMP_MATERIAL__;
+    document.documentElement.dataset.material = m && m.glass ? "glass" : "opaque";
+    if (m) document.documentElement.style.setProperty("--glass-a", String(m.settings.tint / 100));
+  })();
+</script>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="blobs" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
+<header class="topbar">
+  <img class="logo" src="logo.png" alt="Kostomp" title="Kostomp" draggable="false">
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Views" data-view="chat">
+    <span class="thumb" aria-hidden="true"></span>
+    <button type="button" role="tab" id="tab-chat" data-view="chat" aria-controls="chat" aria-selected="true" aria-label="Chat" title="Chat">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    </button>
+    <button type="button" role="tab" id="tab-stats" data-view="stats" aria-controls="stats" aria-selected="false" aria-label="Stats" title="Stats">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
+    </button>
+  </nav>
+  <div class="spacer"></div>
+  <div class="status" id="status">starting…</div>
+  <button type="button" id="update" class="link update" hidden></button>
+  <button type="button" id="theme" class="icon" title="Theme"></button>
+      <div class="layout-anchor">
+        <button type="button" id="layout-btn" class="layout-btn" aria-haspopup="true" aria-expanded="false" aria-controls="layout-menu" title="Layouts (Alt+L switches)">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M8 2.5v11M8 8h6"/></svg>
+          <span class="layout-name"></span>
+          <span class="layout-dot" aria-hidden="true"></span>
+        </button>
+        <div id="layout-menu" class="layout-menu" role="menu" aria-label="Layouts" hidden></div>
+      </div>
+  <div class="anchor">
+    <button type="button" id="gear" class="icon" title="Settings" aria-label="Settings" aria-controls="settings">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+    </button>
+  </div>
+</header>
+
+<main>
+  <section id="chat" class="view" role="tabpanel" aria-labelledby="tab-chat">
+    <aside id="sidebar" class="sidebar" aria-label="Open chats">
+      <div class="side-head">
+        <span class="side-title">Chats</span>
+        <button type="button" id="side-toggle" class="icon side-toggle" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse sidebar" title="Collapse sidebar (Ctrl+B)">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9 4v16"/><path class="chev" d="M16 9.5 13.5 12l2.5 2.5"/></svg>
+        </button>
+      </div>
+      <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Open chats" aria-orientation="vertical">
+        <button type="button" id="session-add" class="new-chat" title="New session" aria-label="New session">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span class="new-chat-label">New chat</span>
+        </button>
+        <button type="button" id="sessions-open" class="new-chat sessions-open" title="Open the sessions list as a tab" aria-label="Open the sessions list">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+          <span class="new-chat-label">Sessions list</span>
+        </button>
+      </div>
+      <div id="side-accounts" class="side-accounts" role="group" aria-label="Claude accounts" hidden>
+        <div class="side-accounts-title">Claude accounts</div>
+        <div id="side-accounts-list" class="side-accounts-list"></div>
+      </div>
+    </aside>
+    <div id="workspace" class="workspace"></div>
+    <!-- The sessions list: mounted by the layout as a tab (sid "sessions"), never in the sidebar. -->
+    <section id="saved" class="saved" aria-label="Saved sessions" hidden>
+      <div class="saved-head">
+        <input type="search" id="saved-search" class="saved-search" placeholder="Search sessions" aria-label="Search saved sessions" spellcheck="false">
+        <button type="button" id="saved-refresh" class="layout-act" title="Refresh saved sessions" aria-label="Refresh saved sessions">↻</button>
+      </div>
+      <div id="saved-list" class="saved-list" role="list"></div>
+    </section>
+  </section>
+  <section id="stats" class="view" role="tabpanel" aria-labelledby="tab-stats" hidden>
+    <div id="stats-wait" class="center"><div class="spin"></div><div>Starting stats dashboard…</div></div>
+    <iframe id="stats-frame" hidden title="Stats"></iframe>
+  </section>
+
+  <section id="settings" class="view" role="region" aria-label="Settings" hidden>
+    <aside class="set-side" aria-label="Settings sections">
+      <input type="search" id="set-search" class="set-search" placeholder="Find a section" aria-label="Find a settings section" spellcheck="false" autocomplete="off">
+      <nav class="set-nav" id="set-nav" role="tablist" aria-label="Settings sections" aria-orientation="vertical"></nav>
+    </aside>
+    <div class="set-page" id="set-page"></div>
+  </section>
+</main>
+<!-- One chat session. Cloned per session by session.js; data-ref names the parts it wires up. -->
+<template id="session-template">
+  <section class="session">
+    <div class="messages" data-ref="messages">
+      <div class="welcome" data-ref="welcome" role="region" aria-label="Start a conversation">
+        <div class="wl-card">
+          <div class="wl-q"><span class="wl-mark" aria-hidden="true">K.</span><span>What do you want to do? Type below or pick one</span></div>
+          <div class="wl-group" role="listbox" aria-label="Suggestions">
+            <div class="wl-label">Suggestions</div>
+            <button type="button" class="wl-item" role="option" data-prompt="Review my uncommitted changes and point out problems.">
+              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
+              <span class="wl-text">Review my changes</span><kbd>Alt 1</kbd>
+            </button>
+            <button type="button" class="wl-item" role="option" data-prompt="Give me an overview of this project: structure and main modules.">
+              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg></span>
+              <span class="wl-text">Summarize this project</span><kbd>Alt 2</kbd>
+            </button>
+            <button type="button" class="wl-item" role="option" data-prompt="Here is an error I get. Find the cause and fix it:&#10;&#10;">
+              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v6M12 17h.01"/></svg></span>
+              <span class="wl-text">Paste an error and find the cause</span><kbd>Alt 3</kbd>
+            </button>
+            <button type="button" class="wl-item" role="option" data-prompt="Plan a new feature with me before writing code: ">
+              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/></svg></span>
+              <span class="wl-text">Plan a new feature</span><kbd>Alt 4</kbd>
+            </button>
+          </div>
+          <div class="wl-foot"><span><kbd>/</kbd> commands</span><span><kbd>@</kbd> files</span><span><kbd>!</kbd> shell</span><span><kbd>↑</kbd> history</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="dialog" data-ref="dialog" hidden></div>
+    <div class="dialog tree" data-ref="tree" role="region" aria-label="Session tree" hidden></div>
+    <div class="prompt-area">
+      <div class="palette" data-ref="palette" role="listbox" hidden></div>
+      <div class="side-panel" data-ref="agents" role="region" aria-label="Subagents" hidden></div>
+      <div class="side-panel todos" data-ref="todos" role="region" aria-label="Todo list" hidden></div>
+      <div class="chips queue" data-ref="queue" role="region" aria-label="Queued messages" hidden></div>
+      <div class="attachments" data-ref="attachments" hidden></div>
+      <div class="widgets" data-ref="widgetsAbove" hidden></div>
+      <form class="composer" data-ref="composer">
+        <div class="input-wrap">
+          <div class="ghost" data-ref="ghost" aria-hidden="true" hidden></div>
+          <textarea data-ref="input" rows="1" spellcheck="false" placeholder="Type a message, / for commands, @ for files, ! for shell · paste or drop images"></textarea>
+        </div>
+        <button type="button" data-ref="attach" class="attach" title="Attach images" aria-label="Attach images">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><circle cx="9" cy="10" r="1.7"/><path d="m21 16-5-5-8 8"/></svg>
+        </button>
+        <button type="submit" class="send" title="Send (Enter)" aria-label="Send">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg>
+        </button>
+        <input type="file" data-ref="file" accept="image/*" multiple hidden>
+      </form>
+      <div class="widgets below" data-ref="widgetsBelow" hidden></div>
+      <div class="statusline">
+        <button type="button" data-ref="cwd" class="link pick" title="Change working folder"></button>
+        <select data-ref="model" class="model" title="Model" hidden></select>
+        <select data-ref="effort" class="model effort" title="Thinking effort (shift+tab cycles)" hidden></select>
+        <span data-ref="ctx" class="ctx" hidden></span>
+        <span data-ref="ext" class="ext-status" hidden></span>
+        <button type="button" data-ref="warn" class="link warn" hidden></button>
+        <button type="button" data-ref="goal" class="link goal" hidden></button>
+        <span class="spacer"></span>
+        <span data-ref="total" class="total" hidden></span>
+        <span data-ref="hint" class="hint">shift+enter newline · shift+tab effort · / commands · ↑ history · ctrl+o tools</span>
+        <span data-ref="busyHint" class="hint" hidden>enter steer · alt+enter queue</span>
+        <button type="button" data-ref="stop" class="link bad" hidden>esc stop</button>
+        <button type="button" data-ref="thinkingBtn" class="link" aria-label="Show or hide thinking (Ctrl+T)" aria-pressed="false" title="Show or hide thinking (Ctrl+T)">ctrl + t</button>
+        <button type="button" data-ref="treeBtn" class="link" aria-expanded="false" title="Session tree: move to an earlier point, label entries">tree</button>
+      </div>
+    </div>
+  </section>
+</template><div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="Image preview" hidden>
+  <figure>
+    <img id="lightbox-img" alt="">
+    <figcaption id="lightbox-cap"></figcaption>
+  </figure>
+  <button type="button" id="lightbox-close" class="lightbox-close" aria-label="Close preview" title="Close (Esc)">×</button>
+</div>
+<script src="session.js"></script>
+<script src="layout.js"></script>
+<script src="app.js"></script>
+<script src="settings.js"></script>
+<script src="updater.js"></script>
+</body>
+</html>

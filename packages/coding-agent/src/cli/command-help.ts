@@ -12,7 +12,8 @@ export const anonymizeHelp = {
 } satisfies CommandMetadata;
 
 export const authHelp = {
-	description: "Export or import stored provider credentials (API keys and OAuth logins) as JSON",
+	description:
+		"Export or import stored provider credentials (API keys and OAuth logins) as JSON, or import Claude accounts from Worker OS",
 } satisfies CommandMetadata;
 
 export const authBrokerHelp = {
@@ -39,7 +40,7 @@ export const cleanseHelp = {
 
 export const collabHelp = {
 	description:
-		"List active local Collab host metadata without URLs; use collab link <instanceId|pid> to retrieve a control link (--view for view-only)",
+		"List active local Collab host metadata without URLs; use collab link <instanceId|pid> to retrieve a control link (--view for view-only); collab pair prints the token that lets the Collab web UI list local sessions",
 } satisfies CommandMetadata;
 
 export const clipHelp = {

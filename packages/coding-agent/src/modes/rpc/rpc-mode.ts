@@ -54,13 +54,16 @@ import type { AgentSessionHandle } from "../../session/agent-session-handle";
 import type { MCPManager } from "../../mcp/manager";
 import { reconnectMcpManagerServer } from "../../mcp/oauth-reauth";
 import type { RestoredQueuedMessage } from "../../session/agent-session-types";
+import { rememberDefaultModel } from "../../session/role-models";
 import { CACHE_WARMING_MODES } from "../../session/cache-warmer";
 import { findMostRecentNonEmptySession, findRecentSessionContinuation } from "../../session/session-listing";
+import { SessionManager } from "../../session/session-manager";
 import { probeSessionLeases } from "../../session/session-storage";
 import { SKILL_PROMPT_MESSAGE_TYPE, USER_INTERRUPT_LABEL } from "../../session/messages";
 import { executeAcpBuiltinSlashCommand } from "../../slash-commands/acp-builtins";
 import { buildAvailableSlashCommands } from "../../slash-commands/available-commands";
 import { listLogoutAccounts, logoutCredential } from "../../slash-commands/helpers/logout";
+import { toSessionPinAccounts } from "../../slash-commands/helpers/session-pin";
 import { cfgSttEnabled } from "../../stt/settings";
 import { defaultLoadModeForToolName } from "../../tools/essential-tools";
 import type { EventBus } from "../../utils/event-bus";
@@ -82,7 +85,18 @@ import { RpcBtwController } from "./rpc-btw";
 import { RpcGoalController } from "./rpc-goal";
 import { RpcDictationBridge, type RpcDictationControllerFactory } from "./rpc-dictation";
 import { RpcLiveBridge, type RpcLiveSessionFactory } from "./rpc-live";
+import {
+	getRpcExtensions,
+	type RpcExtensionsContext,
+	reconnectRpcMcpServer,
+	recordMcpStatus,
+	setRpcExtensionEnabled,
+} from "./rpc-extensions";
+import { getRpcAgentModels, getRpcModelCatalog, setRpcAgentModel, setRpcEnabledModels } from "./rpc-model-config";
 import { RpcOutputWriter } from "./rpc-output";
+import { addRpcPromptHistory, RpcPathCompleter, readRpcPromptHistory } from "./rpc-composer";
+import { listRpcSessions } from "./rpc-sessions";
+import { highlightTokens } from "./highlight-tokens";
 import {
 	RpcExtensionUserMessageTracker,
 	RpcPromptResults,
@@ -427,8 +441,9 @@ export function dispatchRpcControlFrame(parsed: unknown, deps: RpcInputFrameDeps
  * (`prompt` and `steer_subagent` are also backgrounded there, but start through
  * the serial tail.) `btw_cancel` is synchronous and must overtake a `btw` still
  * starting or a long serial command; `abort_branch_summary` likewise overtakes
- * the `navigate_tree` whose summary it stops.
- * A Set, not a Record: `type` is untrusted input and must not hit prototype keys.
+ * the `navigate_tree` whose summary it stops, and `login_cancel` the `login`.
+ * `highlight_code` touches no session state, so a client can paint code while a
+ * long serial command runs. A Set, not a Record: `type` is untrusted input and must not hit prototype keys.
  */
 const BACKGROUND_COMMANDS: ReadonlySet<string> = new Set<RpcCommand["type"]>([
 	"bash",
@@ -437,6 +452,8 @@ const BACKGROUND_COMMANDS: ReadonlySet<string> = new Set<RpcCommand["type"]>([
 	"live_connect",
 	"btw_cancel",
 	"abort_branch_summary",
+	"login_cancel",
+	"highlight_code",
 ]);
 
 /**
@@ -1449,7 +1466,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 
 	const extensionUserMessageTracker = new RpcExtensionUserMessageTracker();
 	const wordPredictor = new RpcWordPredictor();
+	const pathCompleter = new RpcPathCompleter();
 	const btw = new RpcBtwController(session, output);
+	// The running `login`'s abort handle; `login_cancel` (backgrounded) fires it.
+	let loginAbort: AbortController | undefined;
 	// A continuation abandoned while waiting leaves nothing to end the activity stretch: re-check settlement.
 	const goalController = new RpcGoalController(session, () => void settleWatcher.check());
 	// A scheduled or held goal turn will start a turn: every settle report treats it as busy,
@@ -1805,6 +1825,11 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		promptResults.observe(event);
 		settleWatcher.observe(event);
 	});
+	// Idle recap (`recap.*` settings) reaches the host as a `notice` frame with `source: "recap"`.
+	session.enableIdleMaintenance({
+		scheduledTurn: goalTurnScheduled,
+		onRecap: recap => output({ type: "notice", level: "info", message: recap, source: "recap" }),
+	});
 	await goalController.reconcile();
 	await goalController.settled();
 
@@ -1885,6 +1910,17 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		void emitAvailableCommandsUpdate();
 	});
 	await emitAvailableCommandsUpdate();
+
+	const mcpErrors = new Map<string, string>();
+	options.mcpManager?.addConnectionStatusListener(event => recordMcpStatus(mcpErrors, event));
+	const extensionsContext = (): RpcExtensionsContext => ({
+		cwd: session.sessionManager.getCwd(),
+		settings: session.settings,
+		manager: options.mcpManager,
+		mcpErrors,
+		refreshMCPTools: tools => session.refreshMCPTools(tools),
+		browserMcpFilter: session.getEvalPreludes().some(definition => definition.name === "browser"),
+	});
 
 	const inputGate = new RpcUserInputGate();
 	type OrderedUserInput = Extract<RpcCommand, { type: "prompt" | "steer" | "follow_up" | "abort_and_prompt" }>;
@@ -2260,6 +2296,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				const state: RpcSessionState = {
 					model: session.model,
 					thinkingLevel: session.thinkingLevel,
+					configuredThinkingLevel: session.configuredThinkingLevel(),
+					wordCompletion: cfgSpellingAutocomplete.get(session.settings),
 					isStreaming: session.isStreaming,
 					isCompacting: session.isCompacting,
 					steeringMode: session.steeringMode,
@@ -2296,6 +2334,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					})),
 					contextUsage: session.getContextUsage(),
 					goal: session.getGoalModeState() ?? null,
+					configWarnings: [...session.configWarnings],
 				};
 				return success(id, "get_state", state);
 			}
@@ -2458,9 +2497,14 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				if (messageUpdates !== "full" && messageUpdates !== "delta") {
 					return error(id, "set_event_filter", 'messageUpdates must be "full" or "delta"');
 				}
+				const bashOutput = command.bashOutput === undefined ? "full" : command.bashOutput;
+				if (bashOutput !== "full" && bashOutput !== "chunks") {
+					return error(id, "set_event_filter", 'bashOutput must be "full" or "chunks"');
+				}
 				return success(id, "set_event_filter", {
-					events: sessionEvents.setFilter(events, messageUpdates),
+					events: sessionEvents.setFilter(events, messageUpdates, bashOutput),
 					messageUpdates,
+					bashOutput,
 				});
 			}
 
@@ -2526,6 +2570,9 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					return error(id, "set_model", `Model not found: ${command.provider}/${command.modelId}`);
 				}
 				await session.setModel(model);
+				// A client's model pick is the user's choice for this session; start
+				// the next new session on it instead of resetting to the default.
+				rememberDefaultModel(session.settings, session.modelRegistry, model);
 				return success(id, "set_model", model);
 			}
 
@@ -2534,6 +2581,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				if (!result) {
 					return success(id, "cycle_model", null);
 				}
+				// Cycling through a client UI is also an explicit pick.
+				rememberDefaultModel(session.settings, session.modelRegistry, result.model);
 				return success(id, "cycle_model", result);
 			}
 
@@ -2541,6 +2590,76 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				await session.modelRegistry.awaitBackgroundRefresh();
 				const models = session.getAvailableModels();
 				return success(id, "get_available_models", { models });
+			}
+
+			case "get_model_catalog": {
+				return success(id, "get_model_catalog", await getRpcModelCatalog(session));
+			}
+
+			case "set_enabled_models": {
+				if (!Array.isArray(command.patterns) || command.patterns.some(p => typeof p !== "string")) {
+					return error(id, "set_enabled_models", "`patterns` must be an array of strings.");
+				}
+				setRpcEnabledModels(session, command.patterns);
+				return success(id, "set_enabled_models");
+			}
+
+			case "get_agent_models": {
+				return success(id, "get_agent_models", { agents: await getRpcAgentModels(session) });
+			}
+
+			case "set_agent_model": {
+				if (typeof command.agent !== "string" || !command.agent.trim()) {
+					return error(id, "set_agent_model", "`agent` must be a non-empty string.");
+				}
+				if (command.model !== undefined && command.model !== null && typeof command.model !== "string") {
+					return error(id, "set_agent_model", "`model` must be a string or null.");
+				}
+				try {
+					await setRpcAgentModel(session, command.agent, command.model ?? undefined);
+				} catch (err) {
+					return error(id, "set_agent_model", toError(err).message);
+				}
+				return success(id, "set_agent_model");
+			}
+
+			case "get_extensions": {
+				try {
+					return success(id, "get_extensions", { extensions: await getRpcExtensions(extensionsContext()) });
+				} catch (err) {
+					return error(id, "get_extensions", toError(err).message);
+				}
+			}
+
+			case "set_extension_enabled": {
+				if (typeof command.extension !== "string" || !command.extension.trim()) {
+					return error(id, "set_extension_enabled", "`extension` must be a non-empty string.");
+				}
+				if (typeof command.enabled !== "boolean") {
+					return error(id, "set_extension_enabled", "`enabled` must be a boolean.");
+				}
+				try {
+					const result = await setRpcExtensionEnabled(extensionsContext(), command.extension, command.enabled);
+					if (result.live) await emitAvailableCommandsUpdate();
+					return success(id, "set_extension_enabled", result);
+				} catch (err) {
+					return error(id, "set_extension_enabled", toError(err).message);
+				}
+			}
+
+			case "reconnect_mcp_server": {
+				if (typeof command.name !== "string" || !command.name.trim()) {
+					return error(id, "reconnect_mcp_server", "`name` must be a non-empty string.");
+				}
+				try {
+					return success(
+						id,
+						"reconnect_mcp_server",
+						await reconnectRpcMcpServer(extensionsContext(), command.name),
+					);
+				} catch (err) {
+					return error(id, "reconnect_mcp_server", toError(err).message);
+				}
 			}
 
 			// =================================================================
@@ -2666,6 +2785,17 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				return success(id, "get_session_lease", probeSessionLeases(sessionIds));
 			}
 
+			case "list_sessions": {
+				const sessions = await listRpcSessions(
+					{ cwd: command.cwd, all: command.all, limit: command.limit },
+					{
+						currentSessionDir: session.sessionManager.getSessionDir(),
+						currentCwd: session.sessionManager.getCwd(),
+					},
+				);
+				return success(id, "list_sessions", { sessions });
+			}
+
 			case "export_html": {
 				const path = await session.exportToHtml(command.outputPath);
 				return success(id, "export_html", { path });
@@ -2691,6 +2821,38 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					return error(id, "set_session_name", "Session name cannot be empty");
 				}
 				return success(id, "set_session_name");
+			}
+
+			case "rename_session": {
+				if (typeof command.path !== "string" || typeof command.name !== "string") {
+					return error(id, "rename_session", "path and name must be strings");
+				}
+				const name = command.name.trim();
+				if (!name) return error(id, "rename_session", "Session name cannot be empty");
+				const target = path.resolve(command.path);
+				const current = session.sessionFile;
+				if (current && path.resolve(current) === target) {
+					if (!(await session.setSessionName(name, "user"))) {
+						return error(id, "rename_session", "Session name cannot be empty");
+					}
+					return success(id, "rename_session", { title: session.sessionName ?? name });
+				}
+				const title = await SessionManager.renameSessionTitle(target, name);
+				if (!title) {
+					return error(
+						id,
+						"rename_session",
+						"Failed to rename session: it is currently in use by another omp process or no longer available",
+					);
+				}
+				return success(id, "rename_session", { title });
+			}
+
+			case "highlight_code": {
+				if (typeof command.code !== "string" || (command.lang !== undefined && typeof command.lang !== "string")) {
+					return error(id, "highlight_code", "code must be a string and lang, when given, a string");
+				}
+				return success(id, "highlight_code", { tokens: highlightTokens(command.code, command.lang) });
 			}
 
 			case "handoff": {
@@ -2766,8 +2928,20 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				// input before a browser URL cannot be satisfied headlessly; after
 				// onAuth, prompt input is the pasted OAuth code/redirect URL path.
 				let authEmitted = false;
+				// One login at a time: a new login supersedes (cancels) a stale one.
+				loginAbort?.abort();
+				const abort = new AbortController();
+				loginAbort = abort;
+				const { signal } = abort;
+				// Providers may ignore `signal` (e.g. a loopback server still listening);
+				// the race settles this request on cancel regardless.
+				const cancelled = Promise.withResolvers<never>();
+				const onCancel = () => cancelled.reject(new Error("Login cancelled"));
+				signal.addEventListener("abort", onCancel, { once: true });
+				cancelled.promise.catch(() => {});
 				try {
-					await session.modelRegistry.authStorage.oauth.login(command.providerId, {
+					const flow = session.modelRegistry.authStorage.oauth.login(command.providerId, {
+						signal,
 						onAuth: info => {
 							authEmitted = true;
 							output({
@@ -2799,9 +2973,11 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 									),
 								);
 							}
-							return (await uiCtx.input(prompt.message, prompt.placeholder, { timeout: 600_000 })) ?? "";
+							return (await uiCtx.input(prompt.message, prompt.placeholder, { timeout: 600_000, signal })) ?? "";
 						},
 					});
+					flow.catch(() => {});
+					await Promise.race([flow, cancelled.promise]);
 					// Provider-scoped online refresh so the just-persisted credential
 					// re-runs discovery instead of reusing a fresh authoritative cache
 					// row (#5780).
@@ -2812,8 +2988,19 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					await session.refreshScopedModels();
 					return success(id, "login", { providerId: command.providerId });
 				} catch (err: unknown) {
+					if (signal.aborted) return error(id, "login", "Login cancelled", "cancelled");
 					return error(id, "login", err instanceof Error ? err.message : String(err));
+				} finally {
+					signal.removeEventListener("abort", onCancel);
+					if (loginAbort === abort) loginAbort = undefined;
 				}
+			}
+
+			case "login_cancel": {
+				const active = loginAbort;
+				loginAbort = undefined;
+				active?.abort();
+				return success(id, "login_cancel", { cancelled: active !== undefined });
 			}
 
 			case "get_logout_accounts": {
@@ -2842,6 +3029,40 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					return error(id, "logout", `Credential ${command.credentialId} is not stored for ${command.providerId}`);
 				}
 				return success(id, "logout", { remainingSource });
+			}
+
+			case "get_session_accounts": {
+				const list = await session.listCurrentProviderOAuthAccounts(command.providerId);
+				if (!list) return success(id, "get_session_accounts", null);
+				return success(id, "get_session_accounts", {
+					provider: list.provider,
+					accounts: toSessionPinAccounts(list.accounts).map(account => ({
+						position: account.position,
+						credentialId: account.credentialId,
+						label: account.label,
+						email: account.email,
+						orgName: account.orgName,
+						active: account.active,
+					})),
+				});
+			}
+
+			case "pin_session_account": {
+				if (!Number.isInteger(command.credentialId)) {
+					return error(id, "pin_session_account", "credentialId must be an integer");
+				}
+				if (session.isStreaming) {
+					return error(id, "pin_session_account", "Cannot switch account while a response is in progress");
+				}
+				const provider = command.providerId ?? session.model?.provider;
+				if (!provider || !session.pinCurrentProviderOAuthAccount(command.credentialId, command.providerId)) {
+					return error(
+						id,
+						"pin_session_account",
+						`Credential ${command.credentialId} is no longer available to pin`,
+					);
+				}
+				return success(id, "pin_session_account", { provider });
 			}
 
 			// =================================================================
@@ -2896,6 +3117,58 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					}
 				}
 				return success(id, "predict_word_feedback");
+			}
+
+			// =================================================================
+			// Composer: @ path completion and prompt history
+			// =================================================================
+
+			case "complete_path": {
+				if (!isTextCursor(command.text, command.cursor)) {
+					return error(id, "complete_path", INVALID_TEXT_CURSOR_ERROR);
+				}
+				try {
+					const completion = await pathCompleter.complete(
+						session.sessionManager.getCwd(),
+						command.text,
+						command.cursor,
+					);
+					return success(id, "complete_path", completion);
+				} catch (err: unknown) {
+					return error(id, "complete_path", err instanceof Error ? err.message : String(err));
+				}
+			}
+
+			case "get_prompt_history": {
+				const { query, limit, cwd } = command;
+				if (
+					(query !== undefined && typeof query !== "string") ||
+					(limit !== undefined && !Number.isInteger(limit)) ||
+					(cwd !== undefined && typeof cwd !== "string")
+				) {
+					return error(id, "get_prompt_history", "query and cwd must be strings and limit an integer");
+				}
+				try {
+					return success(id, "get_prompt_history", { entries: readRpcPromptHistory({ query, limit, cwd }) });
+				} catch (err: unknown) {
+					return error(id, "get_prompt_history", err instanceof Error ? err.message : String(err));
+				}
+			}
+
+			case "add_prompt_history": {
+				if (typeof command.prompt !== "string") {
+					return error(id, "add_prompt_history", "prompt must be a string");
+				}
+				try {
+					await addRpcPromptHistory(
+						command.prompt,
+						session.sessionManager.getCwd(),
+						session.sessionManager.getSessionId(),
+					);
+					return success(id, "add_prompt_history");
+				} catch (err: unknown) {
+					return error(id, "add_prompt_history", err instanceof Error ? err.message : String(err));
+				}
 			}
 
 			default: {

@@ -93,6 +93,12 @@ _MESSAGE_UPDATES_VALUES: Final[frozenset[str]] = frozenset({"full", "delta"})
 _decode_message_updates = cast("Decoder[MessageUpdates]", literal(_MESSAGE_UPDATES_VALUES))
 
 
+BashOutputMode: TypeAlias = Literal["full", "chunks"]
+"""`set_event_filter` projection: `chunks` sends bash progress text as `bash_output` splices instead of full snapshots."""
+_BASH_OUTPUT_MODE_VALUES: Final[frozenset[str]] = frozenset({"full", "chunks"})
+_decode_bash_output_mode = cast("Decoder[BashOutputMode]", literal(_BASH_OUTPUT_MODE_VALUES))
+
+
 TodoStatus: TypeAlias = Literal["pending", "in_progress", "completed", "abandoned", "blocked"]
 _TODO_STATUS_VALUES: Final[frozenset[str]] = frozenset({"pending", "in_progress", "completed", "abandoned", "blocked"})
 _decode_todo_status = cast("Decoder[TodoStatus]", literal(_TODO_STATUS_VALUES))
@@ -647,6 +653,10 @@ class SessionState:
     session_id: str
     model: ModelInfo | None = None
     thinking_level: ThinkingLevel | None = None
+    configured_thinking_level: ConfiguredThinkingLevel | None = None
+    """The user's thinking selector (e.g. `auto`) behind `thinkingLevel`; absent when the model default applies."""
+    word_completion: Literal["off", "auto", "ngram", "smollm", "apple"] | None = None
+    """The `spelling.autocomplete` method `predict_word` uses; `off` means it always returns null."""
     is_streaming: bool = False
     is_compacting: bool = False
     steering_mode: QueueMode = "one-at-a-time"
@@ -680,6 +690,8 @@ class SessionState:
     context_usage: ContextUsage | None = None
     goal: GoalModeState | None = None
     """Current goal mode; null when the session has no goal."""
+    config_warnings: tuple[str, ...] = ()
+    """Configuration warnings the interactive header shows; `config_warnings_changed` marks a change."""
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -898,6 +910,49 @@ class SessionTree:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
+class SessionListItem:
+    """One saved session, as the resume picker lists it."""
+    path: str
+    id: str
+    title: str
+    """Display name: explicit title, else the first prompt, else a time label."""
+    cwd: str
+    """Working directory from the session header; empty when unknown."""
+    mtime: int
+    """Last modification, epoch milliseconds."""
+    message_count: int
+    pinned: bool
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class PathCompletionItem:
+    """One `@` mention completion."""
+    value: str
+    """Replacement for the mention, `@` included, quoted when the path has spaces."""
+    label: str
+    directory: bool
+    description: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class PathCompletion:
+    """Completions for the `@` mention at the cursor."""
+    prefix: str
+    """The mention text before the cursor that `value` replaces."""
+    items: tuple[PathCompletionItem, ...]
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class PromptHistoryEntry:
+    """One submitted prompt from the shared prompt history."""
+    prompt: str
+    created_at: int
+    """Submission time, epoch milliseconds."""
+    use_count: int
+    cwd: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
 class SubagentSnapshot:
     id: str
     index: int
@@ -965,6 +1020,77 @@ class LoginProvider:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
+class ModelCatalogModel:
+    id: str
+    name: str
+    scoped: bool
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ModelCatalogProvider:
+    provider: str
+    models: tuple[ModelCatalogModel, ...]
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ModelCatalog:
+    """`enabledModels` is the raw scope pattern list; empty means every available model is in scope."""
+    enabled_models: tuple[str, ...]
+    providers: tuple[ModelCatalogProvider, ...]
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class AgentModelEntry:
+    """A task agent and its model assignment."""
+    name: str
+    description: str
+    source: str
+    disabled: bool
+    agent_model: tuple[str, ...] | None = None
+    """Frontmatter `model` patterns."""
+    override_model: str | None = None
+    """Saved `task.agentModelOverrides` entry, comma-joined."""
+    effective_model: str | None = None
+    """`provider/id[:level]` the agent resolves to now."""
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ExtensionEntry:
+    """A discovered capability as the `/extensions` dashboard shows it."""
+    id: str
+    """`kind:name`; the key `set_extension_enabled` takes."""
+    kind: Literal["extension-module", "skill", "rule", "tool", "mcp", "prompt", "instruction", "context-file", "hook", "slash-command"]
+    name: str
+    display_name: str
+    path: str
+    provider: str
+    provider_name: str
+    level: Literal["user", "project", "native"]
+    state: Literal["active", "disabled", "shadowed"]
+    description: str | None = None
+    trigger: str | None = None
+    disabled_reason: str | None = None
+    shadowed_by: str | None = None
+    mcp_status: Literal["connected", "connecting", "disconnected"] | None = None
+    """Live MCP connection state."""
+    mcp_tools: int | None = None
+    """Tools the connected MCP server exposes."""
+    mcp_error: str | None = None
+    """Last MCP connection failure, cleared on connect."""
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class SetExtensionEnabledResult:
+    """`live` is true when the change already applies to this session."""
+    live: bool
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ReconnectMcpServerResult:
+    connected: bool
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
 class LogoutAccount:
     """A stored credential `logout` can remove; `active` marks credentials the session may be using."""
     credential_id: int
@@ -976,8 +1102,33 @@ class LogoutAccount:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
+class SessionAccount:
+    """A stored OAuth account the session can pin; `active` marks the one this session currently uses."""
+    position: int
+    credential_id: int
+    label: str
+    active: bool
+    email: str | None = None
+    org_name: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class SessionAccountList:
+    """Stored OAuth accounts of the session model's provider."""
+    provider: str
+    accounts: tuple[SessionAccount, ...]
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
 class HandoffResult:
     saved_path: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class HighlightToken:
+    """A run of highlighted source; `text` may span lines. No `kind` means plain text."""
+    text: str
+    kind: Literal["comment", "keyword", "function", "variable", "string", "number", "type", "operator", "punctuation", "inserted", "deleted"] | None = None
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -1063,6 +1214,17 @@ class ToolExecutionUpdateEvent:
     tool_name: str
     args: JsonValue | None = None
     partial_result: JsonValue | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class BashOutputEvent:
+    """Opt-in (`bashOutput: 'chunks'`) splice of a bash progress preview; selected together with `tool_execution_update`."""
+    type: Literal["bash_output"] = "bash_output"
+    tool_call_id: str
+    keep: int
+    """Characters of the previous preview to keep; 0 replaces it."""
+    chunk: str
+    """Text appended after the kept prefix."""
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -1711,7 +1873,7 @@ UsageLimitState: TypeAlias = UsageLimitLowPriority | UsageLimitWrapUp
 """Provider-neutral state of an account past its usage limit, discriminated by `stage`."""
 
 
-RpcAgentEvent: TypeAlias = AgentStartEvent | AgentEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolStreamUpdateEvent | ToolExecutionEndEvent | AutoCompactionStartEvent | AutoCompactionEndEvent | ManualCompactionStartEvent | ManualCompactionEndEvent | AutoRetryStartEvent | AutoRetryEndEvent | CacheWarmingStartEvent | CacheWarmingEndEvent | RetryFallbackAppliedEvent | RetryFallbackSucceededEvent | ModelChangedEvent | ConfigWarningsChangedEvent | AdvisorCostChangedEvent | AdvisorYieldedEvent | TtsrTriggeredEvent | TodoReminderEvent | TodoAutoClearEvent | IrcMessageEvent | NoticeEvent | ThinkingLevelChangedEvent | GoalUpdatedEvent | QueueUpdateEvent
+RpcAgentEvent: TypeAlias = AgentStartEvent | AgentEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | BashOutputEvent | ToolStreamUpdateEvent | ToolExecutionEndEvent | AutoCompactionStartEvent | AutoCompactionEndEvent | ManualCompactionStartEvent | ManualCompactionEndEvent | AutoRetryStartEvent | AutoRetryEndEvent | CacheWarmingStartEvent | CacheWarmingEndEvent | RetryFallbackAppliedEvent | RetryFallbackSucceededEvent | ModelChangedEvent | ConfigWarningsChangedEvent | AdvisorCostChangedEvent | AdvisorYieldedEvent | TtsrTriggeredEvent | TodoReminderEvent | TodoAutoClearEvent | IrcMessageEvent | NoticeEvent | ThinkingLevelChangedEvent | GoalUpdatedEvent | QueueUpdateEvent
 """A session event, discriminated by `type`; `set_event_filter` selects which are sent."""
 
 
@@ -2035,6 +2197,8 @@ def parse_session_state(value: object, path: str = "SessionState") -> SessionSta
         session_id=required(payload, "sessionId", decode_str, path),
         model=optional(payload, "model", parse_model_info, path),
         thinking_level=optional(payload, "thinkingLevel", _decode_thinking_level, path),
+        configured_thinking_level=optional(payload, "configuredThinkingLevel", _decode_configured_thinking_level, path),
+        word_completion=optional(payload, "wordCompletion", cast('Decoder[Literal["off", "auto", "ngram", "smollm", "apple"]]', literal(frozenset({"off", "auto", "ngram", "smollm", "apple"}))), path),
         is_streaming=defaulted(payload, "isStreaming", decode_bool, path, False),
         is_compacting=defaulted(payload, "isCompacting", decode_bool, path, False),
         steering_mode=defaulted(payload, "steeringMode", _decode_queue_mode, path, "one-at-a-time"),
@@ -2060,6 +2224,7 @@ def parse_session_state(value: object, path: str = "SessionState") -> SessionSta
         dump_tools=defaulted(payload, "dumpTools", array(parse_tool_descriptor), path, ()),
         context_usage=optional(payload, "contextUsage", parse_context_usage, path),
         goal=defaulted(payload, "goal", nullable(parse_goal_mode_state), path, None),
+        config_warnings=defaulted(payload, "configWarnings", array(decode_str), path, ()),
     )
 
 
@@ -2306,6 +2471,47 @@ def parse_session_tree(value: object, path: str = "SessionTree") -> SessionTree:
     )
 
 
+def parse_session_list_item(value: object, path: str = "SessionListItem") -> SessionListItem:
+    payload = expect_object(value, path)
+    return SessionListItem(
+        path=required(payload, "path", decode_str, path),
+        id=required(payload, "id", decode_str, path),
+        title=required(payload, "title", decode_str, path),
+        cwd=required(payload, "cwd", decode_str, path),
+        mtime=required(payload, "mtime", decode_int, path),
+        message_count=required(payload, "messageCount", decode_int, path),
+        pinned=required(payload, "pinned", decode_bool, path),
+    )
+
+
+def parse_path_completion_item(value: object, path: str = "PathCompletionItem") -> PathCompletionItem:
+    payload = expect_object(value, path)
+    return PathCompletionItem(
+        value=required(payload, "value", decode_str, path),
+        label=required(payload, "label", decode_str, path),
+        directory=required(payload, "directory", decode_bool, path),
+        description=optional(payload, "description", decode_str, path),
+    )
+
+
+def parse_path_completion(value: object, path: str = "PathCompletion") -> PathCompletion:
+    payload = expect_object(value, path)
+    return PathCompletion(
+        prefix=required(payload, "prefix", decode_str, path),
+        items=required(payload, "items", array(parse_path_completion_item), path),
+    )
+
+
+def parse_prompt_history_entry(value: object, path: str = "PromptHistoryEntry") -> PromptHistoryEntry:
+    payload = expect_object(value, path)
+    return PromptHistoryEntry(
+        prompt=required(payload, "prompt", decode_str, path),
+        created_at=required(payload, "createdAt", decode_int, path),
+        use_count=required(payload, "useCount", decode_int, path),
+        cwd=optional(payload, "cwd", decode_str, path),
+    )
+
+
 def parse_subagent_snapshot(value: object, path: str = "SubagentSnapshot") -> SubagentSnapshot:
     payload = expect_object(value, path)
     return SubagentSnapshot(
@@ -2375,6 +2581,80 @@ def parse_login_provider(value: object, path: str = "LoginProvider") -> LoginPro
     )
 
 
+def parse_model_catalog_model(value: object, path: str = "ModelCatalogModel") -> ModelCatalogModel:
+    payload = expect_object(value, path)
+    return ModelCatalogModel(
+        id=required(payload, "id", decode_str, path),
+        name=required(payload, "name", decode_str, path),
+        scoped=required(payload, "scoped", decode_bool, path),
+    )
+
+
+def parse_model_catalog_provider(value: object, path: str = "ModelCatalogProvider") -> ModelCatalogProvider:
+    payload = expect_object(value, path)
+    return ModelCatalogProvider(
+        provider=required(payload, "provider", decode_str, path),
+        models=required(payload, "models", array(parse_model_catalog_model), path),
+    )
+
+
+def parse_model_catalog(value: object, path: str = "ModelCatalog") -> ModelCatalog:
+    payload = expect_object(value, path)
+    return ModelCatalog(
+        enabled_models=required(payload, "enabledModels", array(decode_str), path),
+        providers=required(payload, "providers", array(parse_model_catalog_provider), path),
+    )
+
+
+def parse_agent_model_entry(value: object, path: str = "AgentModelEntry") -> AgentModelEntry:
+    payload = expect_object(value, path)
+    return AgentModelEntry(
+        name=required(payload, "name", decode_str, path),
+        description=required(payload, "description", decode_str, path),
+        source=required(payload, "source", decode_str, path),
+        disabled=required(payload, "disabled", decode_bool, path),
+        agent_model=optional(payload, "agentModel", array(decode_str), path),
+        override_model=optional(payload, "overrideModel", decode_str, path),
+        effective_model=optional(payload, "effectiveModel", decode_str, path),
+    )
+
+
+def parse_extension_entry(value: object, path: str = "ExtensionEntry") -> ExtensionEntry:
+    payload = expect_object(value, path)
+    return ExtensionEntry(
+        id=required(payload, "id", decode_str, path),
+        kind=required(payload, "kind", cast('Decoder[Literal["extension-module", "skill", "rule", "tool", "mcp", "prompt", "instruction", "context-file", "hook", "slash-command"]]', literal(frozenset({"extension-module", "skill", "rule", "tool", "mcp", "prompt", "instruction", "context-file", "hook", "slash-command"}))), path),
+        name=required(payload, "name", decode_str, path),
+        display_name=required(payload, "displayName", decode_str, path),
+        path=required(payload, "path", decode_str, path),
+        provider=required(payload, "provider", decode_str, path),
+        provider_name=required(payload, "providerName", decode_str, path),
+        level=required(payload, "level", cast('Decoder[Literal["user", "project", "native"]]', literal(frozenset({"user", "project", "native"}))), path),
+        state=required(payload, "state", cast('Decoder[Literal["active", "disabled", "shadowed"]]', literal(frozenset({"active", "disabled", "shadowed"}))), path),
+        description=optional(payload, "description", decode_str, path),
+        trigger=optional(payload, "trigger", decode_str, path),
+        disabled_reason=optional(payload, "disabledReason", decode_str, path),
+        shadowed_by=optional(payload, "shadowedBy", decode_str, path),
+        mcp_status=optional(payload, "mcpStatus", cast('Decoder[Literal["connected", "connecting", "disconnected"]]', literal(frozenset({"connected", "connecting", "disconnected"}))), path),
+        mcp_tools=optional(payload, "mcpTools", decode_int, path),
+        mcp_error=optional(payload, "mcpError", decode_str, path),
+    )
+
+
+def parse_set_extension_enabled_result(value: object, path: str = "SetExtensionEnabledResult") -> SetExtensionEnabledResult:
+    payload = expect_object(value, path)
+    return SetExtensionEnabledResult(
+        live=required(payload, "live", decode_bool, path),
+    )
+
+
+def parse_reconnect_mcp_server_result(value: object, path: str = "ReconnectMcpServerResult") -> ReconnectMcpServerResult:
+    payload = expect_object(value, path)
+    return ReconnectMcpServerResult(
+        connected=required(payload, "connected", decode_bool, path),
+    )
+
+
 def parse_logout_account(value: object, path: str = "LogoutAccount") -> LogoutAccount:
     payload = expect_object(value, path)
     return LogoutAccount(
@@ -2387,10 +2667,38 @@ def parse_logout_account(value: object, path: str = "LogoutAccount") -> LogoutAc
     )
 
 
+def parse_session_account(value: object, path: str = "SessionAccount") -> SessionAccount:
+    payload = expect_object(value, path)
+    return SessionAccount(
+        position=required(payload, "position", decode_int, path),
+        credential_id=required(payload, "credentialId", decode_int, path),
+        label=required(payload, "label", decode_str, path),
+        active=required(payload, "active", decode_bool, path),
+        email=optional(payload, "email", decode_str, path),
+        org_name=optional(payload, "orgName", decode_str, path),
+    )
+
+
+def parse_session_account_list(value: object, path: str = "SessionAccountList") -> SessionAccountList:
+    payload = expect_object(value, path)
+    return SessionAccountList(
+        provider=required(payload, "provider", decode_str, path),
+        accounts=required(payload, "accounts", array(parse_session_account), path),
+    )
+
+
 def parse_handoff_result(value: object, path: str = "HandoffResult") -> HandoffResult:
     payload = expect_object(value, path)
     return HandoffResult(
         saved_path=optional(payload, "savedPath", decode_str, path),
+    )
+
+
+def parse_highlight_token(value: object, path: str = "HighlightToken") -> HighlightToken:
+    payload = expect_object(value, path)
+    return HighlightToken(
+        text=required(payload, "text", decode_str, path),
+        kind=optional(payload, "kind", cast('Decoder[Literal["comment", "keyword", "function", "variable", "string", "number", "type", "operator", "punctuation", "inserted", "deleted"]]', literal(frozenset({"comment", "keyword", "function", "variable", "string", "number", "type", "operator", "punctuation", "inserted", "deleted"}))), path),
     )
 
 
@@ -2486,6 +2794,16 @@ def parse_tool_execution_update_event(value: object, path: str = "ToolExecutionU
         tool_name=required(payload, "toolName", decode_str, path),
         args=optional(payload, "args", decode_json, path),
         partial_result=optional(payload, "partialResult", decode_json, path),
+    )
+
+
+def parse_bash_output_event(value: object, path: str = "BashOutputEvent") -> BashOutputEvent:
+    payload = expect_object(value, path)
+    required(payload, "type", cast('Decoder[Literal["bash_output"]]', literal(frozenset({"bash_output"}))), path)
+    return BashOutputEvent(
+        tool_call_id=required(payload, "toolCallId", decode_str, path),
+        keep=required(payload, "keep", decode_int, path),
+        chunk=required(payload, "chunk", decode_str, path),
     )
 
 
@@ -3239,6 +3557,7 @@ _RPC_AGENT_EVENT_CASES: Final[dict[str, Decoder[RpcAgentEvent]]] = {
         "message_end": parse_message_end_event,
         "tool_execution_start": parse_tool_execution_start_event,
         "tool_execution_update": parse_tool_execution_update_event,
+        "bash_output": parse_bash_output_event,
         "tool_stream_update": parse_tool_stream_update_event,
         "tool_execution_end": parse_tool_execution_end_event,
         "auto_compaction_start": parse_auto_compaction_start_event,
@@ -3298,6 +3617,7 @@ _RPC_NOTIFICATION_CASES: Final[dict[str, Decoder[RpcNotification]]] = {
         "message_end": parse_rpc_agent_event,
         "tool_execution_start": parse_rpc_agent_event,
         "tool_execution_update": parse_rpc_agent_event,
+        "bash_output": parse_rpc_agent_event,
         "tool_stream_update": parse_rpc_agent_event,
         "tool_execution_end": parse_rpc_agent_event,
         "auto_compaction_start": parse_rpc_agent_event,
@@ -3526,14 +3846,14 @@ class WireClient:
         return required(expect_object(self._command("dictation_stop", params, timeout=600), "dictation_stop"), "text", decode_str, "dictation_stop")
 
     def set_model(self, provider: str, model_id: str) -> ModelInfo:
-        """Select a model by provider and id."""
+        """Select a model by provider and id; it becomes the default for new sessions."""
         params: dict[str, object] = {}
         params["provider"] = provider
         params["modelId"] = model_id
         return parse_model_info(self._command("set_model", params), "set_model")
 
     def cycle_model(self) -> ModelCycleResult | None:
-        """Cycle to the next model."""
+        """Cycle to the next model; it becomes the default for new sessions."""
         params: dict[str, object] = {}
         data = self._command("cycle_model", params)
         return None if data is None else parse_model_cycle_result(data, "cycle_model")
@@ -3542,6 +3862,48 @@ class WireClient:
         """List available models."""
         params: dict[str, object] = {}
         return required(expect_object(self._command("get_available_models", params), "get_available_models"), "models", array(parse_model_info), "get_available_models")
+
+    def get_model_catalog(self) -> ModelCatalog:
+        """Connected providers' chat models, each marked in or out of the `enabledModels` scope."""
+        params: dict[str, object] = {}
+        return parse_model_catalog(self._command("get_model_catalog", params), "get_model_catalog")
+
+    def set_enabled_models(self, patterns: Sequence[str]) -> None:
+        """Persist the `enabledModels` scope; an empty list scopes to every available model."""
+        params: dict[str, object] = {}
+        params["patterns"] = list(patterns)
+        self._command("set_enabled_models", params)
+
+    def get_agent_models(self) -> tuple[AgentModelEntry, ...]:
+        """Discovered task agents with their saved model override and resolved model."""
+        params: dict[str, object] = {}
+        return required(expect_object(self._command("get_agent_models", params), "get_agent_models"), "agents", array(parse_agent_model_entry), "get_agent_models")
+
+    def set_agent_model(self, agent: str, *, model: str | None | None = None) -> None:
+        """Save the `task.agentModelOverrides` entry for an agent; an empty or null `model` clears it."""
+        params: dict[str, object] = {}
+        params["agent"] = agent
+        if model is not None:
+            params["model"] = model
+        self._command("set_agent_model", params)
+
+    def get_extensions(self) -> tuple[ExtensionEntry, ...]:
+        """Every discovered capability (skills, MCP servers, extension modules, rules, ...) as the `/extensions` dashboard lists it; MCP rows carry live connection state."""
+        params: dict[str, object] = {}
+        return required(expect_object(self._command("get_extensions", params), "get_extensions"), "extensions", array(parse_extension_entry), "get_extensions")
+
+    def set_extension_enabled(self, extension: str, *, enabled: bool) -> SetExtensionEnabledResult:
+        """Enable or disable one capability by its `ExtensionEntry.id`. MCP servers connect or disconnect at once (`live: true`); other kinds apply on the next session or reload."""
+        params: dict[str, object] = {}
+        params["extension"] = extension
+        params["enabled"] = enabled
+        return parse_set_extension_enabled_result(self._command("set_extension_enabled", params), "set_extension_enabled")
+
+    def reconnect_mcp_server(self, name: str) -> ReconnectMcpServerResult:
+        """Drop and re-open one MCP server connection, then rebind its tools."""
+        params: dict[str, object] = {}
+        params["name"] = name
+        return parse_reconnect_mcp_server_result(self._command("reconnect_mcp_server", params), "reconnect_mcp_server")
 
     def set_thinking_level(self, level: ThinkingLevel) -> None:
         """Set the thinking level."""
@@ -3632,6 +3994,17 @@ class WireClient:
         params["sessionIds"] = list(session_ids)
         return parse_get_session_lease_result(self._command("get_session_lease", params), "get_session_lease")
 
+    def list_sessions(self, *, cwd: str | None = None, all: bool | None = None, limit: int | None = None) -> tuple[SessionListItem, ...]:
+        """Saved sessions, newest first with pinned ones on top, read without repairing or locking anything. Scope: `cwd`'s session directory (default: the current session's) plus that folder's directories in the repository's other git worktrees, as the resume picker lists them, or every project with `all`. Untitled empty sessions are left out unless pinned."""
+        params: dict[str, object] = {}
+        if cwd is not None:
+            params["cwd"] = cwd
+        if all is not None:
+            params["all"] = all
+        if limit is not None:
+            params["limit"] = limit
+        return required(expect_object(self._command("list_sessions", params), "list_sessions"), "sessions", array(parse_session_list_item), "list_sessions")
+
     def export_html(self, output_path: str | Path | None = None) -> Path:
         """Export the session as HTML; returns the written path."""
         params: dict[str, object] = {}
@@ -3701,6 +4074,21 @@ class WireClient:
         params["name"] = name
         self._command("set_session_name", params)
 
+    def rename_session(self, path: str, name: str) -> str:
+        """Rename a saved session file by path, as the resume picker does; the current session's path renames this session. Fails while another omp process owns the session. Returns the stored title."""
+        params: dict[str, object] = {}
+        params["path"] = path
+        params["name"] = name
+        return required(expect_object(self._command("rename_session", params), "rename_session"), "title", decode_str, "rename_session")
+
+    def highlight_code(self, code: str, *, lang: str | None = None) -> tuple[HighlightToken, ...]:
+        """Syntax-highlight `code` with the native highlighter. `lang` is a language name, alias or file extension; an unknown one yields a single plain token. Joining the token texts gives back `code`. Results are cached."""
+        params: dict[str, object] = {}
+        params["code"] = code
+        if lang is not None:
+            params["lang"] = lang
+        return required(expect_object(self._command("highlight_code", params), "highlight_code"), "tokens", array(parse_highlight_token), "highlight_code")
+
     def handoff(self, custom_instructions: str | None = None) -> HandoffResult | None:
         """Hand the conversation off to a fresh session; null when no handoff was produced."""
         params: dict[str, object] = {}
@@ -3729,6 +4117,11 @@ class WireClient:
         params["providerId"] = provider_id
         return required(expect_object(self._command("login", params, timeout=600), "login"), "providerId", decode_str, "login")
 
+    def login_cancel(self) -> bool:
+        """Cancel the running `login`: it fails with code `cancelled` and its pending `input` request is cancelled. `cancelled` is false when no login was running."""
+        params: dict[str, object] = {}
+        return required(expect_object(self._command("login_cancel", params), "login_cancel"), "cancelled", decode_bool, "login_cancel")
+
     def get_logout_accounts(self, provider_id: str) -> tuple[LogoutAccount, ...]:
         """List the stored credentials `logout` can remove for a provider, active first."""
         params: dict[str, object] = {}
@@ -3742,12 +4135,53 @@ class WireClient:
         params["credentialId"] = credential_id
         return parse_logout_result(self._command("logout", params), "logout")
 
+    def get_session_accounts(self, provider_id: str | None = None) -> SessionAccountList | None:
+        """List the stored OAuth accounts of a provider (default: the session model's provider), marking the one in use; null when no provider is given and no model is selected."""
+        params: dict[str, object] = {}
+        if provider_id is not None:
+            params["providerId"] = provider_id
+        data = self._command("get_session_accounts", params)
+        return None if data is None else parse_session_account_list(data, "get_session_accounts")
+
+    def pin_session_account(self, credential_id: int, *, provider_id: str | None = None) -> str:
+        """Switch this session to one stored OAuth account. Fails while a turn is streaming or when the credential is no longer available."""
+        params: dict[str, object] = {}
+        params["credentialId"] = credential_id
+        if provider_id is not None:
+            params["providerId"] = provider_id
+        return required(expect_object(self._command("pin_session_account", params), "pin_session_account"), "provider", decode_str, "pin_session_account")
+
     def predict_word(self, text: str, cursor: int) -> str | None:
         """Ghost-text suffix for the prose word ending at `cursor` (a UTF-16 offset); null when none applies."""
         params: dict[str, object] = {}
         params["text"] = text
         params["cursor"] = cursor
         return required(expect_object(self._command("predict_word", params, timeout=155), "predict_word"), "suffix", nullable(decode_str), "predict_word")
+
+    def complete_path(self, text: str, cursor: int) -> PathCompletion | None:
+        """Path completions for the `@` mention ending at `cursor` (a UTF-16 offset), relative to the session cwd; null outside a mention or when nothing matches."""
+        params: dict[str, object] = {}
+        params["text"] = text
+        params["cursor"] = cursor
+        data = self._command("complete_path", params)
+        return None if data is None else parse_path_completion(data, "complete_path")
+
+    def get_prompt_history(self, *, query: str | None = None, limit: int | None = None, cwd: str | None = None) -> tuple[PromptHistoryEntry, ...]:
+        """Submitted prompts shared with the interactive editor, newest first; `query` searches them, `cwd` keeps one project's."""
+        params: dict[str, object] = {}
+        if query is not None:
+            params["query"] = query
+        if limit is not None:
+            params["limit"] = limit
+        if cwd is not None:
+            params["cwd"] = cwd
+        return required(expect_object(self._command("get_prompt_history", params), "get_prompt_history"), "entries", array(parse_prompt_history_entry), "get_prompt_history")
+
+    def add_prompt_history(self, prompt: str) -> None:
+        """Record a submitted prompt in the shared prompt history under the session's cwd and id."""
+        params: dict[str, object] = {}
+        params["prompt"] = prompt
+        self._command("add_prompt_history", params)
 
     def predict_word_feedback(self, text: str, cursor: int, suggestion: str, *, accepted: bool) -> None:
         """Report a shown suggestion as accepted or typed past."""
@@ -3902,6 +4336,10 @@ class WireClient:
         """Subscribe to `tool_execution_update` frames."""
         return self._listen("tool_execution_update", listener)
 
+    def on_bash_output(self, listener: Callable[[BashOutputEvent], None]) -> Callable[[], None]:
+        """Subscribe to `bash_output`: Opt-in (`bashOutput: 'chunks'`) splice of a bash progress preview; selected together with `tool_execution_update`."""
+        return self._listen("bash_output", listener)
+
     def on_tool_stream_update(self, listener: Callable[[ToolStreamUpdateEvent], None]) -> Callable[[], None]:
         """Subscribe to `tool_stream_update` frames."""
         return self._listen("tool_stream_update", listener)
@@ -4005,6 +4443,7 @@ __all__ = [
     "AdvisorYieldedEvent",
     "AgentEndEvent",
     "AgentMessage",
+    "AgentModelEntry",
     "AgentSource",
     "AgentStartEvent",
     "AnthropicServerToolContent",
@@ -4038,6 +4477,8 @@ __all__ = [
     "AvailableCommandsUpdateEvent",
     "AvailableSlashCommand",
     "BashExecutionMessage",
+    "BashOutputEvent",
+    "BashOutputMode",
     "BashResult",
     "BranchMessage",
     "BranchResult",
@@ -4069,6 +4510,7 @@ __all__ = [
     "DictationTranscriptEvent",
     "EditorUiRequest",
     "Effort",
+    "ExtensionEntry",
     "ExtensionError",
     "ExtensionUiMethod",
     "ExtensionUiRequest",
@@ -4084,6 +4526,7 @@ __all__ = [
     "GoalStatus",
     "GoalUpdatedEvent",
     "HandoffResult",
+    "HighlightToken",
     "HookMessage",
     "HostToolDefinition",
     "HostUriSchemeDefinition",
@@ -4110,6 +4553,9 @@ __all__ = [
     "MessageUpdateEvent",
     "MessageUpdates",
     "MessagesPage",
+    "ModelCatalog",
+    "ModelCatalogModel",
+    "ModelCatalogProvider",
     "ModelChangedEvent",
     "ModelCost",
     "ModelCycleResult",
@@ -4122,9 +4568,12 @@ __all__ = [
     "OpenSessionResult",
     "OpenUrlUiRequest",
     "ParentIrc",
+    "PathCompletion",
+    "PathCompletionItem",
     "PromoteQueuedMessageResult",
     "PromptAck",
     "PromptError",
+    "PromptHistoryEntry",
     "PromptResultEvent",
     "PromptStatus",
     "PythonExecutionMessage",
@@ -4133,6 +4582,7 @@ __all__ = [
     "QueuedMessageQueue",
     "QueuedMessagesState",
     "ReadyEvent",
+    "ReconnectMcpServerResult",
     "RedactedThinkingContent",
     "RemoveQueuedMessageResult",
     "RestoredQueuedMessage",
@@ -4143,14 +4593,18 @@ __all__ = [
     "RpcNotification",
     "SelectOptionDetail",
     "SelectUiRequest",
+    "SessionAccount",
+    "SessionAccountList",
     "SessionCredits",
     "SessionEntries",
     "SessionInfoUpdateEvent",
+    "SessionListItem",
     "SessionSettledEvent",
     "SessionState",
     "SessionStats",
     "SessionTree",
     "SetEditorTextUiRequest",
+    "SetExtensionEnabledResult",
     "SetStatusUiRequest",
     "SetTitleUiRequest",
     "SetWidgetUiRequest",
@@ -4207,6 +4661,7 @@ __all__ = [
     "parse_advisor_yielded_event",
     "parse_agent_end_event",
     "parse_agent_message",
+    "parse_agent_model_entry",
     "parse_agent_start_event",
     "parse_anthropic_server_tool_content",
     "parse_ask_answer",
@@ -4236,6 +4691,7 @@ __all__ = [
     "parse_available_commands_update_event",
     "parse_available_slash_command",
     "parse_bash_execution_message",
+    "parse_bash_output_event",
     "parse_bash_result",
     "parse_branch_message",
     "parse_branch_result",
@@ -4261,6 +4717,7 @@ __all__ = [
     "parse_dictation_state_event",
     "parse_dictation_transcript_event",
     "parse_editor_ui_request",
+    "parse_extension_entry",
     "parse_extension_error",
     "parse_extension_ui_request",
     "parse_fallback_content",
@@ -4273,6 +4730,7 @@ __all__ = [
     "parse_goal_result",
     "parse_goal_updated_event",
     "parse_handoff_result",
+    "parse_highlight_token",
     "parse_hook_message",
     "parse_host_tool_definition",
     "parse_host_uri_scheme_definition",
@@ -4294,6 +4752,9 @@ __all__ = [
     "parse_message_start_event",
     "parse_message_update_event",
     "parse_messages_page",
+    "parse_model_catalog",
+    "parse_model_catalog_model",
+    "parse_model_catalog_provider",
     "parse_model_changed_event",
     "parse_model_cost",
     "parse_model_cycle_result",
@@ -4306,14 +4767,18 @@ __all__ = [
     "parse_open_session_result",
     "parse_open_url_ui_request",
     "parse_parent_irc",
+    "parse_path_completion",
+    "parse_path_completion_item",
     "parse_promote_queued_message_result",
     "parse_prompt_ack",
     "parse_prompt_error",
+    "parse_prompt_history_entry",
     "parse_prompt_result_event",
     "parse_python_execution_message",
     "parse_queue_update_event",
     "parse_queued_messages_state",
     "parse_ready_event",
+    "parse_reconnect_mcp_server_result",
     "parse_redacted_thinking_content",
     "parse_remove_queued_message_result",
     "parse_restored_queued_message",
@@ -4323,14 +4788,18 @@ __all__ = [
     "parse_rpc_frame_error_event",
     "parse_select_option_detail",
     "parse_select_ui_request",
+    "parse_session_account",
+    "parse_session_account_list",
     "parse_session_credits",
     "parse_session_entries",
     "parse_session_info_update_event",
+    "parse_session_list_item",
     "parse_session_settled_event",
     "parse_session_state",
     "parse_session_stats",
     "parse_session_tree",
     "parse_set_editor_text_ui_request",
+    "parse_set_extension_enabled_result",
     "parse_set_status_ui_request",
     "parse_set_title_ui_request",
     "parse_set_widget_ui_request",

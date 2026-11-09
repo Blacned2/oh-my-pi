@@ -275,7 +275,7 @@ export type SessionHostProtocol = {
 	abortCompaction: RpcMethod<[reason?: unknown], void>;
 	abortHandoff: RpcMethod<[], void>;
 	setModelTemporary: RpcMethod<
-		[model: Model, thinkingLevel?: ConfiguredThinkingLevel, options?: { ephemeral?: boolean }],
+		[model: Model, thinkingLevel?: ConfiguredThinkingLevel, options?: { ephemeral?: boolean; rememberAsDefault?: boolean }],
 		void
 	>;
 	cycleRoleModels: RpcMethod<

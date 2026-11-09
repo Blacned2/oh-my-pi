@@ -322,7 +322,7 @@ export interface AgentViewSession extends AgentSessionHandle {
 	setModelTemporary(
 		model: Model,
 		thinkingLevel?: ConfiguredThinkingLevel,
-		options?: { ephemeral?: boolean },
+		options?: { ephemeral?: boolean; rememberAsDefault?: boolean },
 	): Promise<void>;
 	/** Model-role cycle for the given role order. */
 	getRoleModelCycle(roleOrder: readonly string[]): RoleModelCycle | undefined;

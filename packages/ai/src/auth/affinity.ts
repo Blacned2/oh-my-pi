@@ -9,6 +9,10 @@ import { resolveCredentialIdentityKey } from "./sqlite-credential-store";
 
 /** Prefix for persisted session-to-credential affinity. */
 export const SESSION_STICKY_CACHE_PREFIX = "session:sticky:";
+/** Prefix for the persisted provider-wide last-used OAuth credential row id. */
+const PROVIDER_LAST_USED_CACHE_PREFIX = "provider:last-used:";
+/** The provider-wide last-used row expires this long after its last write. */
+const PROVIDER_LAST_USED_TTL_SEC = 180 * 24 * 60 * 60;
 /** Persisted sticky rows live this long past their last use. */
 const SESSION_STICKY_TTL_SEC = 30 * 24 * 60 * 60;
 /**
@@ -56,6 +60,8 @@ export class SessionAffinity implements SessionsApi {
 	#sessionLastCredential: Map<string, LRUCache<string, SessionCredential>> = new Map();
 	/** Persisted sticky rows per provider, keyed by session id, so unchanged re-records skip the write. */
 	#persistedSticky: Map<string, LRUCache<string, PersistedSticky>> = new Map();
+	/** Last OAuth row id this process recorded per provider, so unchanged re-records skip the write. */
+	#lastUsedCredentialId: Map<string, number> = new Map();
 	#store: AuthCredentialStore;
 	#pool: CredentialPool;
 	#overrides: KeyOverrides;
@@ -182,6 +188,9 @@ export class SessionAffinity implements SessionsApi {
 			...(isExplicit ? { explicit: true as const } : {}),
 		};
 		sessionMap.set(sessionId, sessionCredential);
+		// Only live selections count as "last used"; restored/inherited pins carry a backdated
+		// timestamp and must not override the account that most recently served a request.
+		if (type === "oauth" && lastUsedAtMs === undefined) this.#recordProviderLastUsed(provider, credentialId);
 
 		if (credentialId === undefined) return;
 		const cacheKey = `${SESSION_STICKY_CACHE_PREFIX}${provider}:${sessionId}`;
@@ -209,6 +218,40 @@ export class SessionAffinity implements SessionsApi {
 			persistedSessions.delete(sessionId);
 			logger.debug("Failed to write session sticky credential to persistent store cache", { err });
 		}
+	}
+
+	#recordProviderLastUsed(provider: string, credentialId: number | undefined): void {
+		if (credentialId === undefined) return;
+		const key = `${PROVIDER_LAST_USED_CACHE_PREFIX}${provider}`;
+		this.#lastUsedCredentialId.set(provider, credentialId);
+		try {
+			// Compare with the shared row, not process memory: another process may have recorded a different account since.
+			if (this.#store.getCache(key) === String(credentialId)) return;
+			this.#store.setCache(key, String(credentialId), Math.floor(Date.now() / 1000) + PROVIDER_LAST_USED_TTL_SEC);
+		} catch (err) {
+			logger.debug("Failed to write provider last-used credential to persistent store cache", { err });
+		}
+	}
+
+	/**
+	 * Index (in the provider's stored pool) of the OAuth account that most recently served any
+	 * session, surviving process restarts. Used to start sessions with no pin of their own on
+	 * that account instead of the first stored one. `undefined` when none is recorded or the
+	 * row is gone.
+	 */
+	lastUsedOAuthIndex(provider: string): number | undefined {
+		let credentialId: number | undefined;
+		try {
+			const raw = this.#store.getCache(`${PROVIDER_LAST_USED_CACHE_PREFIX}${provider}`);
+			const parsed = raw ? Number(raw) : Number.NaN;
+			if (Number.isInteger(parsed)) credentialId = parsed;
+		} catch (err) {
+			logger.debug("Failed to read provider last-used credential from persistent store cache", { err });
+		}
+		credentialId ??= this.#lastUsedCredentialId.get(provider);
+		if (credentialId === undefined) return undefined;
+		const index = this.#pool.entries(provider).findIndex(entry => entry.id === credentialId);
+		return index === -1 || this.#pool.entries(provider)[index]?.credential.type !== "oauth" ? undefined : index;
 	}
 
 	/**

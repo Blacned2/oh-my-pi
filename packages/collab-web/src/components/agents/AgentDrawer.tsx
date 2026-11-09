@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { GuestClient } from "../../lib/client";
 import { fmtCost, fmtDuration, fmtTokens } from "../../lib/format";
+import { useI18n } from "../../lib/i18n";
 import { decideTranscriptPoll } from "../../lib/transcript-poll";
 import type { TranscriptProps } from "../transcript/Transcript";
 import { Transcript } from "../transcript/Transcript";
@@ -25,6 +26,7 @@ export function AgentDrawer(props: {
 	onClose(): void;
 }): ReactNode {
 	const { agent, progress, lifecycle, client, readOnly, host, onClose } = props;
+	const { t } = useI18n();
 	const [entries, setEntries] = useState<readonly SessionEntry[]>([]);
 	const [fetchError, setFetchError] = useState<string | null>(null);
 	const [draft, setDraft] = useState("");
@@ -162,7 +164,7 @@ export function AgentDrawer(props: {
 							revive
 						</button>
 					) : null}
-					<button type="button" className="ag-iconbtn" aria-label="close" onClick={onClose}>
+					<button type="button" className="ag-iconbtn" aria-label={t("agents.close")} onClick={onClose}>
 						<X size={15} aria-hidden />
 					</button>
 				</div>
@@ -185,11 +187,11 @@ export function AgentDrawer(props: {
 						</span>
 					) : null}
 					<span className="ag-stat">
-						<span className="ag-stat-label">cost</span>
+						<span className="ag-stat-label">{t("agents.cost")}</span>
 						<span className="ag-stat-value">{fmtCost(p.cost)}</span>
 					</span>
 					<span className="ag-stat">
-						<span className="ag-stat-label">tools</span>
+						<span className="ag-stat-label">{t("agents.tools")}</span>
 						<span className="ag-stat-value">{p.toolCount}</span>
 					</span>
 					<span className="ag-stat">
@@ -216,7 +218,7 @@ export function AgentDrawer(props: {
 						) : null}
 					</>
 				) : (
-					<div className="ag-empty">no transcript available</div>
+					<div className="ag-empty">{t("agents.noTranscript")}</div>
 				)}
 			</div>
 			{!readOnly && (
@@ -230,10 +232,15 @@ export function AgentDrawer(props: {
 					<input
 						className="ag-chat-input"
 						value={draft}
-						placeholder={`message ${agent.displayName}…`}
+						placeholder={t("agents.messagePlaceholder", { name: agent.displayName })}
 						onChange={e => setDraft(e.target.value)}
 					/>
-					<button type="submit" className="ag-iconbtn" aria-label="send" disabled={draft.trim().length === 0}>
+					<button
+						type="submit"
+						className="ag-iconbtn"
+						aria-label={t("agents.send")}
+						disabled={draft.trim().length === 0}
+					>
 						<SendHorizontal size={15} aria-hidden />
 					</button>
 				</form>

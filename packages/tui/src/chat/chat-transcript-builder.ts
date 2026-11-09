@@ -306,6 +306,7 @@ export class ChatTranscriptBuilder {
 				this.#appendAssistantMessage(message);
 				break;
 			case "toolResult":
+				this.#turnUsage.noteToolResult(message.isError === true);
 				this.#appendToolResult(message);
 				break;
 			case "user":

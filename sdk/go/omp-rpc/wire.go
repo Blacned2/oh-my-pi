@@ -2008,6 +2008,27 @@ func (v *MessageUpdates) UnmarshalJSON(data []byte) error {
 	return unknownValue("MessageUpdates", s)
 }
 
+// `set_event_filter` projection: `chunks` sends bash progress text as `bash_output` splices instead of full snapshots.
+type BashOutputMode string
+
+const (
+	BashOutputModeFull   BashOutputMode = "full"
+	BashOutputModeChunks BashOutputMode = "chunks"
+)
+
+func (v *BashOutputMode) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "BashOutputMode")
+	if err != nil {
+		return err
+	}
+	switch value := BashOutputMode(s); value {
+	case BashOutputModeFull, BashOutputModeChunks:
+		*v = value
+		return nil
+	}
+	return unknownValue("BashOutputMode", s)
+}
+
 type TodoStatus string
 
 const (
@@ -2535,19 +2556,23 @@ func (v *UsageLimitState) decodeFrom(raw map[string]json.RawMessage) error {
 }
 
 type SessionState struct {
-	SessionID             string         `json:"sessionId"`
-	Model                 *ModelInfo     `json:"model,omitempty"`
-	ThinkingLevel         *ThinkingLevel `json:"thinkingLevel,omitempty"`
-	IsStreaming           bool           `json:"isStreaming"`
-	IsCompacting          bool           `json:"isCompacting"`
-	SteeringMode          QueueMode      `json:"steeringMode"`
-	FollowUpMode          QueueMode      `json:"followUpMode"`
-	InterruptMode         InterruptMode  `json:"interruptMode"`
-	SessionFile           *string        `json:"sessionFile,omitempty"`
-	SessionName           *string        `json:"sessionName,omitempty"`
-	AutoCompactionEnabled bool           `json:"autoCompactionEnabled"`
-	FastModeEnabled       bool           `json:"fastModeEnabled"`
-	FastModeActive        bool           `json:"fastModeActive"`
+	SessionID     string         `json:"sessionId"`
+	Model         *ModelInfo     `json:"model,omitempty"`
+	ThinkingLevel *ThinkingLevel `json:"thinkingLevel,omitempty"`
+	// The user's thinking selector (e.g. `auto`) behind `thinkingLevel`; absent when the model default applies.
+	ConfiguredThinkingLevel *ConfiguredThinkingLevel `json:"configuredThinkingLevel,omitempty"`
+	// The `spelling.autocomplete` method `predict_word` uses; `off` means it always returns null.
+	WordCompletion        *SessionStateWordCompletion `json:"wordCompletion,omitempty"`
+	IsStreaming           bool                        `json:"isStreaming"`
+	IsCompacting          bool                        `json:"isCompacting"`
+	SteeringMode          QueueMode                   `json:"steeringMode"`
+	FollowUpMode          QueueMode                   `json:"followUpMode"`
+	InterruptMode         InterruptMode               `json:"interruptMode"`
+	SessionFile           *string                     `json:"sessionFile,omitempty"`
+	SessionName           *string                     `json:"sessionName,omitempty"`
+	AutoCompactionEnabled bool                        `json:"autoCompactionEnabled"`
+	FastModeEnabled       bool                        `json:"fastModeEnabled"`
+	FastModeActive        bool                        `json:"fastModeActive"`
 	// `/slow` applies to the active model.
 	SlowModeSupported bool `json:"slowModeSupported"`
 	// `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`.
@@ -2571,6 +2596,8 @@ type SessionState struct {
 	ContextUsage *ContextUsage    `json:"contextUsage,omitempty"`
 	// Current goal mode; null when the session has no goal.
 	Goal *GoalModeState `json:"goal"`
+	// Configuration warnings the interactive header shows; `config_warnings_changed` marks a change.
+	ConfigWarnings []string `json:"configWarnings"`
 }
 
 func (v *SessionState) UnmarshalJSON(data []byte) error {
@@ -2583,6 +2610,8 @@ func (v *SessionState) decodeFrom(raw map[string]json.RawMessage) error {
 	d.required("sessionId", &out.SessionID)
 	d.optional("model", &out.Model)
 	d.optional("thinkingLevel", &out.ThinkingLevel)
+	d.optional("configuredThinkingLevel", &out.ConfiguredThinkingLevel)
+	d.optional("wordCompletion", &out.WordCompletion)
 	d.defaulted("isStreaming", &out.IsStreaming, `false`)
 	d.defaulted("isCompacting", &out.IsCompacting, `false`)
 	d.defaulted("steeringMode", &out.SteeringMode, `"one-at-a-time"`)
@@ -2609,11 +2638,35 @@ func (v *SessionState) decodeFrom(raw map[string]json.RawMessage) error {
 	d.defaulted("dumpTools", &out.DumpTools, `[]`)
 	d.optional("contextUsage", &out.ContextUsage)
 	d.defaulted("goal", &out.Goal, `null`)
+	d.defaulted("configWarnings", &out.ConfigWarnings, `[]`)
 	if d.err != nil {
 		return d.err
 	}
 	*v = out
 	return nil
+}
+
+type SessionStateWordCompletion string
+
+const (
+	SessionStateWordCompletionOff    SessionStateWordCompletion = "off"
+	SessionStateWordCompletionAuto   SessionStateWordCompletion = "auto"
+	SessionStateWordCompletionNgram  SessionStateWordCompletion = "ngram"
+	SessionStateWordCompletionSmollm SessionStateWordCompletion = "smollm"
+	SessionStateWordCompletionApple  SessionStateWordCompletion = "apple"
+)
+
+func (v *SessionStateWordCompletion) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "SessionStateWordCompletion")
+	if err != nil {
+		return err
+	}
+	switch value := SessionStateWordCompletion(s); value {
+	case SessionStateWordCompletionOff, SessionStateWordCompletionAuto, SessionStateWordCompletionNgram, SessionStateWordCompletionSmollm, SessionStateWordCompletionApple:
+		*v = value
+		return nil
+	}
+	return unknownValue("SessionStateWordCompletion", s)
 }
 
 type BashResult struct {
@@ -3242,6 +3295,118 @@ func (v *SessionTree) decodeFrom(raw map[string]json.RawMessage) error {
 	return nil
 }
 
+// One saved session, as the resume picker lists it.
+type SessionListItem struct {
+	Path string `json:"path"`
+	ID   string `json:"id"`
+	// Display name: explicit title, else the first prompt, else a time label.
+	Title string `json:"title"`
+	// Working directory from the session header; empty when unknown.
+	Cwd string `json:"cwd"`
+	// Last modification, epoch milliseconds.
+	Mtime        int64 `json:"mtime"`
+	MessageCount int64 `json:"messageCount"`
+	Pinned       bool  `json:"pinned"`
+}
+
+func (v *SessionListItem) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionListItem", v.decodeFrom)
+}
+
+func (v *SessionListItem) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionListItem
+	d := fieldDecoder{raw: raw, owner: "SessionListItem"}
+	d.required("path", &out.Path)
+	d.required("id", &out.ID)
+	d.required("title", &out.Title)
+	d.required("cwd", &out.Cwd)
+	d.required("mtime", &out.Mtime)
+	d.required("messageCount", &out.MessageCount)
+	d.required("pinned", &out.Pinned)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+// One `@` mention completion.
+type PathCompletionItem struct {
+	// Replacement for the mention, `@` included, quoted when the path has spaces.
+	Value       string  `json:"value"`
+	Label       string  `json:"label"`
+	Directory   bool    `json:"directory"`
+	Description *string `json:"description,omitempty"`
+}
+
+func (v *PathCompletionItem) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PathCompletionItem", v.decodeFrom)
+}
+
+func (v *PathCompletionItem) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PathCompletionItem
+	d := fieldDecoder{raw: raw, owner: "PathCompletionItem"}
+	d.required("value", &out.Value)
+	d.required("label", &out.Label)
+	d.required("directory", &out.Directory)
+	d.optional("description", &out.Description)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+// Completions for the `@` mention at the cursor.
+type PathCompletion struct {
+	// The mention text before the cursor that `value` replaces.
+	Prefix string               `json:"prefix"`
+	Items  []PathCompletionItem `json:"items"`
+}
+
+func (v *PathCompletion) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PathCompletion", v.decodeFrom)
+}
+
+func (v *PathCompletion) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PathCompletion
+	d := fieldDecoder{raw: raw, owner: "PathCompletion"}
+	d.required("prefix", &out.Prefix)
+	d.required("items", &out.Items)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+// One submitted prompt from the shared prompt history.
+type PromptHistoryEntry struct {
+	Prompt string `json:"prompt"`
+	// Submission time, epoch milliseconds.
+	CreatedAt int64   `json:"createdAt"`
+	UseCount  int64   `json:"useCount"`
+	Cwd       *string `json:"cwd,omitempty"`
+}
+
+func (v *PromptHistoryEntry) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PromptHistoryEntry", v.decodeFrom)
+}
+
+func (v *PromptHistoryEntry) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PromptHistoryEntry
+	d := fieldDecoder{raw: raw, owner: "PromptHistoryEntry"}
+	d.required("prompt", &out.Prompt)
+	d.required("createdAt", &out.CreatedAt)
+	d.required("useCount", &out.UseCount)
+	d.optional("cwd", &out.Cwd)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type SubagentSnapshot struct {
 	ID          string         `json:"id"`
 	Index       int64          `json:"index"`
@@ -3437,6 +3602,291 @@ func (v *LoginProvider) decodeFrom(raw map[string]json.RawMessage) error {
 	return nil
 }
 
+type ModelCatalogModel struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Scoped bool   `json:"scoped"`
+}
+
+func (v *ModelCatalogModel) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ModelCatalogModel", v.decodeFrom)
+}
+
+func (v *ModelCatalogModel) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ModelCatalogModel
+	d := fieldDecoder{raw: raw, owner: "ModelCatalogModel"}
+	d.required("id", &out.ID)
+	d.required("name", &out.Name)
+	d.required("scoped", &out.Scoped)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type ModelCatalogProvider struct {
+	Provider string              `json:"provider"`
+	Models   []ModelCatalogModel `json:"models"`
+}
+
+func (v *ModelCatalogProvider) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ModelCatalogProvider", v.decodeFrom)
+}
+
+func (v *ModelCatalogProvider) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ModelCatalogProvider
+	d := fieldDecoder{raw: raw, owner: "ModelCatalogProvider"}
+	d.required("provider", &out.Provider)
+	d.required("models", &out.Models)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+// `enabledModels` is the raw scope pattern list; empty means every available model is in scope.
+type ModelCatalog struct {
+	EnabledModels []string               `json:"enabledModels"`
+	Providers     []ModelCatalogProvider `json:"providers"`
+}
+
+func (v *ModelCatalog) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ModelCatalog", v.decodeFrom)
+}
+
+func (v *ModelCatalog) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ModelCatalog
+	d := fieldDecoder{raw: raw, owner: "ModelCatalog"}
+	d.required("enabledModels", &out.EnabledModels)
+	d.required("providers", &out.Providers)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+// A task agent and its model assignment.
+type AgentModelEntry struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Source      string `json:"source"`
+	Disabled    bool   `json:"disabled"`
+	// Frontmatter `model` patterns.
+	AgentModel []string `json:"agentModel,omitempty"`
+	// Saved `task.agentModelOverrides` entry, comma-joined.
+	OverrideModel *string `json:"overrideModel,omitempty"`
+	// `provider/id[:level]` the agent resolves to now.
+	EffectiveModel *string `json:"effectiveModel,omitempty"`
+}
+
+func (v *AgentModelEntry) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "AgentModelEntry", v.decodeFrom)
+}
+
+func (v *AgentModelEntry) decodeFrom(raw map[string]json.RawMessage) error {
+	var out AgentModelEntry
+	d := fieldDecoder{raw: raw, owner: "AgentModelEntry"}
+	d.required("name", &out.Name)
+	d.required("description", &out.Description)
+	d.required("source", &out.Source)
+	d.required("disabled", &out.Disabled)
+	d.optional("agentModel", &out.AgentModel)
+	d.optional("overrideModel", &out.OverrideModel)
+	d.optional("effectiveModel", &out.EffectiveModel)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+// A discovered capability as the `/extensions` dashboard shows it.
+type ExtensionEntry struct {
+	// `kind:name`; the key `set_extension_enabled` takes.
+	ID             string              `json:"id"`
+	Kind           ExtensionEntryKind  `json:"kind"`
+	Name           string              `json:"name"`
+	DisplayName    string              `json:"displayName"`
+	Path           string              `json:"path"`
+	Provider       string              `json:"provider"`
+	ProviderName   string              `json:"providerName"`
+	Level          ExtensionEntryLevel `json:"level"`
+	State          ExtensionEntryState `json:"state"`
+	Description    *string             `json:"description,omitempty"`
+	Trigger        *string             `json:"trigger,omitempty"`
+	DisabledReason *string             `json:"disabledReason,omitempty"`
+	ShadowedBy     *string             `json:"shadowedBy,omitempty"`
+	// Live MCP connection state.
+	McpStatus *ExtensionEntryMcpStatus `json:"mcpStatus,omitempty"`
+	// Tools the connected MCP server exposes.
+	McpTools *int64 `json:"mcpTools,omitempty"`
+	// Last MCP connection failure, cleared on connect.
+	McpError *string `json:"mcpError,omitempty"`
+}
+
+func (v *ExtensionEntry) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ExtensionEntry", v.decodeFrom)
+}
+
+func (v *ExtensionEntry) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ExtensionEntry
+	d := fieldDecoder{raw: raw, owner: "ExtensionEntry"}
+	d.required("id", &out.ID)
+	d.required("kind", &out.Kind)
+	d.required("name", &out.Name)
+	d.required("displayName", &out.DisplayName)
+	d.required("path", &out.Path)
+	d.required("provider", &out.Provider)
+	d.required("providerName", &out.ProviderName)
+	d.required("level", &out.Level)
+	d.required("state", &out.State)
+	d.optional("description", &out.Description)
+	d.optional("trigger", &out.Trigger)
+	d.optional("disabledReason", &out.DisabledReason)
+	d.optional("shadowedBy", &out.ShadowedBy)
+	d.optional("mcpStatus", &out.McpStatus)
+	d.optional("mcpTools", &out.McpTools)
+	d.optional("mcpError", &out.McpError)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type ExtensionEntryKind string
+
+const (
+	ExtensionEntryKindExtensionModule ExtensionEntryKind = "extension-module"
+	ExtensionEntryKindSkill           ExtensionEntryKind = "skill"
+	ExtensionEntryKindRule            ExtensionEntryKind = "rule"
+	ExtensionEntryKindTool            ExtensionEntryKind = "tool"
+	ExtensionEntryKindMcp             ExtensionEntryKind = "mcp"
+	ExtensionEntryKindPrompt          ExtensionEntryKind = "prompt"
+	ExtensionEntryKindInstruction     ExtensionEntryKind = "instruction"
+	ExtensionEntryKindContextFile     ExtensionEntryKind = "context-file"
+	ExtensionEntryKindHook            ExtensionEntryKind = "hook"
+	ExtensionEntryKindSlashCommand    ExtensionEntryKind = "slash-command"
+)
+
+func (v *ExtensionEntryKind) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "ExtensionEntryKind")
+	if err != nil {
+		return err
+	}
+	switch value := ExtensionEntryKind(s); value {
+	case ExtensionEntryKindExtensionModule, ExtensionEntryKindSkill, ExtensionEntryKindRule, ExtensionEntryKindTool, ExtensionEntryKindMcp, ExtensionEntryKindPrompt, ExtensionEntryKindInstruction, ExtensionEntryKindContextFile, ExtensionEntryKindHook, ExtensionEntryKindSlashCommand:
+		*v = value
+		return nil
+	}
+	return unknownValue("ExtensionEntryKind", s)
+}
+
+type ExtensionEntryLevel string
+
+const (
+	ExtensionEntryLevelUser    ExtensionEntryLevel = "user"
+	ExtensionEntryLevelProject ExtensionEntryLevel = "project"
+	ExtensionEntryLevelNative  ExtensionEntryLevel = "native"
+)
+
+func (v *ExtensionEntryLevel) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "ExtensionEntryLevel")
+	if err != nil {
+		return err
+	}
+	switch value := ExtensionEntryLevel(s); value {
+	case ExtensionEntryLevelUser, ExtensionEntryLevelProject, ExtensionEntryLevelNative:
+		*v = value
+		return nil
+	}
+	return unknownValue("ExtensionEntryLevel", s)
+}
+
+type ExtensionEntryState string
+
+const (
+	ExtensionEntryStateActive   ExtensionEntryState = "active"
+	ExtensionEntryStateDisabled ExtensionEntryState = "disabled"
+	ExtensionEntryStateShadowed ExtensionEntryState = "shadowed"
+)
+
+func (v *ExtensionEntryState) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "ExtensionEntryState")
+	if err != nil {
+		return err
+	}
+	switch value := ExtensionEntryState(s); value {
+	case ExtensionEntryStateActive, ExtensionEntryStateDisabled, ExtensionEntryStateShadowed:
+		*v = value
+		return nil
+	}
+	return unknownValue("ExtensionEntryState", s)
+}
+
+type ExtensionEntryMcpStatus string
+
+const (
+	ExtensionEntryMcpStatusConnected    ExtensionEntryMcpStatus = "connected"
+	ExtensionEntryMcpStatusConnecting   ExtensionEntryMcpStatus = "connecting"
+	ExtensionEntryMcpStatusDisconnected ExtensionEntryMcpStatus = "disconnected"
+)
+
+func (v *ExtensionEntryMcpStatus) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "ExtensionEntryMcpStatus")
+	if err != nil {
+		return err
+	}
+	switch value := ExtensionEntryMcpStatus(s); value {
+	case ExtensionEntryMcpStatusConnected, ExtensionEntryMcpStatusConnecting, ExtensionEntryMcpStatusDisconnected:
+		*v = value
+		return nil
+	}
+	return unknownValue("ExtensionEntryMcpStatus", s)
+}
+
+// `live` is true when the change already applies to this session.
+type SetExtensionEnabledResult struct {
+	Live bool `json:"live"`
+}
+
+func (v *SetExtensionEnabledResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SetExtensionEnabledResult", v.decodeFrom)
+}
+
+func (v *SetExtensionEnabledResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SetExtensionEnabledResult
+	d := fieldDecoder{raw: raw, owner: "SetExtensionEnabledResult"}
+	d.required("live", &out.Live)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type ReconnectMcpServerResult struct {
+	Connected bool `json:"connected"`
+}
+
+func (v *ReconnectMcpServerResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ReconnectMcpServerResult", v.decodeFrom)
+}
+
+func (v *ReconnectMcpServerResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ReconnectMcpServerResult
+	d := fieldDecoder{raw: raw, owner: "ReconnectMcpServerResult"}
+	d.required("connected", &out.Connected)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 // A stored credential `logout` can remove; `active` marks credentials the session may be using.
 type LogoutAccount struct {
 	CredentialID int64             `json:"credentialId"`
@@ -3487,6 +3937,58 @@ func (v *LogoutAccountType) UnmarshalJSON(data []byte) error {
 	return unknownValue("LogoutAccountType", s)
 }
 
+// A stored OAuth account the session can pin; `active` marks the one this session currently uses.
+type SessionAccount struct {
+	Position     int64   `json:"position"`
+	CredentialID int64   `json:"credentialId"`
+	Label        string  `json:"label"`
+	Active       bool    `json:"active"`
+	Email        *string `json:"email,omitempty"`
+	OrgName      *string `json:"orgName,omitempty"`
+}
+
+func (v *SessionAccount) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionAccount", v.decodeFrom)
+}
+
+func (v *SessionAccount) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionAccount
+	d := fieldDecoder{raw: raw, owner: "SessionAccount"}
+	d.required("position", &out.Position)
+	d.required("credentialId", &out.CredentialID)
+	d.required("label", &out.Label)
+	d.required("active", &out.Active)
+	d.optional("email", &out.Email)
+	d.optional("orgName", &out.OrgName)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+// Stored OAuth accounts of the session model's provider.
+type SessionAccountList struct {
+	Provider string           `json:"provider"`
+	Accounts []SessionAccount `json:"accounts"`
+}
+
+func (v *SessionAccountList) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "SessionAccountList", v.decodeFrom)
+}
+
+func (v *SessionAccountList) decodeFrom(raw map[string]json.RawMessage) error {
+	var out SessionAccountList
+	d := fieldDecoder{raw: raw, owner: "SessionAccountList"}
+	d.required("provider", &out.Provider)
+	d.required("accounts", &out.Accounts)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type HandoffResult struct {
 	SavedPath *string `json:"savedPath,omitempty"`
 }
@@ -3504,6 +4006,57 @@ func (v *HandoffResult) decodeFrom(raw map[string]json.RawMessage) error {
 	}
 	*v = out
 	return nil
+}
+
+// A run of highlighted source; `text` may span lines. No `kind` means plain text.
+type HighlightToken struct {
+	Text string              `json:"text"`
+	Kind *HighlightTokenKind `json:"kind,omitempty"`
+}
+
+func (v *HighlightToken) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "HighlightToken", v.decodeFrom)
+}
+
+func (v *HighlightToken) decodeFrom(raw map[string]json.RawMessage) error {
+	var out HighlightToken
+	d := fieldDecoder{raw: raw, owner: "HighlightToken"}
+	d.required("text", &out.Text)
+	d.optional("kind", &out.Kind)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type HighlightTokenKind string
+
+const (
+	HighlightTokenKindComment     HighlightTokenKind = "comment"
+	HighlightTokenKindKeyword     HighlightTokenKind = "keyword"
+	HighlightTokenKindFunction    HighlightTokenKind = "function"
+	HighlightTokenKindVariable    HighlightTokenKind = "variable"
+	HighlightTokenKindString      HighlightTokenKind = "string"
+	HighlightTokenKindNumber      HighlightTokenKind = "number"
+	HighlightTokenKindType        HighlightTokenKind = "type"
+	HighlightTokenKindOperator    HighlightTokenKind = "operator"
+	HighlightTokenKindPunctuation HighlightTokenKind = "punctuation"
+	HighlightTokenKindInserted    HighlightTokenKind = "inserted"
+	HighlightTokenKindDeleted     HighlightTokenKind = "deleted"
+)
+
+func (v *HighlightTokenKind) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "HighlightTokenKind")
+	if err != nil {
+		return err
+	}
+	switch value := HighlightTokenKind(s); value {
+	case HighlightTokenKindComment, HighlightTokenKindKeyword, HighlightTokenKindFunction, HighlightTokenKindVariable, HighlightTokenKindString, HighlightTokenKindNumber, HighlightTokenKindType, HighlightTokenKindOperator, HighlightTokenKindPunctuation, HighlightTokenKindInserted, HighlightTokenKindDeleted:
+		*v = value
+		return nil
+	}
+	return unknownValue("HighlightTokenKind", s)
 }
 
 // `agentInvoked: false` means the prompt completed locally and no `prompt_result` follows.
@@ -3897,6 +4450,38 @@ func (v *ToolExecutionUpdateEvent) decodeFrom(raw map[string]json.RawMessage) er
 func (v ToolExecutionUpdateEvent) MarshalJSON() ([]byte, error) {
 	type plain ToolExecutionUpdateEvent
 	return encodeObject(plain(v), `"type":"tool_execution_update"`, nil)
+}
+
+// Opt-in (`bashOutput: 'chunks'`) splice of a bash progress preview; selected together with `tool_execution_update`.
+type BashOutputEvent struct {
+	ToolCallID string `json:"toolCallId"`
+	// Characters of the previous preview to keep; 0 replaces it.
+	Keep int64 `json:"keep"`
+	// Text appended after the kept prefix.
+	Chunk string `json:"chunk"`
+}
+
+func (v *BashOutputEvent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "BashOutputEvent", v.decodeFrom)
+}
+
+func (v *BashOutputEvent) decodeFrom(raw map[string]json.RawMessage) error {
+	var out BashOutputEvent
+	d := fieldDecoder{raw: raw, owner: "BashOutputEvent"}
+	d.constant("type", "bash_output")
+	d.required("toolCallId", &out.ToolCallID)
+	d.required("keep", &out.Keep)
+	d.required("chunk", &out.Chunk)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v BashOutputEvent) MarshalJSON() ([]byte, error) {
+	type plain BashOutputEvent
+	return encodeObject(plain(v), `"type":"bash_output"`, nil)
 }
 
 type ToolStreamUpdateEvent struct {
@@ -4606,6 +5191,7 @@ func (MessageUpdateEvent) isRpcAgentEvent()          {}
 func (MessageEndEvent) isRpcAgentEvent()             {}
 func (ToolExecutionStartEvent) isRpcAgentEvent()     {}
 func (ToolExecutionUpdateEvent) isRpcAgentEvent()    {}
+func (BashOutputEvent) isRpcAgentEvent()             {}
 func (ToolStreamUpdateEvent) isRpcAgentEvent()       {}
 func (ToolExecutionEndEvent) isRpcAgentEvent()       {}
 func (AutoCompactionStartEvent) isRpcAgentEvent()    {}
@@ -4669,6 +5255,8 @@ func (v *RpcAgentEvent) decodeFrom(raw map[string]json.RawMessage) error {
 		value, err = decodeVariant[ToolExecutionStartEvent](raw)
 	case "tool_execution_update":
 		value, err = decodeVariant[ToolExecutionUpdateEvent](raw)
+	case "bash_output":
+		value, err = decodeVariant[BashOutputEvent](raw)
 	case "tool_stream_update":
 		value, err = decodeVariant[ToolStreamUpdateEvent](raw)
 	case "tool_execution_end":
@@ -6785,6 +7373,7 @@ func (MessageUpdateEvent) isRpcNotification()           {}
 func (MessageEndEvent) isRpcNotification()              {}
 func (ToolExecutionStartEvent) isRpcNotification()      {}
 func (ToolExecutionUpdateEvent) isRpcNotification()     {}
+func (BashOutputEvent) isRpcNotification()              {}
 func (ToolStreamUpdateEvent) isRpcNotification()        {}
 func (ToolExecutionEndEvent) isRpcNotification()        {}
 func (AutoCompactionStartEvent) isRpcNotification()     {}
@@ -6885,6 +7474,8 @@ func (v *RpcNotification) UnmarshalJSON(data []byte) error {
 		value, err = decodeVariant[ToolExecutionStartEvent](raw)
 	case "tool_execution_update":
 		value, err = decodeVariant[ToolExecutionUpdateEvent](raw)
+	case "bash_output":
+		value, err = decodeVariant[BashOutputEvent](raw)
 	case "tool_stream_update":
 		value, err = decodeVariant[ToolStreamUpdateEvent](raw)
 	case "tool_execution_end":
@@ -6990,6 +7581,7 @@ func (MessageUpdateEvent) isRpcServerFrame()           {}
 func (MessageEndEvent) isRpcServerFrame()              {}
 func (ToolExecutionStartEvent) isRpcServerFrame()      {}
 func (ToolExecutionUpdateEvent) isRpcServerFrame()     {}
+func (BashOutputEvent) isRpcServerFrame()              {}
 func (ToolStreamUpdateEvent) isRpcServerFrame()        {}
 func (ToolExecutionEndEvent) isRpcServerFrame()        {}
 func (AutoCompactionStartEvent) isRpcServerFrame()     {}
@@ -7100,6 +7692,8 @@ func (v *RpcServerFrame) UnmarshalJSON(data []byte) error {
 		value, err = decodeVariant[ToolExecutionStartEvent](raw)
 	case "tool_execution_update":
 		value, err = decodeVariant[ToolExecutionUpdateEvent](raw)
+	case "bash_output":
+		value, err = decodeVariant[BashOutputEvent](raw)
 	case "tool_stream_update":
 		value, err = decodeVariant[ToolStreamUpdateEvent](raw)
 	case "tool_execution_end":
@@ -7313,6 +7907,7 @@ func (v *SetSubagentSubscriptionResult) decodeFrom(raw map[string]json.RawMessag
 type SetEventFilterResult struct {
 	Events         []string        `json:"events"`
 	MessageUpdates *MessageUpdates `json:"messageUpdates,omitempty"`
+	BashOutput     *BashOutputMode `json:"bashOutput,omitempty"`
 }
 
 func (v *SetEventFilterResult) UnmarshalJSON(data []byte) error {
@@ -7324,6 +7919,7 @@ func (v *SetEventFilterResult) decodeFrom(raw map[string]json.RawMessage) error 
 	d := fieldDecoder{raw: raw, owner: "SetEventFilterResult"}
 	d.nullable("events", &out.Events)
 	d.optional("messageUpdates", &out.MessageUpdates)
+	d.optional("bashOutput", &out.BashOutput)
 	if d.err != nil {
 		return d.err
 	}
@@ -7466,6 +8062,44 @@ func (v *GetAvailableModelsResult) decodeFrom(raw map[string]json.RawMessage) er
 	return nil
 }
 
+type GetAgentModelsResult struct {
+	Agents []AgentModelEntry `json:"agents"`
+}
+
+func (v *GetAgentModelsResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "GetAgentModelsResult", v.decodeFrom)
+}
+
+func (v *GetAgentModelsResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out GetAgentModelsResult
+	d := fieldDecoder{raw: raw, owner: "GetAgentModelsResult"}
+	d.required("agents", &out.Agents)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type GetExtensionsResult struct {
+	Extensions []ExtensionEntry `json:"extensions"`
+}
+
+func (v *GetExtensionsResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "GetExtensionsResult", v.decodeFrom)
+}
+
+func (v *GetExtensionsResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out GetExtensionsResult
+	d := fieldDecoder{raw: raw, owner: "GetExtensionsResult"}
+	d.required("extensions", &out.Extensions)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type GetAvailableThinkingLevelsResult struct {
 	Levels []ThinkingLevel `json:"levels"`
 }
@@ -7518,6 +8152,25 @@ func (v *GetSessionLeaseResult) decodeFrom(raw map[string]json.RawMessage) error
 	d := fieldDecoder{raw: raw, owner: "GetSessionLeaseResult"}
 	d.required("held", &out.Held)
 	d.required("unknown", &out.Unknown)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type ListSessionsResult struct {
+	Sessions []SessionListItem `json:"sessions"`
+}
+
+func (v *ListSessionsResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ListSessionsResult", v.decodeFrom)
+}
+
+func (v *ListSessionsResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ListSessionsResult
+	d := fieldDecoder{raw: raw, owner: "ListSessionsResult"}
+	d.required("sessions", &out.Sessions)
 	if d.err != nil {
 		return d.err
 	}
@@ -7582,6 +8235,44 @@ func (v *GetLastAssistantTextResult) decodeFrom(raw map[string]json.RawMessage) 
 	return nil
 }
 
+type RenameSessionResult struct {
+	Title string `json:"title"`
+}
+
+func (v *RenameSessionResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "RenameSessionResult", v.decodeFrom)
+}
+
+func (v *RenameSessionResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out RenameSessionResult
+	d := fieldDecoder{raw: raw, owner: "RenameSessionResult"}
+	d.required("title", &out.Title)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type HighlightCodeResult struct {
+	Tokens []HighlightToken `json:"tokens"`
+}
+
+func (v *HighlightCodeResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "HighlightCodeResult", v.decodeFrom)
+}
+
+func (v *HighlightCodeResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out HighlightCodeResult
+	d := fieldDecoder{raw: raw, owner: "HighlightCodeResult"}
+	d.required("tokens", &out.Tokens)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type GetMessagesResult struct {
 	Messages []AgentMessage `json:"messages"`
 }
@@ -7639,6 +8330,25 @@ func (v *LoginResult) decodeFrom(raw map[string]json.RawMessage) error {
 	return nil
 }
 
+type LoginCancelResult struct {
+	Cancelled bool `json:"cancelled"`
+}
+
+func (v *LoginCancelResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "LoginCancelResult", v.decodeFrom)
+}
+
+func (v *LoginCancelResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out LoginCancelResult
+	d := fieldDecoder{raw: raw, owner: "LoginCancelResult"}
+	d.required("cancelled", &out.Cancelled)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type GetLogoutAccountsResult struct {
 	Accounts []LogoutAccount `json:"accounts"`
 }
@@ -7677,6 +8387,25 @@ func (v *LogoutResult) decodeFrom(raw map[string]json.RawMessage) error {
 	return nil
 }
 
+type PinSessionAccountResult struct {
+	Provider string `json:"provider"`
+}
+
+func (v *PinSessionAccountResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PinSessionAccountResult", v.decodeFrom)
+}
+
+func (v *PinSessionAccountResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PinSessionAccountResult
+	d := fieldDecoder{raw: raw, owner: "PinSessionAccountResult"}
+	d.required("provider", &out.Provider)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type PredictWordResult struct {
 	Suffix *string `json:"suffix"`
 }
@@ -7689,6 +8418,25 @@ func (v *PredictWordResult) decodeFrom(raw map[string]json.RawMessage) error {
 	var out PredictWordResult
 	d := fieldDecoder{raw: raw, owner: "PredictWordResult"}
 	d.nullable("suffix", &out.Suffix)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type GetPromptHistoryResult struct {
+	Entries []PromptHistoryEntry `json:"entries"`
+}
+
+func (v *GetPromptHistoryResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "GetPromptHistoryResult", v.decodeFrom)
+}
+
+func (v *GetPromptHistoryResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out GetPromptHistoryResult
+	d := fieldDecoder{raw: raw, owner: "GetPromptHistoryResult"}
+	d.required("entries", &out.Entries)
 	if d.err != nil {
 		return d.err
 	}
@@ -8135,14 +8883,14 @@ type SetModelCommand struct {
 	ModelID  string `json:"modelId"`
 }
 
-// SetModel sends "set_model": Select a model by provider and id.
+// SetModel sends "set_model": Select a model by provider and id; it becomes the default for new sessions.
 func (c Commands) SetModel(ctx context.Context, p SetModelCommand) (ModelInfo, error) {
 	var out ModelInfo
 	err := c.call(ctx, "set_model", p, 0, &out)
 	return out, err
 }
 
-// CycleModel sends "cycle_model": Cycle to the next model.
+// CycleModel sends "cycle_model": Cycle to the next model; it becomes the default for new sessions.
 func (c Commands) CycleModel(ctx context.Context) (*ModelCycleResult, error) {
 	var out *ModelCycleResult
 	err := c.call(ctx, "cycle_model", nil, 0, &out)
@@ -8154,6 +8902,73 @@ func (c Commands) GetAvailableModels(ctx context.Context) ([]ModelInfo, error) {
 	var out GetAvailableModelsResult
 	err := c.call(ctx, "get_available_models", nil, 0, &out)
 	return out.Models, err
+}
+
+// GetModelCatalog sends "get_model_catalog": Connected providers' chat models, each marked in or out of the `enabledModels` scope.
+func (c Commands) GetModelCatalog(ctx context.Context) (ModelCatalog, error) {
+	var out ModelCatalog
+	err := c.call(ctx, "get_model_catalog", nil, 0, &out)
+	return out, err
+}
+
+// SetEnabledModelsCommand holds the parameters of "set_enabled_models".
+type SetEnabledModelsCommand struct {
+	Patterns []string `json:"patterns"`
+}
+
+// SetEnabledModels sends "set_enabled_models": Persist the `enabledModels` scope; an empty list scopes to every available model.
+func (c Commands) SetEnabledModels(ctx context.Context, p SetEnabledModelsCommand) error {
+	return c.call(ctx, "set_enabled_models", p, 0, nil)
+}
+
+// GetAgentModels sends "get_agent_models": Discovered task agents with their saved model override and resolved model.
+func (c Commands) GetAgentModels(ctx context.Context) ([]AgentModelEntry, error) {
+	var out GetAgentModelsResult
+	err := c.call(ctx, "get_agent_models", nil, 0, &out)
+	return out.Agents, err
+}
+
+// SetAgentModelCommand holds the parameters of "set_agent_model".
+type SetAgentModelCommand struct {
+	Agent string  `json:"agent"`
+	Model *string `json:"model,omitempty"`
+}
+
+// SetAgentModel sends "set_agent_model": Save the `task.agentModelOverrides` entry for an agent; an empty or null `model` clears it.
+func (c Commands) SetAgentModel(ctx context.Context, p SetAgentModelCommand) error {
+	return c.call(ctx, "set_agent_model", p, 0, nil)
+}
+
+// GetExtensions sends "get_extensions": Every discovered capability (skills, MCP servers, extension modules, rules, ...) as the `/extensions` dashboard lists it; MCP rows carry live connection state.
+func (c Commands) GetExtensions(ctx context.Context) ([]ExtensionEntry, error) {
+	var out GetExtensionsResult
+	err := c.call(ctx, "get_extensions", nil, 0, &out)
+	return out.Extensions, err
+}
+
+// SetExtensionEnabledCommand holds the parameters of "set_extension_enabled".
+type SetExtensionEnabledCommand struct {
+	Extension string `json:"extension"`
+	Enabled   bool   `json:"enabled"`
+}
+
+// SetExtensionEnabled sends "set_extension_enabled": Enable or disable one capability by its `ExtensionEntry.id`. MCP servers connect or disconnect at once (`live: true`); other kinds apply on the next session or reload.
+func (c Commands) SetExtensionEnabled(ctx context.Context, p SetExtensionEnabledCommand) (SetExtensionEnabledResult, error) {
+	var out SetExtensionEnabledResult
+	err := c.call(ctx, "set_extension_enabled", p, 0, &out)
+	return out, err
+}
+
+// ReconnectMcpServerCommand holds the parameters of "reconnect_mcp_server".
+type ReconnectMcpServerCommand struct {
+	Name string `json:"name"`
+}
+
+// ReconnectMcpServer sends "reconnect_mcp_server": Drop and re-open one MCP server connection, then rebind its tools.
+func (c Commands) ReconnectMcpServer(ctx context.Context, p ReconnectMcpServerCommand) (ReconnectMcpServerResult, error) {
+	var out ReconnectMcpServerResult
+	err := c.call(ctx, "reconnect_mcp_server", p, 0, &out)
+	return out, err
 }
 
 // SetThinkingLevelCommand holds the parameters of "set_thinking_level".
@@ -8296,6 +9111,20 @@ func (c Commands) GetSessionLease(ctx context.Context, p GetSessionLeaseCommand)
 	return out, err
 }
 
+// ListSessionsCommand holds the parameters of "list_sessions".
+type ListSessionsCommand struct {
+	Cwd   *string `json:"cwd,omitempty"`
+	All   *bool   `json:"all,omitempty"`
+	Limit *int64  `json:"limit,omitempty"`
+}
+
+// ListSessions sends "list_sessions": Saved sessions, newest first with pinned ones on top, read without repairing or locking anything. Scope: `cwd`'s session directory (default: the current session's) plus that folder's directories in the repository's other git worktrees, as the resume picker lists them, or every project with `all`. Untitled empty sessions are left out unless pinned.
+func (c Commands) ListSessions(ctx context.Context, p ListSessionsCommand) ([]SessionListItem, error) {
+	var out ListSessionsResult
+	err := c.call(ctx, "list_sessions", p, 0, &out)
+	return out.Sessions, err
+}
+
 // ExportHTMLCommand holds the parameters of "export_html".
 type ExportHTMLCommand struct {
 	OutputPath *string `json:"outputPath,omitempty"`
@@ -8402,6 +9231,32 @@ func (c Commands) SetSessionName(ctx context.Context, p SetSessionNameCommand) e
 	return c.call(ctx, "set_session_name", p, 0, nil)
 }
 
+// RenameSessionCommand holds the parameters of "rename_session".
+type RenameSessionCommand struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
+// RenameSession sends "rename_session": Rename a saved session file by path, as the resume picker does; the current session's path renames this session. Fails while another omp process owns the session. Returns the stored title.
+func (c Commands) RenameSession(ctx context.Context, p RenameSessionCommand) (string, error) {
+	var out RenameSessionResult
+	err := c.call(ctx, "rename_session", p, 0, &out)
+	return out.Title, err
+}
+
+// HighlightCodeCommand holds the parameters of "highlight_code".
+type HighlightCodeCommand struct {
+	Code string  `json:"code"`
+	Lang *string `json:"lang,omitempty"`
+}
+
+// HighlightCode sends "highlight_code": Syntax-highlight `code` with the native highlighter. `lang` is a language name, alias or file extension; an unknown one yields a single plain token. Joining the token texts gives back `code`. Results are cached.
+func (c Commands) HighlightCode(ctx context.Context, p HighlightCodeCommand) ([]HighlightToken, error) {
+	var out HighlightCodeResult
+	err := c.call(ctx, "highlight_code", p, 0, &out)
+	return out.Tokens, err
+}
+
 // HandoffCommand holds the parameters of "handoff".
 type HandoffCommand struct {
 	CustomInstructions *string `json:"customInstructions,omitempty"`
@@ -8453,6 +9308,13 @@ func (c Commands) Login(ctx context.Context, p LoginCommand) (string, error) {
 	return out.ProviderID, err
 }
 
+// LoginCancel sends "login_cancel": Cancel the running `login`: it fails with code `cancelled` and its pending `input` request is cancelled. `cancelled` is false when no login was running.
+func (c Commands) LoginCancel(ctx context.Context) (bool, error) {
+	var out LoginCancelResult
+	err := c.call(ctx, "login_cancel", nil, 0, &out)
+	return out.Cancelled, err
+}
+
 // GetLogoutAccountsCommand holds the parameters of "get_logout_accounts".
 type GetLogoutAccountsCommand struct {
 	ProviderID string `json:"providerId"`
@@ -8478,6 +9340,31 @@ func (c Commands) Logout(ctx context.Context, p LogoutCommand) (LogoutResult, er
 	return out, err
 }
 
+// GetSessionAccountsCommand holds the parameters of "get_session_accounts".
+type GetSessionAccountsCommand struct {
+	ProviderID *string `json:"providerId,omitempty"`
+}
+
+// GetSessionAccounts sends "get_session_accounts": List the stored OAuth accounts of a provider (default: the session model's provider), marking the one in use; null when no provider is given and no model is selected.
+func (c Commands) GetSessionAccounts(ctx context.Context, p GetSessionAccountsCommand) (*SessionAccountList, error) {
+	var out *SessionAccountList
+	err := c.call(ctx, "get_session_accounts", p, 0, &out)
+	return out, err
+}
+
+// PinSessionAccountCommand holds the parameters of "pin_session_account".
+type PinSessionAccountCommand struct {
+	CredentialID int64   `json:"credentialId"`
+	ProviderID   *string `json:"providerId,omitempty"`
+}
+
+// PinSessionAccount sends "pin_session_account": Switch this session to one stored OAuth account. Fails while a turn is streaming or when the credential is no longer available.
+func (c Commands) PinSessionAccount(ctx context.Context, p PinSessionAccountCommand) (string, error) {
+	var out PinSessionAccountResult
+	err := c.call(ctx, "pin_session_account", p, 0, &out)
+	return out.Provider, err
+}
+
 // PredictWordCommand holds the parameters of "predict_word".
 type PredictWordCommand struct {
 	Text   string `json:"text"`
@@ -8489,6 +9376,43 @@ func (c Commands) PredictWord(ctx context.Context, p PredictWordCommand) (*strin
 	var out PredictWordResult
 	err := c.call(ctx, "predict_word", p, 155*time.Second, &out)
 	return out.Suffix, err
+}
+
+// CompletePathCommand holds the parameters of "complete_path".
+type CompletePathCommand struct {
+	Text   string `json:"text"`
+	Cursor int64  `json:"cursor"`
+}
+
+// CompletePath sends "complete_path": Path completions for the `@` mention ending at `cursor` (a UTF-16 offset), relative to the session cwd; null outside a mention or when nothing matches.
+func (c Commands) CompletePath(ctx context.Context, p CompletePathCommand) (*PathCompletion, error) {
+	var out *PathCompletion
+	err := c.call(ctx, "complete_path", p, 0, &out)
+	return out, err
+}
+
+// GetPromptHistoryCommand holds the parameters of "get_prompt_history".
+type GetPromptHistoryCommand struct {
+	Query *string `json:"query,omitempty"`
+	Limit *int64  `json:"limit,omitempty"`
+	Cwd   *string `json:"cwd,omitempty"`
+}
+
+// GetPromptHistory sends "get_prompt_history": Submitted prompts shared with the interactive editor, newest first; `query` searches them, `cwd` keeps one project's.
+func (c Commands) GetPromptHistory(ctx context.Context, p GetPromptHistoryCommand) ([]PromptHistoryEntry, error) {
+	var out GetPromptHistoryResult
+	err := c.call(ctx, "get_prompt_history", p, 0, &out)
+	return out.Entries, err
+}
+
+// AddPromptHistoryCommand holds the parameters of "add_prompt_history".
+type AddPromptHistoryCommand struct {
+	Prompt string `json:"prompt"`
+}
+
+// AddPromptHistory sends "add_prompt_history": Record a submitted prompt in the shared prompt history under the session's cwd and id.
+func (c Commands) AddPromptHistory(ctx context.Context, p AddPromptHistoryCommand) error {
+	return c.call(ctx, "add_prompt_history", p, 0, nil)
 }
 
 // PredictWordFeedbackCommand holds the parameters of "predict_word_feedback".

@@ -52,7 +52,7 @@ describe("/model slash command", () => {
 });
 
 describe("/switch slash command", () => {
-	it("opens the temporary model selector (mirrors alt+p)", async () => {
+	it("opens the model picker (mirrors alt+p)", async () => {
 		const harness = createRuntime();
 
 		const handled = await executeBuiltinSlashCommand("/switch", harness.runtime);
@@ -62,7 +62,7 @@ describe("/switch slash command", () => {
 		expect(harness.setText).toHaveBeenCalledWith("");
 	});
 
-	it("/switch sonnet:high fuzzy-resolves and switches session-only with the thinking suffix", async () => {
+	it("/switch sonnet:high fuzzy-resolves and switches with the thinking suffix", async () => {
 		const harness = createRuntime();
 
 		const handled = await executeBuiltinSlashCommand("/switch sonnet:high", harness.runtime);

@@ -757,6 +757,8 @@ describe("AuthStorage forceRefresh + rotateSessionCredential", () => {
 
 		const otherModelStorage = new AuthStorage(store, { usageProviderResolver: () => undefined });
 		await otherModelStorage.credentials.reload();
+		// Unpinned sessions now start on the last-used account (the sibling); pinning the denied row proves it stays eligible for other models.
+		expect(otherModelStorage.sessions.pin(CODEX_PROVIDER, "other-codex-model", deniedRow.id)).toBe(true);
 		expect(
 			await otherModelStorage.keys.get(CODEX_PROVIDER, "other-codex-model", {
 				modelId: "gpt-5.3-codex",
@@ -819,14 +821,12 @@ describe("AuthStorage forceRefresh + rotateSessionCredential", () => {
 
 		const otherModelStorage = new AuthStorage(store, { usageProviderResolver: () => undefined });
 		await otherModelStorage.credentials.reload();
-		const otherModelSelections = new Set<string>();
-		for (let index = 0; index < 6; index += 1) {
-			const selected = await otherModelStorage.keys.get(CURSOR_PROVIDER, `cursor-included-model-${index}`, {
-				modelId: "composer-2.5",
-			});
-			if (selected) otherModelSelections.add(selected);
-		}
-		expect(otherModelSelections.has("cursor-plan-denied")).toBe(true);
+		const pinnedSession = "cursor-included-model-pinned";
+		// Unpinned sessions now start on the last-used account (the sibling); pinning the denied row proves it stays eligible for other models.
+		expect(otherModelStorage.sessions.pin(CURSOR_PROVIDER, pinnedSession, deniedRow.id)).toBe(true);
+		expect(await otherModelStorage.keys.get(CURSOR_PROVIDER, pinnedSession, { modelId: "composer-2.5" })).toBe(
+			"cursor-plan-denied",
+		);
 	});
 
 	test("rotateSessionCredential treats structured usage codes as quota blocks despite generic messages", async () => {

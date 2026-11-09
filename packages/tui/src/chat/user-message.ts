@@ -22,7 +22,7 @@ import { expandKeyHint, fileHyperlink, fileLinkSpan } from "../render";
 import { imageLinksEnabled, imageReferenceHyperlink } from "../prompt/image-references";
 import { highlightMagicKeywords } from "../prompt/magic-keywords";
 import type { ReactionTarget } from "./reaction";
-import { card, md, node, row, span, text } from "../native/describe";
+import { card, col, md, node, row, span, text } from "../native/describe";
 import { base64ImageNode, openableImageProps } from "../native/blobs";
 import { hasTranscriptActions, runTranscriptAction } from "./transcript-actions";
 import {
@@ -194,9 +194,9 @@ export class UserMessageComponent extends Container implements ReactionTarget, T
 	}
 
 	/**
-	 * A head-less user-toned frame with the prompt as markdown under its
-	 * attached images (titled `#N` like their chips, opening the materialized
-	 * file on click): the fill says "you". A quiet footer like a turn's usage line
+	 * A head-less user-toned frame holding the prompt as markdown; attached images
+	 * (titled `#N` like their chips, opening the materialized file on click) sit
+	 * below the frame, outside its fill: the fill says "you". A quiet footer like a turn's usage line
 	 * (`⧉ ⏪ · 09:45`: Copy, Rewind, the time sent) fades in at its bottom-left on hover when
 	 * the host handles transcript actions. The live-steering marker and the
 	 * agent's reaction are chips at the bottom-right, so a reaction landing
@@ -261,9 +261,8 @@ export class UserMessageComponent extends Container implements ReactionTarget, T
 				thumbs.push(base64ImageNode(image.data, image.mimeType, { alt: label, title: label, ...open }, label));
 			});
 		}
-		if (thumbs.length > 0) {
-			children.push(row(thumbs, { gap: "sm", wrap: true, align: "start", role: "omp.user.images" }));
-		}
+		const imageRow =
+			thumbs.length > 0 ? row(thumbs, { gap: "sm", wrap: true, align: "start", role: "omp.user.images" }) : undefined;
 		const marks = this.#synthetic ? [] : tokenMarks(this.#text, this.#tokens, this.#imageLinks);
 		children.push(md(this.#text, marks.length > 0 ? { marks } : undefined));
 		const badges: NativeChild[] = [];
@@ -279,10 +278,12 @@ export class UserMessageComponent extends Container implements ReactionTarget, T
 		if (this.#reaction !== undefined) badges.push(node("badge", { text: this.#reaction, role: "omp.reaction" }));
 		if (badges.length > 0)
 			children.push(node("row", { gap: "xs", justify: "end", role: "omp.user.badges" }, badges, "badges"));
-		this.#native = card(
+		const bubble = card(
 			{ role: this.#synthetic ? "omp.user.synthetic" : "omp.user", tone: this.#synthetic ? "muted" : "user" },
 			children,
 		);
+		// Thumbnails sit under the bubble, outside its fill.
+		this.#native = imageRow ? col([bubble, imageRow], { gap: "xs" }) : bubble;
 		return this.#native;
 	}
 

@@ -779,6 +779,7 @@ describe("ACP builtin slash commands", () => {
 
 		expect(result).toEqual({ consumed: true });
 		expect(setModelSpy).toHaveBeenCalledWith(available[0]);
+		expect(runtime.settings.getModelRole("default")).toBe("anthropic/claude-3-5-sonnet");
 		expect(output[0]).toContain("Model set to anthropic/claude-3-5-sonnet");
 		expect(titleNotified).toBe(1);
 		expect(configNotified).toBe(1);
@@ -797,7 +798,7 @@ describe("ACP builtin slash commands", () => {
 	});
 
 	// /switch resolves like `omp bench`: fuzzy ids, @role aliases, :level suffixes
-	it("switch opus:low: fuzzy-resolves a session-only model with the thinking suffix", async () => {
+	it("switch opus:low: fuzzy-resolves a remembered model with the thinking suffix", async () => {
 		const { output, runtime, session } = createRuntime();
 		const available = [
 			{ provider: "anthropic", id: "claude-opus-4-5", contextWindow: 200_000 },
@@ -810,9 +811,9 @@ describe("ACP builtin slash commands", () => {
 		const result = await executeAcpBuiltinSlashCommand("/switch opus:low", runtime);
 
 		expect(result).toEqual({ consumed: true });
-		expect(temporarySpy).toHaveBeenCalledWith(available[0], "low");
+		expect(temporarySpy).toHaveBeenCalledWith(available[0], "low", { rememberAsDefault: true });
 		expect(setModelSpy).not.toHaveBeenCalled();
-		expect(output[0]).toContain("Session-only model: anthropic/claude-opus-4-5");
+		expect(output[0]).toContain("Model: anthropic/claude-opus-4-5 (remembered for new sessions)");
 	});
 
 	it("switch @smol: resolves the configured role alias", async () => {
@@ -827,7 +828,7 @@ describe("ACP builtin slash commands", () => {
 
 		await executeAcpBuiltinSlashCommand("/switch @smol", runtime);
 
-		expect(temporarySpy).toHaveBeenCalledWith(available[1], undefined);
+		expect(temporarySpy).toHaveBeenCalledWith(available[1], undefined, { rememberAsDefault: true });
 	});
 
 	it("switch unknown: reports the selector and leaves the model alone", async () => {

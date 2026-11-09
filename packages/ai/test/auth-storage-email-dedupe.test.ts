@@ -887,7 +887,34 @@ describe("AuthStorage persistent session stickiness", () => {
 		}
 	});
 
-	it("drops persisted session stickiness after a lower-index credential is removed", async () => {
+	it("starts unpinned sessions on the last-used account after a restart", async () => {
+		const provider = "unit-last-used-account";
+		const mk = (suffix: string): OAuthCredential => ({
+			type: "oauth",
+			refresh: `refresh-${suffix}`,
+			access: `access-${suffix}`,
+			expires: Date.now() + 3600_000,
+			projectId: `project-${suffix}`,
+			email: `user-${suffix}@example.com`,
+		});
+		let authStorage = new AuthStorage(new SqliteAuthCredentialStore(new Database(dbPath)));
+		await authStorage.credentials.set(provider, [mk("a"), mk("b"), mk("c")]);
+		const first = await authStorage.keys.get(provider, "seed-session");
+		await authStorage.limits.rotate(provider, "seed-session");
+		const lastUsed = await authStorage.keys.get(provider, "seed-session");
+		expect(lastUsed).not.toBe(first);
+		authStorage.close();
+
+		authStorage = new AuthStorage(new SqliteAuthCredentialStore(new Database(dbPath)));
+		await authStorage.credentials.reload();
+		// Hash-picked starts would scatter across accounts; every fresh session must follow the last-used one.
+		for (let i = 0; i < 12; i++) {
+			expect(await authStorage.keys.get(provider, `fresh-${i}`)).toBe(lastUsed);
+		}
+		authStorage.close();
+	});
+
+	it("keeps a persisted session on its own account after a lower-index credential is removed", async () => {
 		const provider = "unit-sticky-invalidation";
 		const mk = (suffix: string): OAuthCredential => ({
 			type: "oauth",
@@ -916,8 +943,8 @@ describe("AuthStorage persistent session stickiness", () => {
 		try {
 			for (let i = 0; i < 256 && session === undefined; i++) {
 				const candidate = `sticky-probe-${i}`;
-				const token = await authStorage.keys.get(provider, candidate);
-				const expectedFreshToken = await control.keys.get(provider, candidate);
+				const token = await authStorage.keys.get(provider, candidate, { recordAffinity: false });
+				const expectedFreshToken = await control.keys.get(provider, candidate, { recordAffinity: false });
 				const index = rows.findIndex(row => (row.credential as OAuthCredential).access === token);
 				if (index >= 1 && index <= rows.length - 2 && token !== expectedFreshToken) {
 					session = candidate;
@@ -932,6 +959,7 @@ describe("AuthStorage persistent session stickiness", () => {
 		}
 		expect(session).toBeDefined();
 		expect(freshToken).toBeDefined();
+		expect(await authStorage.keys.get(provider, session)).toBe(stuckToken);
 
 		expect(await authStorage.credentials.removeById(provider, rows[0].id)).toBe(true);
 		authStorage.close();
@@ -943,7 +971,7 @@ describe("AuthStorage persistent session stickiness", () => {
 
 		const resolved = await authStorage.keys.get(provider, session);
 		authStorage.close();
-		expect(resolved).toBe(freshToken);
-		expect(resolved).not.toBe(stuckToken);
+		expect(resolved).toBe(stuckToken);
+		expect(resolved).not.toBe(freshToken);
 	});
 });

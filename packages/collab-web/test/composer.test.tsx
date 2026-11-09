@@ -1,10 +1,13 @@
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { KeyboardEvent } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GuestClient } from "../src/lib/client";
 import type { ComposerProps } from "../src/components/shell/Composer";
 import { Composer, shouldSubmitOnEnter } from "../src/components/shell/Composer";
+import { setLocale } from "../src/lib/i18n";
 import { encodeBase64Url } from "../src/lib/link";
+
+beforeEach(() => setLocale("en"));
 
 const LINK = `roomroomroom1234#${encodeBase64Url(new Uint8Array(32))}`;
 const client = new GuestClient(LINK, "tester");

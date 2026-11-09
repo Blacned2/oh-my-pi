@@ -203,6 +203,22 @@ describe("AgentSession model persistence", () => {
 		expect(created.settings.getModelRole("default")).toBe(modelValue(nextModel));
 	});
 
+	it("remembers a temporary pick as the default when requested", async () => {
+		const defaultModel = getAnthropicModelOrThrow("claude-sonnet-4-5");
+		const nextModel = getAnthropicModelOrThrow("claude-sonnet-4-6");
+
+		const created = await createSession({
+			initialModel: defaultModel,
+			modelRoles: { default: `${modelValue(defaultModel)}:high` },
+		});
+
+		await created.session.setModelTemporary(nextModel, undefined, { rememberAsDefault: true });
+
+		expect(created.session.model?.id).toBe(nextModel.id);
+		// The role's explicit thinking suffix survives the model change.
+		expect(created.settings.getModelRole("default")).toBe(`${modelValue(nextModel)}:high`);
+	});
+
 	it("switches the active model even when the live context is over the target window", async () => {
 		const defaultModel = getAnthropicModelOrThrow("claude-sonnet-4-5");
 		const nextModel = getAnthropicModelOrThrow("claude-sonnet-4-6");

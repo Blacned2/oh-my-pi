@@ -12399,7 +12399,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	setModelTemporary(
 		model: Model,
 		thinkingLevel?: ConfiguredThinkingLevel,
-		options?: { ephemeral?: boolean },
+		options?: { ephemeral?: boolean; rememberAsDefault?: boolean },
 	): Promise<void> {
 		return this.#models.setModelTemporary(model, thinkingLevel, options);
 	}
@@ -15037,6 +15037,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 
 	async fetchUsageReports(signal?: AbortSignal): Promise<UsageReport[] | null> {
 		const authStorage = this.#modelRegistry.authStorage;
+		// The pool is a per-process cache; accounts added or pinned from another
+		// process stay invisible (missing reports, wrong "in use" marker) until polled.
+		await authStorage.credentials.poll();
 		if (!authStorage.usage.reports) return null;
 		const reports = await authStorage.usage.reports({
 			baseUrlResolver: provider => {
@@ -15066,10 +15069,13 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		return this.#usageReports;
 	}
 
-	/** Models whose live `/usage` reports map to a quantitative provider scope. */
+	/**
+	 * Models whose live `/usage` reports map to a quantitative provider scope,
+	 * limited to the `enabledModels` scope when one is configured.
+	 */
 	getUsageReportingModelSelectors(reports: readonly UsageReport[]): string[] {
 		const modelsByProvider = new Map<string, Model[]>();
-		for (const model of this.#modelRegistry.getAvailable()) {
+		for (const model of this.getAvailableModels()) {
 			const models = modelsByProvider.get(model.provider) ?? [];
 			models.push(model);
 			modelsByProvider.set(model.provider, models);
@@ -15087,8 +15093,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	}
 
 	/** List stored OAuth accounts for the current model provider and mark this session's active account. */
-	async listCurrentProviderOAuthAccounts(): Promise<SessionOAuthAccountList | undefined> {
-		const provider = this.model?.provider;
+	async listCurrentProviderOAuthAccounts(providerId?: string): Promise<SessionOAuthAccountList | undefined> {
+		const provider = providerId ?? this.model?.provider;
 		if (!provider) return undefined;
 		const authStorage = this.#modelRegistry.authStorage;
 		await authStorage.credentials.reload();
@@ -15102,8 +15108,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	 * Pin a stored OAuth account to the current model provider for this session.
 	 * Returns false while streaming or when the credential is no longer available.
 	 */
-	pinCurrentProviderOAuthAccount(credentialId: number): boolean {
-		const provider = this.model?.provider;
+	pinCurrentProviderOAuthAccount(credentialId: number, providerId?: string): boolean {
+		const provider = providerId ?? this.model?.provider;
 		if (!provider || this.isStreaming) return false;
 		return this.#modelRegistry.authStorage.sessions.pin(provider, this.sessionId, credentialId);
 	}

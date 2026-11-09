@@ -9,7 +9,7 @@ const noForwardDelete = { getKeys: () => [], matchesCanonical: () => false };
 describe("buildHotkeysMarkdown", () => {
 	afterEach(() => setKeyHintPlatform(undefined));
 
-	it("emits flush-left markdown and uses the configured temporary selector hint", () => {
+	it("emits flush-left markdown and uses the configured model picker hint", () => {
 		const displayStrings: Record<string, string> = {
 			"app.clipboard.copyLine": "Alt+Shift+L",
 			"app.clipboard.copyPrompt": "Ctrl+Shift+P",
@@ -46,7 +46,7 @@ describe("buildHotkeysMarkdown", () => {
 		const lines = markdown.split("\n");
 		expect(lines[0]).toBe("**Navigation**");
 		expect(markdown).toContain("| `Ctrl+Shift+P` | Copy whole prompt |");
-		expect(markdown).toContain("| `Ctrl+Shift+L` | Select model (temporary) |");
+		expect(markdown).toContain("| `Ctrl+Shift+L` | Select model (remembered for new sessions) |");
 		expect(markdown).toContain("| `Alt+M` | Select model (set roles) |");
 		expect(markdown).toContain("| `Alt+L` | Reset terminal display |");
 		expect(markdown).toContain("| `Ctrl+L` | Start/stop live voice mode (/live) |");
@@ -62,7 +62,7 @@ describe("buildHotkeysMarkdown", () => {
 		}
 	});
 
-	it("renders the temporary selector row as disabled when no display string is configured", () => {
+	it("renders the model picker row as disabled when no display string is configured", () => {
 		const markdown = buildHotkeysMarkdown({
 			keybindings: {
 				...noForwardDelete,
@@ -81,7 +81,7 @@ describe("buildHotkeysMarkdown", () => {
 			},
 		});
 
-		expect(markdown).toContain("| `Disabled` | Select model (temporary) |");
+		expect(markdown).toContain("| `Disabled` | Select model (remembered for new sessions) |");
 		expect(markdown).toContain("| `Alt+M` | Select model (set roles) |");
 	});
 

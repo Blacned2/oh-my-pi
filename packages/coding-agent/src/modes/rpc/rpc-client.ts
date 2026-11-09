@@ -37,6 +37,7 @@ import type {
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcHandoffResult,
+	RpcSessionAccountList,
 	RpcHostToolCallRequest,
 	RpcHostToolCancelRequest,
 	RpcHostToolDefinition,
@@ -1415,6 +1416,18 @@ export class RpcClient {
 	async logout(providerId: string, credentialId: number): Promise<{ remainingSource?: string }> {
 		const response = await this.#send({ type: "logout", providerId, credentialId });
 		return this.#getData<{ remainingSource?: string }>(response);
+	}
+
+	/** Stored OAuth accounts of the session model's provider; null when no model is selected. */
+	async getSessionAccounts(providerId?: string): Promise<RpcSessionAccountList | null> {
+		const response = await this.#send({ type: "get_session_accounts", providerId });
+		return this.#getData<RpcSessionAccountList | null>(response);
+	}
+
+	/** Switch this session to one stored OAuth account. Rejects while streaming or when the credential is gone. */
+	async pinSessionAccount(credentialId: number, providerId?: string): Promise<string> {
+		const response = await this.#send({ type: "pin_session_account", credentialId, providerId });
+		return this.#getData<{ provider: string }>(response).provider;
 	}
 
 	/**

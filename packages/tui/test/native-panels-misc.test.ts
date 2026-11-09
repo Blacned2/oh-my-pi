@@ -9,6 +9,7 @@ import type { BtwHistoryRecord } from "../src/overlays/btw-history";
 import { CodexResetFireworksController } from "../src/overlays/codex-reset-fireworks";
 import { type Component, Input, type OverlayHandle, type TUI } from "../src/index";
 import type { NativeChild, NativeNode, NativeUiEvent } from "../src/native/node";
+import { Reconciler } from "../src/native/reconcile";
 import { setNativeRendering } from "../src/native/state";
 import { initTheme, theme } from "../src/theme/theme";
 
@@ -141,6 +142,68 @@ describe("AgentTranscriptViewer native esc", () => {
 			expect(onClose).not.toHaveBeenCalled();
 			viewer.handleNativeEvent(CLOSE_CLICK);
 			expect(onClose).toHaveBeenCalledTimes(1);
+		} finally {
+			viewer.dispose();
+		}
+	});
+
+	it("opens a populated transcript revealing its newest entry", () => {
+		const body = Buffer.from(
+			`${Array.from({ length: 40 }, (_, index) =>
+				JSON.stringify({
+					type: "message",
+					id: `e${index}`,
+					message: { role: "user", content: `message ${index}`, timestamp: index },
+				}),
+			).join("\n")}\n`,
+		);
+		const fs = {
+			openSync: () => 3,
+			closeSync: () => {},
+			readSync: (_fd: number, dst: Buffer, off: number, len: number, pos: number) => {
+				const count = Math.max(0, Math.min(len, body.length - pos));
+				body.copy(dst, off, pos, pos + count);
+				return count;
+			},
+			readFileSync: () => body,
+			statSync: () => ({
+				size: body.length,
+				mtimeMs: 1,
+				mtime: new Date(1),
+				isFile: () => true,
+				isDirectory: () => false,
+				ino: 1,
+				dev: 1,
+			}),
+		};
+		const deps = {
+			agentId: "a1",
+			transcript: {
+				sessionFile: () => "/session.jsonl",
+				fs,
+				parseEntries: (text: string) =>
+					text
+						.split("\n")
+						.filter(Boolean)
+						.map(line => JSON.parse(line)),
+			},
+			registry: { get: () => ({ id: "a1", kind: "task", status: "running", sessionFile: "/session.jsonl" }) },
+			lifecycle: () => ({}),
+			ui: { terminal: { rows: 40, columns: 100 }, requestRender: () => {} },
+			cwd: "/",
+			expandKeys: ["ctrl+o"],
+			hubKeys: [],
+			requestRender: () => {},
+			onClose: () => {},
+			onHubClose: () => {},
+		} as unknown as AgentTranscriptViewerDeps;
+		const viewer = new AgentTranscriptViewer(deps);
+		try {
+			const cx = { cols: 100, reduceMotion: false, dark: true, supports: () => false, feature: () => true };
+			const ops = new Reconciler("viewer-open-bottom").reconcile({ main: [viewer], dock: [], layer: [] }, cx);
+			expect(ops.filter(op => op[0] === "reveal")).toEqual([
+				["reveal", expect.stringMatching(/transcript$/), "end"],
+			]);
 		} finally {
 			viewer.dispose();
 		}

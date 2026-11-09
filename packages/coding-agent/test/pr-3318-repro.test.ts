@@ -25,10 +25,10 @@ describe("PR 3318 repro", () => {
 			},
 		} as never);
 
-		expect(text).toContain("scoped-account: 1.00 requests used");
-		expect(text).not.toContain("account 1: 1.00 requests used");
+		expect(text).toContain("scoped-account: 1 requests used");
+		expect(text).not.toContain("account 1: 1 requests used");
 		expect(text).toContain("Models with usage data");
-		expect(text).toContain("test-provider/coding-plan-model");
+		expect(text).toContain("    coding-plan-model");
 	});
 	it("keeps Codex account and reset labels consistent with the live sanitized plan", async () => {
 		const report: UsageReport = {
@@ -49,7 +49,7 @@ describe("PR 3318 repro", () => {
 			session: { model: undefined, fetchUsageReports: async () => [report] },
 		} as never);
 		expect(text).toContain("user@example.test · plan: prolite forged: 1 saved rate-limit reset");
-		expect(text).toContain("user@example.test · plan: prolite forged: 20.00% used");
+		expect(text).toContain("user@example.test · plan: prolite forged: 20% used");
 		expect(text).not.toContain("prolite\nforged");
 		expect(text).not.toContain("(free)");
 		expect(text).not.toContain("workspace-id");

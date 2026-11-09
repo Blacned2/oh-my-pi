@@ -701,9 +701,10 @@ export class AgentTranscriptViewer implements Component {
 		}
 		top.push(escCloseButton());
 		children.push(node("row", { gap: "md", align: "center" }, top, "top"));
+		// Open at the newest entry: a placement reveal brings the transcript's end into view when it is added.
 		children.push(
 			placeholder === undefined
-				? node("col", { grow: 1 }, [this.#builder.container], "transcript")
+				? { ...node("col", { grow: 1 }, [this.#builder.container], "transcript"), reveal: "end" }
 				: node("text", { spans: [span(placeholder, "dim")], wrap: "word" }, undefined, "placeholder"),
 		);
 		if (notice) {

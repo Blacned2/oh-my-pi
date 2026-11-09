@@ -58,6 +58,35 @@ function toSettingDef(setting: AnySetting): CliSettingDef {
 	};
 }
 
+/** One `config list --json` entry. The settings-panel fields let a host (e.g. the desktop shell) draw its own panel. */
+type JsonListEntry = {
+	value?: unknown;
+	redacted?: true;
+	type: string;
+	description: string;
+	tab?: string;
+	group?: string;
+	label?: string;
+	warning?: string;
+	values?: readonly string[];
+	options?: ReadonlyArray<{ value: string; label: string; description?: string }>;
+	secret?: true;
+};
+
+/** Settings-panel metadata of a setting; empty for settings the panel does not show. */
+function uiFields(setting: AnySetting): Partial<JsonListEntry> {
+	const ui = setting.ui;
+	if (!ui) return {};
+	const fields: Partial<JsonListEntry> = { tab: ui.tab, label: ui.label };
+	if (ui.group) fields.group = ui.group;
+	if (ui.warning) fields.warning = ui.warning;
+	const values = setting.enumValues;
+	if (values?.length) fields.values = values;
+	if (Array.isArray(ui.options)) fields.options = ui.options;
+	if (setting.isCredential) fields.secret = true;
+	return fields;
+}
+
 /** Find setting definition by path */
 function findSettingDef(path: string): CliSettingDef | undefined {
 	const setting = lookup(path);
@@ -220,13 +249,15 @@ async function handleList(flags: { json?: boolean }): Promise<void> {
 		// one configured, which leaks the opposite of what redaction is for. A
 		// configured "" renders as unset, like in the settings panel (credentials
 		// are all strings).
-		const result: Record<string, { value?: unknown; redacted?: true; type: string; description: string }> = {};
+		const result: Record<string, JsonListEntry> = {};
 		for (const def of defs) {
 			const value = def.setting.get(settings);
-			result[def.path] =
-				def.setting.isCredential && value
-					? { redacted: true, type: def.type, description: def.description }
-					: { value, type: def.type, description: def.description };
+			result[def.path] = {
+				...(def.setting.isCredential && value ? { redacted: true as const } : { value }),
+				type: def.type,
+				description: def.description,
+				...uiFields(def.setting),
+			};
 		}
 		await writeStdout(`${JSON.stringify(result, null, 2)}\n`);
 		return;

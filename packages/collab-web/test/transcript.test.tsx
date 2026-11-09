@@ -1,13 +1,12 @@
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { AssistantMessage, SessionEntry } from "@oh-my-pi/pi-wire";
 import { renderToStaticMarkup } from "react-dom/server";
 import "./transcript-dom-shim";
-import {
-	followTranscriptTail,
-	Transcript,
-	updateTranscriptTailLock,
-} from "../src/components/transcript/Transcript";
+import { followTranscriptTail, Transcript, updateTranscriptTailLock } from "../src/components/transcript/Transcript";
 import type { ActiveTool } from "../src/lib/client";
+import { setLocale } from "../src/lib/i18n";
+
+beforeEach(() => setLocale("en"));
 
 const TOOL_CALL_ID = "call-running-tool";
 const TOOL_NAME = "probe_tool";

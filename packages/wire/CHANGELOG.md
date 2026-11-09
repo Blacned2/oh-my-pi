@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Local collab session directory contract (`collab-directory`): the list and link messages a host serves on loopback so a web client can show the machine's live sessions without a room key leaving it
+
 ## [18.18.0] - 2026-11-07
 
 ### Changed

@@ -5,10 +5,12 @@
  */
 import { formatAge } from "@oh-my-pi/pi-utils";
 import chalk from "@oh-my-pi/pi-utils/chalk";
+import { readOrCreateDirectoryToken } from "../collab/directory";
 import {
 	COLLAB_REGISTRY_VERSION,
 	type CollabHostSnapshot,
 	type CollabListOptions,
+	type CollabRegistryOptions,
 	type CollabResolvedLink,
 	listCollabHosts,
 	resolveCollabHostLink,
@@ -97,4 +99,21 @@ export async function runCollabLinkCommand(
 		return;
 	}
 	print(link.url);
+}
+
+export interface CollabPairCommandArgs {
+	/** Registry overrides (tests). */
+	registry?: CollabRegistryOptions;
+}
+
+/**
+ * Print the token that pairs the Collab web UI with this machine's session
+ * directory. The token is a local credential, not a room key: it authorizes
+ * listing sessions and asking for one link at a time.
+ */
+export async function runCollabPairCommand(
+	args: CollabPairCommandArgs = {},
+	print: (line: string) => void = line => console.log(line),
+): Promise<void> {
+	print(await readOrCreateDirectoryToken(args.registry));
 }

@@ -155,10 +155,10 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 	{
 		name: "set_event_filter",
 		doc: "Forward only the listed session event types; null forwards all.",
-		params: { events: "string[] | null", "messageUpdates?": "MessageUpdates" },
-		result: { events: "string[] | null", "messageUpdates?": "MessageUpdates" },
+		params: { events: "string[] | null", "messageUpdates?": "MessageUpdates", "bashOutput?": "BashOutputMode" },
+		result: { events: "string[] | null", "messageUpdates?": "MessageUpdates", "bashOutput?": "BashOutputMode" },
 		unwrap: "events",
-		clientOmit: ["messageUpdates"],
+		clientOmit: ["messageUpdates", "bashOutput"],
 	},
 	{
 		name: "get_subagents",
@@ -221,16 +221,60 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 
 	{
 		name: "set_model",
-		doc: "Select a model by provider and id.",
+		doc: "Select a model by provider and id; it becomes the default for new sessions.",
 		params: { provider: "string", modelId: "string" },
 		result: "ModelInfo",
 	},
-	{ name: "cycle_model", doc: "Cycle to the next model.", result: "ModelCycleResult", nullable: true },
+	{
+		name: "cycle_model",
+		doc: "Cycle to the next model; it becomes the default for new sessions.",
+		result: "ModelCycleResult",
+		nullable: true,
+	},
 	{
 		name: "get_available_models",
 		doc: "List available models.",
 		result: { models: "ModelInfo[]" },
 		unwrap: "models",
+	},
+	{
+		name: "get_model_catalog",
+		doc: "Connected providers' chat models, each marked in or out of the `enabledModels` scope.",
+		result: "ModelCatalog",
+	},
+	{
+		name: "set_enabled_models",
+		doc: "Persist the `enabledModels` scope; an empty list scopes to every available model.",
+		params: { patterns: "string[]" },
+	},
+	{
+		name: "get_agent_models",
+		doc: "Discovered task agents with their saved model override and resolved model.",
+		result: { agents: "AgentModelEntry[]" },
+		unwrap: "agents",
+	},
+	{
+		name: "set_agent_model",
+		doc: "Save the `task.agentModelOverrides` entry for an agent; an empty or null `model` clears it.",
+		params: { agent: "string", "model?": "string | null" },
+	},
+	{
+		name: "get_extensions",
+		doc: "Every discovered capability (skills, MCP servers, extension modules, rules, ...) as the `/extensions` dashboard lists it; MCP rows carry live connection state.",
+		result: { extensions: "ExtensionEntry[]" },
+		unwrap: "extensions",
+	},
+	{
+		name: "set_extension_enabled",
+		doc: "Enable or disable one capability by its `ExtensionEntry.id`. MCP servers connect or disconnect at once (`live: true`); other kinds apply on the next session or reload.",
+		params: { extension: "string", enabled: "boolean" },
+		result: "SetExtensionEnabledResult",
+	},
+	{
+		name: "reconnect_mcp_server",
+		doc: "Drop and re-open one MCP server connection, then rebind its tools.",
+		params: { name: "string" },
+		result: "ReconnectMcpServerResult",
 	},
 	{ name: "set_thinking_level", doc: "Set the thinking level.", params: { level: "ThinkingLevel" } },
 	{
@@ -278,6 +322,13 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		doc: "Which of these sessions a running process (this one included) owns, probed without taking ownership. Ids in neither list are free; `unknown` could not be probed.",
 		params: { sessionIds: "string[]" },
 		result: { held: "string[]", unknown: "string[]" },
+	},
+	{
+		name: "list_sessions",
+		doc: "Saved sessions, newest first with pinned ones on top, read without repairing or locking anything. Scope: `cwd`'s session directory (default: the current session's) plus that folder's directories in the repository's other git worktrees, as the resume picker lists them, or every project with `all`. Untitled empty sessions are left out unless pinned.",
+		params: { "cwd?": "string", "all?": "boolean", "limit?": "number.integer" },
+		result: { sessions: "SessionListItem[]" },
+		unwrap: "sessions",
 	},
 	{
 		name: "export_html",
@@ -335,6 +386,20 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 	},
 	{ name: "set_session_name", doc: "Rename the session.", params: { name: "string" } },
 	{
+		name: "rename_session",
+		doc: "Rename a saved session file by path, as the resume picker does; the current session's path renames this session. Fails while another omp process owns the session. Returns the stored title.",
+		params: { path: "string", name: "string" },
+		result: { title: "string" },
+		unwrap: "title",
+	},
+	{
+		name: "highlight_code",
+		doc: "Syntax-highlight `code` with the native highlighter. `lang` is a language name, alias or file extension; an unknown one yields a single plain token. Joining the token texts gives back `code`. Results are cached.",
+		params: { code: "string", "lang?": "string" },
+		result: { tokens: "HighlightToken[]" },
+		unwrap: "tokens",
+	},
+	{
 		name: "handoff",
 		doc: "Hand the conversation off to a fresh session; null when no handoff was produced.",
 		params: { "customInstructions?": "string" },
@@ -370,6 +435,12 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		timeoutMs: 600_000,
 	},
 	{
+		name: "login_cancel",
+		doc: "Cancel the running `login`: it fails with code `cancelled` and its pending `input` request is cancelled. `cancelled` is false when no login was running.",
+		result: { cancelled: "boolean" },
+		unwrap: "cancelled",
+	},
+	{
 		name: "get_logout_accounts",
 		doc: "List the stored credentials `logout` can remove for a provider, active first.",
 		params: { providerId: "string" },
@@ -382,6 +453,20 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		params: { providerId: "string", credentialId: "number.integer" },
 		result: { "remainingSource?": "string" },
 	},
+	{
+		name: "get_session_accounts",
+		doc: "List the stored OAuth accounts of a provider (default: the session model's provider), marking the one in use; null when no provider is given and no model is selected.",
+		params: { "providerId?": "string" },
+		result: "SessionAccountList",
+		nullable: true,
+	},
+	{
+		name: "pin_session_account",
+		doc: "Switch this session to one stored OAuth account. Fails while a turn is streaming or when the credential is no longer available.",
+		params: { credentialId: "number.integer", "providerId?": "string" },
+		result: { provider: "string" },
+		unwrap: "provider",
+	},
 
 	{
 		name: "predict_word",
@@ -392,6 +477,25 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		// One prediction runs per session with one more held behind it: a request may wait
 		// out a cold daemon start (~150 s) before its own completion.
 		timeoutMs: 155_000,
+	},
+	{
+		name: "complete_path",
+		doc: "Path completions for the `@` mention ending at `cursor` (a UTF-16 offset), relative to the session cwd; null outside a mention or when nothing matches.",
+		params: { text: "string", cursor: "number.integer" },
+		result: "PathCompletion",
+		nullable: true,
+	},
+	{
+		name: "get_prompt_history",
+		doc: "Submitted prompts shared with the interactive editor, newest first; `query` searches them, `cwd` keeps one project's.",
+		params: { "query?": "string", "limit?": "number.integer", "cwd?": "string" },
+		result: { entries: "PromptHistoryEntry[]" },
+		unwrap: "entries",
+	},
+	{
+		name: "add_prompt_history",
+		doc: "Record a submitted prompt in the shared prompt history under the session's cwd and id.",
+		params: { prompt: "string" },
 	},
 	{
 		name: "predict_word_feedback",

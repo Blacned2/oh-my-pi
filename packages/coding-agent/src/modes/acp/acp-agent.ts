@@ -67,6 +67,7 @@ import { autosaveApprovedPlan } from "../../plan-mode/plan-autosave";
 import type { AgentSession, AgentSessionEvent } from "../../session/agent-session";
 import { BlobStore, resolveImageDataSync } from "../../session/blob-store";
 import { isSilentAbort, SKILL_PROMPT_MESSAGE_TYPE, USER_INTERRUPT_LABEL } from "../../session/messages";
+import { rememberDefaultModel } from "../../session/role-models";
 import type { UsageStatistics } from "../../session/session-entries";
 import type { SessionInfo as StoredSessionInfo } from "../../session/session-listing";
 import { SessionManager } from "../../session/session-manager";
@@ -2505,6 +2506,9 @@ export class AcpAgent implements Agent {
 			throw new Error(`Unknown ACP model: ${modelId}`);
 		}
 		await session.setModel(model);
+		// A client's model pick is the user's choice for this session; start the
+		// next new session on it instead of resetting to the configured default.
+		rememberDefaultModel(session.settings, session.modelRegistry, model);
 	}
 
 	#setThinkingLevelById(session: AgentSession, value: string): void {

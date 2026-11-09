@@ -6,6 +6,7 @@ import type { AssistantMessage, AssistantMessageEvent } from "@oh-my-pi/pi-ai";
 import type { AgentSessionEvent } from "../../session/agent-session";
 import type {
 	RpcAgentSessionEventFrame,
+	RpcBashOutputMode,
 	RpcDeltaAssistantMessageEvent,
 	RpcMessageUpdates,
 	RpcProjectedSessionEventFrame,
@@ -74,6 +75,27 @@ function toDelta(event: AssistantMessageEvent): RpcDeltaAssistantMessageEvent {
 	}
 }
 
+/** The single text block a bash progress snapshot carries, or `undefined` when the partial has another shape. */
+function bashPreviewText(partialResult: unknown): string | undefined {
+	if (typeof partialResult !== "object" || partialResult === null) return undefined;
+	const content = (partialResult as { content?: unknown }).content;
+	if (!Array.isArray(content) || content.length !== 1) return undefined;
+	const block = content[0] as { type?: unknown; text?: unknown } | undefined;
+	return block?.type === "text" && typeof block.text === "string" ? block.text : undefined;
+}
+
+/** Length of the common prefix of `a` and `b`, never ending between the halves of a surrogate pair. */
+function commonPrefixLength(a: string, b: string): number {
+	const max = Math.min(a.length, b.length);
+	let keep = 0;
+	while (keep < max && a.charCodeAt(keep) === b.charCodeAt(keep)) keep++;
+	if (keep > 0 && keep < b.length) {
+		const last = b.charCodeAt(keep - 1);
+		if (last >= 0xd800 && last <= 0xdbff) keep--;
+	}
+	return keep;
+}
+
 /**
  * Writes session events to the RPC output. Message ids are assigned whether or
  * not the frame passes the filter, so changing the filter mid-message never
@@ -82,6 +104,9 @@ function toDelta(event: AssistantMessageEvent): RpcDeltaAssistantMessageEvent {
 export class RpcSessionEventForwarder {
 	#filter: Set<string> | undefined;
 	#messageUpdates: RpcMessageUpdates = "full";
+	#bashOutput: RpcBashOutputMode = "full";
+	/** Last preview text sent per running bash call, for the `chunks` projection. */
+	#bashPreviews = new Map<string, string>();
 	#messageCount = 0;
 	/** Ids of started, unfinished messages. External records (advisor cards, IRC) nest inside a streaming reply. */
 	#openMessageIds: string[] = [];
@@ -92,15 +117,26 @@ export class RpcSessionEventForwarder {
 	}
 
 	/** Forward only the listed event types; `null` forwards everything. Returns the active selection. */
-	setFilter(events: readonly string[] | null, messageUpdates: RpcMessageUpdates = "full"): string[] | null {
+	setFilter(
+		events: readonly string[] | null,
+		messageUpdates: RpcMessageUpdates = "full",
+		bashOutput: RpcBashOutputMode = "full",
+	): string[] | null {
 		this.#filter = events === null ? undefined : new Set(events);
 		this.#messageUpdates = messageUpdates;
+		this.#bashOutput = bashOutput;
+		this.#bashPreviews.clear();
 		return this.#filter ? Array.from(this.#filter) : null;
 	}
 
 	forward(event: AgentSessionEvent): void {
 		const frame = this.#stamp(event);
+		if (frame.type === "tool_execution_end") this.#bashPreviews.delete(frame.toolCallId);
 		if (this.#filter && !this.#filter.has(frame.type)) return;
+		if (frame.type === "tool_execution_update" && frame.toolName === "bash" && this.#bashOutput === "chunks") {
+			this.#forwardBashUpdate(frame);
+			return;
+		}
 		if (frame.type === "message_update" && this.#messageUpdates === "delta") {
 			this.#output({
 				...frame,
@@ -110,6 +146,28 @@ export class RpcSessionEventForwarder {
 			return;
 		}
 		this.#output(frame);
+	}
+
+	/**
+	 * `chunks` projection of a bash progress snapshot: the text goes out as a splice against the previous snapshot of
+	 * the same call (`bash_output`), and the update itself only when it still carries details (replies, trace).
+	 */
+	#forwardBashUpdate(frame: Extract<RpcAgentSessionEventFrame, { type: "tool_execution_update" }>): void {
+		const text = bashPreviewText(frame.partialResult);
+		if (text === undefined) {
+			this.#output(frame);
+			return;
+		}
+		const previous = this.#bashPreviews.get(frame.toolCallId) ?? "";
+		const keep = commonPrefixLength(previous, text);
+		if (keep !== previous.length || keep !== text.length) {
+			this.#bashPreviews.set(frame.toolCallId, text);
+			this.#output({ type: "bash_output", toolCallId: frame.toolCallId, keep, chunk: text.slice(keep) });
+		}
+		const details = (frame.partialResult as { details?: unknown }).details;
+		if (typeof details === "object" && details !== null && Object.keys(details).length > 0) {
+			this.#output({ ...frame, partialResult: { content: [], details } });
+		}
 	}
 
 	#stamp(event: AgentSessionEvent): RpcAgentSessionEventFrame {

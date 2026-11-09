@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Kostomp",
+  "version": "1.0.13",
+  "identifier": "dev.kostomp.desktop",
+  "build": { "frontendDist": "./ui" },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "resources": { "runtime/": "runtime/" },
+    "windows": {
+      "nsis": { "installMode": "currentUser" },
+      "signCommand": {
+        "cmd": "powershell",
+        "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/sign.ps1", "%1"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU3OTdFNUU0MjU3RUQzQ0UKUldUTzAzNGw1T1dYNTR4SVBGZUxmYlpmQWlaSHQ3d3dEUWNLVHVlb0xyQkd0cm5ZTWo2anhXUnMK",
+      "endpoints": ["http://127.0.0.1:47821/latest.json"],
+      "dangerousInsecureTransportProtocol": true,
+      "windows": { "installMode": "passive" }
+    }
+  }
+}
+

@@ -1,8 +1,8 @@
 /**
  * Compact session-model picker (alt+p / `/switch`): a bottom-anchored
  * floating overlay hosting just a {@link ModelBrowser} — no provider sidebar.
- * Model entries switch the current session only; a search beginning with `@`
- * exposes the configured ctrl+p quick roles.
+ * Model entries switch the current session and are remembered for new sessions;
+ * a search beginning with `@` exposes the configured ctrl+p quick roles.
  */
 import type { Model } from "@oh-my-pi/pi-ai";
 import { addKeyAliases, canonicalKeyId } from "../keybindings";
@@ -44,9 +44,9 @@ export interface ModelPickerRegistry extends ModelBrowserRegistry {
 
 export interface ModelPickerCallbacks {
 	/**
-	 * A model was chosen for a session-only switch. `selector` is `provider/id`.
-	 * `overContext` is true when the session transcript exceeds the model's
-	 * context window — the host must compact before switching.
+	 * A model was chosen. `selector` is `provider/id`. `overContext` is true when
+	 * the session transcript exceeds the model's context window — the host must
+	 * compact before switching.
 	 */
 	onPick: (model: Model, selector: string, meta: { overContext: boolean }) => void;
 	/** A configured ctrl+p quick role was chosen. */

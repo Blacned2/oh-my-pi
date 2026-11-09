@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ActiveTool, ConnectionPhase } from "../../lib/client";
 import { fmtTokens } from "../../lib/format";
+import { useI18n } from "../../lib/i18n";
 import type { ToolRenderHost } from "../../tool-render";
 import { Markdown, StreamingMarkdown } from "./Markdown";
 import { ToolCard } from "./ToolCard";
@@ -185,6 +186,7 @@ function entryRowEqual(prev: EntryRowProps, next: EntryRowProps): boolean {
 }
 
 const EntryRow = memo(function EntryRow({ entry, results, active, host }: EntryRowProps): ReactNode {
+	const { t } = useI18n();
 	switch (entry.type) {
 		case "message": {
 			const msg = entry.message;
@@ -234,13 +236,13 @@ const EntryRow = memo(function EntryRow({ entry, results, active, host }: EntryR
 		case "compaction":
 			return (
 				<div className="tr-divider" title={entry.shortSummary ?? entry.summary}>
-					<span>context compacted · {fmtTokens(entry.tokensBefore)} tokens</span>
+					<span>{t("transcript.compacted", { tokens: fmtTokens(entry.tokensBefore) })}</span>
 				</div>
 			);
 		case "branch_summary":
 			return (
 				<div className="tr-divider" title={entry.summary}>
-					<span>branch summary</span>
+					<span>{t("transcript.branchSummary")}</span>
 				</div>
 			);
 		case "model_change":
@@ -272,6 +274,7 @@ const EARLIER_TRIGGER_PX = 200;
 
 export function Transcript(props: TranscriptProps): ReactNode {
 	const { entries, stream, streamDone, activeTools, working, compact, host, phase } = props;
+	const { t } = useI18n();
 
 	// null follows the tail. A number pins the first mounted entry while the
 	// reader is scrolled away from the bottom, so appended entries never
@@ -385,11 +388,11 @@ export function Transcript(props: TranscriptProps): ReactNode {
 			}}
 		>
 			{settled && entries.length === 0 && stream === null && !working && (
-				<div className="tr-empty">no activity yet</div>
+				<div className="tr-empty">{t("transcript.empty")}</div>
 			)}
 			{start > 0 && (
 				<button type="button" className="tr-earlier" onClick={showEarlier}>
-					show {start.toLocaleString("en-US")} earlier
+					{t("transcript.showEarlier", { count: start.toLocaleString("en-US") })}
 				</button>
 			)}
 			{visible.map(entry => (
@@ -424,7 +427,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 			)}
 			{working && stream === null && activeTools.size === 0 && (
 				<Row kind="assistant" gutter="agent">
-					<div className="tr-shimmer">thinking…</div>
+					<div className="tr-shimmer">{t("transcript.thinking")}</div>
 				</Row>
 			)}
 		</div>

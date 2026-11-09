@@ -197,7 +197,7 @@ describe("single-instance menus", () => {
 		shown[1]?.handleInput?.("\r");
 
 		expect(selected).not.toHaveBeenCalled();
-		expect(ctx.session.setModelTemporary).toHaveBeenCalledWith(model, undefined);
+		expect(ctx.session.setModelTemporary).toHaveBeenCalledWith(model, undefined, { rememberAsDefault: true });
 	});
 
 	it("uses only the newest callbacks for repeated selection-only picker requests", () => {

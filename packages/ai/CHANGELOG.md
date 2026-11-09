@@ -18,6 +18,9 @@
 - Fixed Codex Responses requests losing tool namespaces and developer-provided additional tools when replayed through the authentication gateway.
 - Fixed Gemini malformed responses being treated as unhandled stop reasons and losing token usage; they are now handled as transient transport errors.
 - Improved Cursor compatibility with TLS-intercepting proxies that block HTTP/2 by falling back to HTTP/1 for subsequent turns.
+### Fixed
+
+- New sessions start on the OAuth account that most recently served a request (persisted across restarts) instead of always the first stored account
 
 ## [18.18.1] - 2026-11-08
 

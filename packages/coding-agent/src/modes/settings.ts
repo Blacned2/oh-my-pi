@@ -805,6 +805,18 @@ export const cfgDisplayShowTurnTime = register({
 	},
 });
 
+export const cfgDisplayTurnReceipt = register({
+	id: "display.turnReceipt",
+	type: "boolean",
+	default: true,
+	ui: {
+		tab: "appearance",
+		group: "Display",
+		label: "Turn Receipt",
+		description: "Show a one-line receipt (time, tokens, cache hit, tools, cost) under each finished turn",
+	},
+});
+
 export const cfgDisplayCacheMissMarker = register({
 	id: "display.cacheMissMarker",
 	type: "boolean",
@@ -857,6 +869,7 @@ effect(
 		cacheMissMarker: cfgDisplayCacheMissMarker,
 		showTokenUsage: cfgDisplayShowTokenUsage,
 		showTurnTime: cfgDisplayShowTurnTime,
+		turnReceipt: cfgDisplayTurnReceipt,
 		advisorCollapsedLines: cfgDisplayAdvisorCollapsedLines,
 	}),
 	setChatTranscriptDisplayPreferences,

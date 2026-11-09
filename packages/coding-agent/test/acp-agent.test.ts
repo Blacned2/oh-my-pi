@@ -1368,6 +1368,27 @@ describe("ACP agent", () => {
 		await Bun.sleep(0);
 	});
 
+	it("remembers a client model pick as the default for new sessions", async () => {
+		const harness = await createHarness();
+		vi.useFakeTimers();
+		const created = await harness.agent.newSession({ cwd: harness.cwdA, mcpServers: [] });
+		await advanceBootstrapGuard();
+		const selector = `${TEST_MODELS[1]!.provider}/${TEST_MODELS[1]!.id}`;
+		expect(Settings.instance.getModelRole("default")).toBeUndefined();
+
+		await harness.agent.setSessionConfigOption({
+			sessionId: created.sessionId,
+			configId: "model",
+			value: selector,
+		});
+
+		expect(Settings.instance.getModelRole("default")).toBe(selector);
+
+		vi.useRealTimers();
+		harness.abortController.abort();
+		await Bun.sleep(0);
+	});
+
 	it("lists role selectors for ACP mobile voice settings", async () => {
 		const harness = await createHarness();
 

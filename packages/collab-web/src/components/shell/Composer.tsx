@@ -3,6 +3,8 @@ import { SendHorizontal, Square } from "lucide-react";
 import type { KeyboardEvent, ReactNode, RefObject } from "react";
 import { memo, useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { ConnectionPhase, GuestClient } from "../../lib/client";
+import { useI18n } from "../../lib/i18n";
+import { loadPromptHistory, pushPrompt, savePromptHistory } from "../../lib/prompt-history";
 
 export interface ComposerProps {
 	client: GuestClient;
@@ -73,6 +75,7 @@ interface AskEditorProps {
  * draft. Submits verbatim — whitespace-only responses are intentional.
  */
 function AskEditor({ prefill, onSubmit }: AskEditorProps): ReactNode {
+	const { t } = useI18n();
 	const [draft, setDraft] = useState(prefill ?? "");
 	const taRef = useRef<HTMLTextAreaElement | null>(null);
 	const { composingRef, onCompositionStart, onCompositionEnd } = useCompositionGuard();
@@ -98,7 +101,7 @@ function AskEditor({ prefill, onSubmit }: AskEditorProps): ReactNode {
 				onKeyDown={onKeyDown}
 				onCompositionStart={onCompositionStart}
 				onCompositionEnd={onCompositionEnd}
-				placeholder="type your response…"
+				placeholder={t("composer.askPlaceholder")}
 				rows={1}
 				spellCheck={false}
 			/>
@@ -107,9 +110,9 @@ function AskEditor({ prefill, onSubmit }: AskEditorProps): ReactNode {
 					type="button"
 					className="sh-btn sh-btn-primary"
 					onClick={() => onSubmit(draft)}
-					title="submit response"
+					title={t("composer.submitTitle")}
 				>
-					<SendHorizontal size={12} /> <span className="sh-btn-label">Submit</span>
+					<SendHorizontal size={12} /> <span className="sh-btn-label">{t("composer.submit")}</span>
 				</button>
 			</div>
 		</div>
@@ -125,6 +128,7 @@ export const Composer = memo(function Composer({
 	working,
 	queuedMessageCount,
 }: ComposerProps): ReactNode {
+	const { t } = useI18n();
 	const [text, setText] = useState("");
 	const taRef = useRef<HTMLTextAreaElement | null>(null);
 	const { composingRef, onCompositionStart, onCompositionEnd } = useCompositionGuard();
@@ -139,18 +143,60 @@ export const Composer = memo(function Composer({
 		autosize(taRef.current);
 	}, [text, uiRequest?.reqId]);
 
+	// In-memory recall of this session's sent prompts (newest last). `historyIndexRef` is -1
+	// while the user is editing a fresh draft, which is stashed in `draftRef` during recall.
+	const historyRef = useRef<string[] | null>(null);
+	historyRef.current ??= loadPromptHistory();
+	const historyIndexRef = useRef(-1);
+	const draftRef = useRef("");
+
 	const send = useCallback((): void => {
 		const trimmed = text.trim();
 		if (!trimmed || !live || readOnly) return;
 		client.sendPrompt(trimmed);
+		historyRef.current = pushPrompt(historyRef.current ?? [], trimmed);
+		savePromptHistory(historyRef.current);
+		historyIndexRef.current = -1;
+		draftRef.current = "";
 		setText("");
 	}, [client, live, readOnly, text]);
+
+	const recall = (e: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+		if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return false;
+		const history = historyRef.current ?? [];
+		const el = e.currentTarget;
+		const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+		const atEnd = el.selectionStart === el.value.length && el.selectionEnd === el.value.length;
+		if (e.key === "ArrowUp" && history.length > 0 && (atStart || historyIndexRef.current >= 0 || !el.value)) {
+			if (historyIndexRef.current === -1) {
+				draftRef.current = el.value;
+				historyIndexRef.current = history.length - 1;
+			} else if (historyIndexRef.current > 0) {
+				historyIndexRef.current -= 1;
+			}
+			setText(history[historyIndexRef.current] ?? "");
+			return true;
+		}
+		if (e.key === "ArrowDown" && historyIndexRef.current >= 0 && atEnd) {
+			if (historyIndexRef.current < history.length - 1) {
+				historyIndexRef.current += 1;
+				setText(history[historyIndexRef.current] ?? "");
+			} else {
+				historyIndexRef.current = -1;
+				setText(draftRef.current);
+			}
+			return true;
+		}
+		return false;
+	};
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
 		if (shouldSubmitOnEnter(e, composingRef.current)) {
 			e.preventDefault();
 			send();
+			return;
 		}
+		if (!composingRef.current && !e.nativeEvent.isComposing && recall(e)) e.preventDefault();
 	};
 
 	if (uiRequest && canPrompt) {
@@ -191,7 +237,7 @@ export const Composer = memo(function Composer({
 				)}
 				<div className="sh-composer-actions sh-ask-actions">
 					<button type="button" className="sh-btn" onClick={() => client.sendUiResponse(uiRequest.reqId)}>
-						Cancel
+						{t("composer.cancel")}
 					</button>
 					{busy && (
 						<button
@@ -199,9 +245,9 @@ export const Composer = memo(function Composer({
 							className="sh-btn sh-btn-stop"
 							onClick={() => client.sendAbort()}
 							disabled={!live}
-							title="stop the current turn"
+							title={t("composer.stopTitle")}
 						>
-							<Square size={11} /> <span className="sh-btn-label">Stop</span>
+							<Square size={11} /> <span className="sh-btn-label">{t("composer.stop")}</span>
 						</button>
 					)}
 				</div>
@@ -211,52 +257,60 @@ export const Composer = memo(function Composer({
 
 	return (
 		<div className="sh-composer">
-			<div className="sh-composer-inner">
+			<div className={`sh-composer-inner${canPrompt ? "" : " sh-composer-inner-off"}`}>
 				<textarea
 					ref={taRef}
 					className="sh-composer-input"
 					value={text}
-					onChange={e => setText(e.target.value)}
+					onChange={e => {
+						historyIndexRef.current = -1;
+						setText(e.target.value);
+					}}
 					onKeyDown={onKeyDown}
 					onCompositionStart={onCompositionStart}
 					onCompositionEnd={onCompositionEnd}
 					placeholder={
 						readOnly
-							? "Read-only session — watching only"
+							? t("composer.readOnlyPlaceholder")
 							: live
-								? "Prompt the host agent…"
-								: "Waiting for the session…"
+								? t("composer.livePlaceholder")
+								: t("composer.waitingPlaceholder")
 					}
 					disabled={!canPrompt}
 					rows={1}
 					spellCheck={false}
 				/>
-				<div className="sh-composer-actions">
-					{busy && queued > 0 && (
-						<span className="sh-queued">
-							<span className="sh-queued-label">queued </span>×{queued}
-						</span>
-					)}
-					{busy && !readOnly && (
+				<div className="sh-composer-bar">
+					<span className="sh-composer-hint">
+						{canPrompt ? t("composer.hint") : readOnly ? t("composer.hintReadOnly") : null}
+					</span>
+					<div className="sh-composer-actions">
+						{busy && queued > 0 && (
+							<span className="sh-queued">
+								<span className="sh-queued-label">{t("composer.queued")}</span>×{queued}
+							</span>
+						)}
+						{busy && !readOnly && (
+							<button
+								type="button"
+								className="sh-btn sh-btn-stop"
+								onClick={() => client.sendAbort()}
+								disabled={!live}
+								title={t("composer.stopTitle")}
+							>
+								<Square size={11} /> <span className="sh-btn-label">{t("composer.stop")}</span>
+							</button>
+						)}
 						<button
 							type="button"
-							className="sh-btn sh-btn-stop"
-							onClick={() => client.sendAbort()}
-							disabled={!live}
-							title="stop the current turn"
+							className="sh-btn sh-btn-send"
+							onClick={send}
+							disabled={!canSend}
+							title={t("composer.sendTitle")}
 						>
-							<Square size={11} /> <span className="sh-btn-label">Stop</span>
+							<SendHorizontal size={12} /> <span className="sh-btn-label">{t("composer.send")}</span>
 						</button>
-					)}
-					<button
-						type="button"
-						className="sh-btn sh-btn-primary"
-						onClick={send}
-						disabled={!canSend}
-						title="send (Enter)"
-					>
-						<SendHorizontal size={12} /> <span className="sh-btn-label">Send</span>
-					</button>
+					</div>
 				</div>
 			</div>
 		</div>

@@ -687,9 +687,16 @@ async function scanSessionDirReadOnly(
 	sessionDir: string,
 	storage: SessionStorage,
 	withStatus: boolean,
+	siblingDirs: readonly string[] = [],
 ): Promise<SessionInfo[]> {
 	try {
-		const files = storage.listFilesSync(sessionDir, "*.jsonl");
+		const files = [sessionDir, ...siblingDirs].flatMap(dir => {
+			try {
+				return storage.listFilesSync(dir, "*.jsonl");
+			} catch {
+				return [];
+			}
+		});
 		return await collectSessionsFromFiles(files, storage, withStatus);
 	} catch {
 		return [];
@@ -706,9 +713,15 @@ export function listSessions(sessionDir: string, storage: SessionStorage): Promi
 
 /**
  * List sessions without repairing orphaned backups or mutating the directory.
+ * `siblingDirs` (the folder's session directories in other worktrees, as the
+ * resume picker includes them) are merged in, newest first overall.
  */
-export function listSessionsReadOnly(sessionDir: string, storage: SessionStorage): Promise<SessionInfo[]> {
-	return scanSessionDirReadOnly(sessionDir, storage, true);
+export function listSessionsReadOnly(
+	sessionDir: string,
+	storage: SessionStorage,
+	siblingDirs: readonly string[] = [],
+): Promise<SessionInfo[]> {
+	return scanSessionDirReadOnly(sessionDir, storage, true, siblingDirs);
 }
 
 /** List all sessions across all project directories (newest first). */

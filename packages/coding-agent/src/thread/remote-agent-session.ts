@@ -592,7 +592,7 @@ export class RemoteAgentSession implements AgentViewSession {
 	setModelTemporary(
 		model: Model,
 		thinkingLevel?: ConfiguredThinkingLevel,
-		options?: { ephemeral?: boolean },
+		options?: { ephemeral?: boolean; rememberAsDefault?: boolean },
 	): Promise<void> {
 		return this.#command("setModelTemporary", toWireData(model), thinkingLevel, options);
 	}

@@ -599,7 +599,7 @@ export class CredentialSelector {
 		this.#deps.policies.validateUsageCapability(provider, this.#deps.usage.canFetchOAuthUsage(provider));
 
 		const providerKey = providerTypeKey(provider, "oauth");
-		const order = this.#getCredentialOrder(providerKey, sessionId, credentials.length);
+		const hashedOrder = this.#getCredentialOrder(providerKey, sessionId, credentials.length);
 		const strategy = this.#deps.strategies(provider);
 		const rankingContext: CredentialRankingContext = {
 			modelId: options?.modelId,
@@ -626,6 +626,15 @@ export class CredentialSelector {
 			hasPlanRequirement,
 		);
 		const sessionCredential = this.#deps.affinity.get(provider, sessionId);
+		// A session with no pin of its own starts on the account that most recently served any
+		// session (persisted across restarts) instead of the first stored / hash-picked one.
+		const lastUsedIndex =
+			sessionCredential === undefined ? this.#deps.affinity.lastUsedOAuthIndex(provider) : undefined;
+		const lastUsedPos =
+			lastUsedIndex === undefined ? -1 : credentials.findIndex(entry => entry.index === lastUsedIndex);
+		const startWithLastUsed = (positions: number[]): number[] =>
+			lastUsedPos >= 0 ? [lastUsedPos, ...positions.filter(position => position !== lastUsedPos)] : positions;
+		const order = startWithLastUsed(hashedOrder);
 		const sessionPreferredIndex = sessionCredential?.type === "oauth" ? sessionCredential.index : undefined;
 		const sessionPreferredCredential =
 			sessionPreferredIndex !== undefined
@@ -676,7 +685,7 @@ export class CredentialSelector {
 		// ties (the ranked comparator falls back to `orderPos`) without overriding a strictly-better
 		// sibling — this respects the residual value of a same-account shared static prefix that other
 		// workspace traffic may have kept warm, while still rotating away from a clearly-worse account.
-		const baseRankingOrder = credentials.map((_credential, index) => index);
+		const baseRankingOrder = startWithLastUsed(credentials.map((_credential, index) => index));
 		const policyOrder = hasPriorityPolicy
 			? [...baseRankingOrder].sort((leftIndex, rightIndex) => {
 					const leftPriority =

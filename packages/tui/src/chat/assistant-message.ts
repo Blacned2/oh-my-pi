@@ -39,6 +39,8 @@ import { type ServedModelMismatch, ServedModelMarkerComponent } from "./served-m
 import { isReactionTarget, type ReactionSplit, type ReactionTarget, splitReaction } from "./reaction";
 import { isRowPrefix, type TranscriptStableRow, trimBlankEdges } from "../chrome/transcript-container";
 import { formatTurnUsage, type TurnUsageSummary } from "../overlays/usage-row";
+import { chatTranscriptDisplayPreferences } from "./display-preferences";
+import { TurnReceiptComponent } from "./turn-receipt";
 import { FigureMarkdown } from "./figure-markdown";
 import { svgFigureRendering } from "./svg-figure";
 import { hasSvgFence } from "./svg-source";
@@ -275,6 +277,7 @@ export class AssistantMessageComponent extends Container {
 	readonly transcriptBlockMode = "appendOnly" as const;
 	#contentContainer: Container;
 	#markerSlot: Container;
+	#receiptSlot: Container;
 	#cacheMarker?: CacheInvalidationMarkerComponent;
 	#servedModelMarker?: ServedModelMarkerComponent;
 	#lastMessage?: AssistantMessage;
@@ -639,6 +642,9 @@ export class AssistantMessageComponent extends Container {
 		// prefix of this append-only block.
 		this.#markerSlot = new Container();
 		this.addChild(this.#markerSlot);
+		// ANSI-only turn receipt; the native view draws `omp.turn.usage` instead.
+		this.#receiptSlot = new Container();
+		this.addChild(this.#receiptSlot);
 
 		if (message) {
 			this.updateContent(message);
@@ -655,10 +661,19 @@ export class AssistantMessageComponent extends Container {
 		this.#refreshMarkers();
 	}
 
-	/** Mark this answer as the end of a turn with the turn's totals (native only: ANSI keeps them in the status line). */
+	/**
+	 * Mark this answer as the end of a turn with the turn's totals: a native
+	 * terminal draws them as `omp.turn.usage`, ANSI as a one-line receipt
+	 * (when `turnReceipt` is on).
+	 */
 	setTurnUsage(summary: TurnUsageSummary | undefined): void {
 		this.#turnUsage = summary;
 		this.#nativeViewVersion++;
+		this.#receiptSlot.clear();
+		if (summary && chatTranscriptDisplayPreferences.turnReceipt) {
+			this.#receiptSlot.addChild(new TurnReceiptComponent(summary));
+		}
+		this.#blockVersion++;
 	}
 
 	/**
@@ -1335,7 +1350,7 @@ export class AssistantMessageComponent extends Container {
 	 */
 	#currentStableSnapshot(): readonly StablePart[] | undefined {
 		if (this.#transcriptBlockFinalized || !this.#lastUpdateTransient) return undefined;
-		if (this.#markerSlot.children.length > 0) return undefined;
+		if (this.#markerSlot.children.length > 0 || this.#receiptSlot.children.length > 0) return undefined;
 		const items = this.#fastPathItems;
 		if (!items || items.length === 0) return undefined;
 		const parts: StablePart[] = [];

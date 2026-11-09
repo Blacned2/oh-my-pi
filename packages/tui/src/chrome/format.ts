@@ -76,3 +76,11 @@ export function renderAsciiBar(fraction: number | undefined, width = 24, uiTheme
 		style: { filled: "█", empty: "░", styleBar: shimmer },
 	});
 }
+
+/**
+ * {@link renderAsciiBar} without any ANSI styling, for plain-text surfaces
+ * (ACP/markdown replies) where escape codes would show up verbatim.
+ */
+export function renderPlainAsciiBar(fraction: number | undefined, width = 24): string {
+	return Bun.stripANSI(renderAsciiBar(fraction, width, unstyledProgressBarTheme));
+}

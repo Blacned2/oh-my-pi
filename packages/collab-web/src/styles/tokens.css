@@ -26,8 +26,14 @@
 	--accent-b: #ed4abf;
 	--accent: #f068c8;
 	--accent-fg: #fff;
+	--accent-on: #0a0a0b; /* text on the cyan → pink gradient */
 	--accent-muted: rgba(237, 74, 191, 0.14);
 	--accent-gradient: linear-gradient(100deg, var(--accent-a), var(--accent-b));
+
+	/* info blue: read/search tool kinds, inline code */
+	--info: #6ea8ff;
+	--info-fg: #a9c8ff;
+	--info-muted: rgba(110, 168, 255, 0.12);
 	--ambient-a: rgba(90, 216, 230, 0.07);
 	--ambient-b: rgba(237, 74, 191, 0.06);
 
@@ -91,6 +97,10 @@
 	--accent-b: #d42ea3;
 	--accent: #c42596;
 	--accent-muted: rgba(212, 46, 163, 0.1);
+	--accent-on: #fff;
+	--info: #2f6fe0;
+	--info-fg: #1f55b8;
+	--info-muted: rgba(47, 111, 224, 0.1);
 	--ambient-a: rgba(31, 169, 187, 0.06);
 	--ambient-b: rgba(212, 46, 163, 0.05);
 
@@ -135,6 +145,10 @@
 		--accent-b: #d42ea3;
 		--accent: #c42596;
 		--accent-muted: rgba(212, 46, 163, 0.1);
+		--accent-on: #fff;
+		--info: #2f6fe0;
+		--info-fg: #1f55b8;
+		--info-muted: rgba(47, 111, 224, 0.1);
 		--ambient-a: rgba(31, 169, 187, 0.06);
 		--ambient-b: rgba(212, 46, 163, 0.05);
 

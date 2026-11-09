@@ -390,6 +390,9 @@ export type CacheWarmingMode = "off" | "streaming" | "idle";
 /** `set_event_filter` projection: `delta` replaces the accumulated snapshots with the block a start/end event touches. */
 export type MessageUpdates = "full" | "delta";
 
+/** `set_event_filter` projection: `chunks` sends bash progress text as `bash_output` splices instead of full snapshots. */
+export type BashOutputMode = "full" | "chunks";
+
 export type TodoStatus = "pending" | "in_progress" | "completed" | "abandoned" | "blocked";
 
 export type GoalOp = "get" | "create" | "resume" | "pause" | "drop";
@@ -494,6 +497,10 @@ export interface SessionState {
 	sessionId: string;
 	model?: ModelInfo;
 	thinkingLevel?: ThinkingLevel;
+	/** The user's thinking selector (e.g. `auto`) behind `thinkingLevel`; absent when the model default applies. */
+	configuredThinkingLevel?: ConfiguredThinkingLevel;
+	/** The `spelling.autocomplete` method `predict_word` uses; `off` means it always returns null. */
+	wordCompletion?: "off" | "auto" | "ngram" | "smollm" | "apple";
 	isStreaming?: boolean;
 	isCompacting?: boolean;
 	steeringMode?: QueueMode;
@@ -527,6 +534,8 @@ export interface SessionState {
 	contextUsage?: ContextUsage;
 	/** Current goal mode; null when the session has no goal. */
 	goal?: GoalModeState | null;
+	/** Configuration warnings the interactive header shows; `config_warnings_changed` marks a change. */
+	configWarnings?: string[];
 }
 
 export interface BashResult {
@@ -720,6 +729,45 @@ export interface SessionTree {
 	leafId: string | null;
 }
 
+/** One saved session, as the resume picker lists it. */
+export interface SessionListItem {
+	path: string;
+	id: string;
+	/** Display name: explicit title, else the first prompt, else a time label. */
+	title: string;
+	/** Working directory from the session header; empty when unknown. */
+	cwd: string;
+	/** Last modification, epoch milliseconds. */
+	mtime: number;
+	messageCount: number;
+	pinned: boolean;
+}
+
+/** One `@` mention completion. */
+export interface PathCompletionItem {
+	/** Replacement for the mention, `@` included, quoted when the path has spaces. */
+	value: string;
+	label: string;
+	directory: boolean;
+	description?: string;
+}
+
+/** Completions for the `@` mention at the cursor. */
+export interface PathCompletion {
+	/** The mention text before the cursor that `value` replaces. */
+	prefix: string;
+	items: PathCompletionItem[];
+}
+
+/** One submitted prompt from the shared prompt history. */
+export interface PromptHistoryEntry {
+	prompt: string;
+	/** Submission time, epoch milliseconds. */
+	createdAt: number;
+	useCount: number;
+	cwd?: string;
+}
+
 export interface SubagentSnapshot {
 	id: string;
 	index: number;
@@ -785,6 +833,70 @@ export interface LoginProvider {
 	authenticated: boolean;
 }
 
+export interface ModelCatalogModel {
+	id: string;
+	name: string;
+	scoped: boolean;
+}
+
+export interface ModelCatalogProvider {
+	provider: string;
+	models: ModelCatalogModel[];
+}
+
+/** `enabledModels` is the raw scope pattern list; empty means every available model is in scope. */
+export interface ModelCatalog {
+	enabledModels: string[];
+	providers: ModelCatalogProvider[];
+}
+
+/** A task agent and its model assignment. */
+export interface AgentModelEntry {
+	name: string;
+	description: string;
+	source: string;
+	disabled: boolean;
+	/** Frontmatter `model` patterns. */
+	agentModel?: string[];
+	/** Saved `task.agentModelOverrides` entry, comma-joined. */
+	overrideModel?: string;
+	/** `provider/id[:level]` the agent resolves to now. */
+	effectiveModel?: string;
+}
+
+/** A discovered capability as the `/extensions` dashboard shows it. */
+export interface ExtensionEntry {
+	/** `kind:name`; the key `set_extension_enabled` takes. */
+	id: string;
+	kind: "extension-module" | "skill" | "rule" | "tool" | "mcp" | "prompt" | "instruction" | "context-file" | "hook" | "slash-command";
+	name: string;
+	displayName: string;
+	path: string;
+	provider: string;
+	providerName: string;
+	level: "user" | "project" | "native";
+	state: "active" | "disabled" | "shadowed";
+	description?: string;
+	trigger?: string;
+	disabledReason?: string;
+	shadowedBy?: string;
+	/** Live MCP connection state. */
+	mcpStatus?: "connected" | "connecting" | "disconnected";
+	/** Tools the connected MCP server exposes. */
+	mcpTools?: number;
+	/** Last MCP connection failure, cleared on connect. */
+	mcpError?: string;
+}
+
+/** `live` is true when the change already applies to this session. */
+export interface SetExtensionEnabledResult {
+	live: boolean;
+}
+
+export interface ReconnectMcpServerResult {
+	connected: boolean;
+}
+
 /** A stored credential `logout` can remove; `active` marks credentials the session may be using. */
 export interface LogoutAccount {
 	credentialId: number;
@@ -795,8 +907,30 @@ export interface LogoutAccount {
 	active: boolean;
 }
 
+/** A stored OAuth account the session can pin; `active` marks the one this session currently uses. */
+export interface SessionAccount {
+	position: number;
+	credentialId: number;
+	label: string;
+	active: boolean;
+	email?: string;
+	orgName?: string;
+}
+
+/** Stored OAuth accounts of the session model's provider. */
+export interface SessionAccountList {
+	provider: string;
+	accounts: SessionAccount[];
+}
+
 export interface HandoffResult {
 	savedPath?: string;
+}
+
+/** A run of highlighted source; `text` may span lines. No `kind` means plain text. */
+export interface HighlightToken {
+	text: string;
+	kind?: "comment" | "keyword" | "function" | "variable" | "string" | "number" | "type" | "operator" | "punctuation" | "inserted" | "deleted";
 }
 
 /** `agentInvoked: false` means the prompt completed locally and no `prompt_result` follows. */
@@ -882,6 +1016,16 @@ export interface ToolExecutionUpdateEvent {
 	toolName: string;
 	args?: unknown;
 	partialResult?: unknown;
+}
+
+/** Opt-in (`bashOutput: 'chunks'`) splice of a bash progress preview; selected together with `tool_execution_update`. */
+export interface BashOutputEvent {
+	type: "bash_output";
+	toolCallId: string;
+	/** Characters of the previous preview to keep; 0 replaces it. */
+	keep: number;
+	/** Text appended after the kept prefix. */
+	chunk: string;
 }
 
 export interface ToolStreamUpdateEvent {
@@ -1060,7 +1204,7 @@ export interface QueueUpdateEvent {
 }
 
 /** A session event, discriminated by `type`; `set_event_filter` selects which are sent. */
-export type RpcAgentEvent = AgentStartEvent | AgentEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | ToolStreamUpdateEvent | ToolExecutionEndEvent | AutoCompactionStartEvent | AutoCompactionEndEvent | ManualCompactionStartEvent | ManualCompactionEndEvent | AutoRetryStartEvent | AutoRetryEndEvent | CacheWarmingStartEvent | CacheWarmingEndEvent | RetryFallbackAppliedEvent | RetryFallbackSucceededEvent | ModelChangedEvent | ConfigWarningsChangedEvent | AdvisorCostChangedEvent | AdvisorYieldedEvent | TtsrTriggeredEvent | TodoReminderEvent | TodoAutoClearEvent | IrcMessageEvent | NoticeEvent | ThinkingLevelChangedEvent | GoalUpdatedEvent | QueueUpdateEvent;
+export type RpcAgentEvent = AgentStartEvent | AgentEndEvent | TurnStartEvent | TurnEndEvent | MessageStartEvent | MessageUpdateEvent | MessageEndEvent | ToolExecutionStartEvent | ToolExecutionUpdateEvent | BashOutputEvent | ToolStreamUpdateEvent | ToolExecutionEndEvent | AutoCompactionStartEvent | AutoCompactionEndEvent | ManualCompactionStartEvent | ManualCompactionEndEvent | AutoRetryStartEvent | AutoRetryEndEvent | CacheWarmingStartEvent | CacheWarmingEndEvent | RetryFallbackAppliedEvent | RetryFallbackSucceededEvent | ModelChangedEvent | ConfigWarningsChangedEvent | AdvisorCostChangedEvent | AdvisorYieldedEvent | TtsrTriggeredEvent | TodoReminderEvent | TodoAutoClearEvent | IrcMessageEvent | NoticeEvent | ThinkingLevelChangedEvent | GoalUpdatedEvent | QueueUpdateEvent;
 
 /** First frame after startup; transport fields are absent on servers without protocol v2. */
 export interface ReadyEvent {
@@ -1665,11 +1809,13 @@ export interface SetSubagentSubscriptionResult {
 export interface SetEventFilterParams {
 	events: string[] | null;
 	messageUpdates?: MessageUpdates;
+	bashOutput?: BashOutputMode;
 }
 
 export interface SetEventFilterResult {
 	events: string[] | null;
 	messageUpdates?: MessageUpdates;
+	bashOutput?: BashOutputMode;
 }
 
 export interface GetSubagentsResult {
@@ -1740,6 +1886,32 @@ export interface GetAvailableModelsResult {
 	models: ModelInfo[];
 }
 
+export interface SetEnabledModelsParams {
+	patterns: string[];
+}
+
+export interface GetAgentModelsResult {
+	agents: AgentModelEntry[];
+}
+
+export interface SetAgentModelParams {
+	agent: string;
+	model?: string | null;
+}
+
+export interface GetExtensionsResult {
+	extensions: ExtensionEntry[];
+}
+
+export interface SetExtensionEnabledParams {
+	extension: string;
+	enabled: boolean;
+}
+
+export interface ReconnectMcpServerParams {
+	name: string;
+}
+
 export interface SetThinkingLevelParams {
 	level: ThinkingLevel;
 }
@@ -1794,6 +1966,16 @@ export interface GetSessionLeaseResult {
 	unknown: string[];
 }
 
+export interface ListSessionsParams {
+	cwd?: string;
+	all?: boolean;
+	limit?: number;
+}
+
+export interface ListSessionsResult {
+	sessions: SessionListItem[];
+}
+
 export interface ExportHtmlParams {
 	outputPath?: string;
 }
@@ -1841,6 +2023,24 @@ export interface SetSessionNameParams {
 	name: string;
 }
 
+export interface RenameSessionParams {
+	path: string;
+	name: string;
+}
+
+export interface RenameSessionResult {
+	title: string;
+}
+
+export interface HighlightCodeParams {
+	code: string;
+	lang?: string;
+}
+
+export interface HighlightCodeResult {
+	tokens: HighlightToken[];
+}
+
 export interface HandoffParams {
 	customInstructions?: string;
 }
@@ -1866,6 +2066,10 @@ export interface LoginResult {
 	providerId: string;
 }
 
+export interface LoginCancelResult {
+	cancelled: boolean;
+}
+
 export interface GetLogoutAccountsParams {
 	providerId: string;
 }
@@ -1883,6 +2087,19 @@ export interface LogoutResult {
 	remainingSource?: string;
 }
 
+export interface GetSessionAccountsParams {
+	providerId?: string;
+}
+
+export interface PinSessionAccountParams {
+	credentialId: number;
+	providerId?: string;
+}
+
+export interface PinSessionAccountResult {
+	provider: string;
+}
+
 export interface PredictWordParams {
 	text: string;
 	cursor: number;
@@ -1890,6 +2107,25 @@ export interface PredictWordParams {
 
 export interface PredictWordResult {
 	suffix: string | null;
+}
+
+export interface CompletePathParams {
+	text: string;
+	cursor: number;
+}
+
+export interface GetPromptHistoryParams {
+	query?: string;
+	limit?: number;
+	cwd?: string;
+}
+
+export interface GetPromptHistoryResult {
+	entries: PromptHistoryEntry[];
+}
+
+export interface AddPromptHistoryParams {
+	prompt: string;
 }
 
 export interface PredictWordFeedbackParams {
@@ -1959,6 +2195,13 @@ export interface RpcWireCommands {
 	set_model: { params: SetModelParams; result: ModelInfo };
 	cycle_model: { params: undefined; result: ModelCycleResult | null };
 	get_available_models: { params: undefined; result: GetAvailableModelsResult };
+	get_model_catalog: { params: undefined; result: ModelCatalog };
+	set_enabled_models: { params: SetEnabledModelsParams; result: undefined };
+	get_agent_models: { params: undefined; result: GetAgentModelsResult };
+	set_agent_model: { params: SetAgentModelParams; result: undefined };
+	get_extensions: { params: undefined; result: GetExtensionsResult };
+	set_extension_enabled: { params: SetExtensionEnabledParams; result: SetExtensionEnabledResult };
+	reconnect_mcp_server: { params: ReconnectMcpServerParams; result: ReconnectMcpServerResult };
 	set_thinking_level: { params: SetThinkingLevelParams; result: undefined };
 	cycle_thinking_level: { params: undefined; result: ThinkingLevelCycleResult | null };
 	get_available_thinking_levels: { params: undefined; result: GetAvailableThinkingLevelsResult };
@@ -1974,6 +2217,7 @@ export interface RpcWireCommands {
 	abort_bash: { params: undefined; result: undefined };
 	get_session_stats: { params: undefined; result: SessionStats };
 	get_session_lease: { params: GetSessionLeaseParams; result: GetSessionLeaseResult };
+	list_sessions: { params: ListSessionsParams; result: ListSessionsResult };
 	export_html: { params: ExportHtmlParams; result: ExportHtmlResult };
 	switch_session: { params: SwitchSessionParams; result: CancellationResult };
 	branch: { params: BranchParams; result: BranchResult };
@@ -1984,14 +2228,22 @@ export interface RpcWireCommands {
 	get_branch_messages: { params: undefined; result: GetBranchMessagesResult };
 	get_last_assistant_text: { params: undefined; result: GetLastAssistantTextResult };
 	set_session_name: { params: SetSessionNameParams; result: undefined };
+	rename_session: { params: RenameSessionParams; result: RenameSessionResult };
+	highlight_code: { params: HighlightCodeParams; result: HighlightCodeResult };
 	handoff: { params: HandoffParams; result: HandoffResult | null };
 	get_messages: { params: undefined; result: GetMessagesResult };
 	get_messages_page: { params: GetMessagesPageParams; result: MessagesPage };
 	get_login_providers: { params: undefined; result: GetLoginProvidersResult };
 	login: { params: LoginParams; result: LoginResult };
+	login_cancel: { params: undefined; result: LoginCancelResult };
 	get_logout_accounts: { params: GetLogoutAccountsParams; result: GetLogoutAccountsResult };
 	logout: { params: LogoutParams; result: LogoutResult };
+	get_session_accounts: { params: GetSessionAccountsParams; result: SessionAccountList | null };
+	pin_session_account: { params: PinSessionAccountParams; result: PinSessionAccountResult };
 	predict_word: { params: PredictWordParams; result: PredictWordResult };
+	complete_path: { params: CompletePathParams; result: PathCompletion | null };
+	get_prompt_history: { params: GetPromptHistoryParams; result: GetPromptHistoryResult };
+	add_prompt_history: { params: AddPromptHistoryParams; result: undefined };
 	predict_word_feedback: { params: PredictWordFeedbackParams; result: undefined };
 	btw: { params: BtwParams; result: BtwResult };
 	btw_cancel: { params: BtwCancelParams; result: BtwCancelResult };

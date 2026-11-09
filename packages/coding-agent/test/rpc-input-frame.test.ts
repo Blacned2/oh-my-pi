@@ -311,6 +311,7 @@ describe("RpcInputDispatcher", () => {
 						queuedMessages: { steering: [], followUp: [], liveSteered: 0 },
 						todoPhases: [],
 						goal: null,
+						configWarnings: [],
 					},
 				};
 			}

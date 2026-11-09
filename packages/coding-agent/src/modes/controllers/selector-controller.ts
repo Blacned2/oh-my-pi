@@ -736,8 +736,8 @@ export class SelectorController {
 	}
 
 	/**
-	 * Session-only model switch (`/switch <selector>`) for the viewed session:
-	 * applies the resolved model without persisting it. Compacts first when the
+	 * Model switch (`/switch <selector>`) for the viewed session: applies the
+	 * resolved model and remembers it for new sessions. Compacts first when the
 	 * transcript exceeds the target's context window, mirroring an over-context
 	 * pick in the alt+p picker. Failures surface as status errors.
 	 */
@@ -753,15 +753,16 @@ export class SelectorController {
 	}
 
 	/**
-	 * Apply a session-only model to the viewed session: update agent state but
-	 * never persist to settings. `compactFirst` runs compaction with the current
-	 * model before switching (the target cannot fit the transcript); the switch
-	 * runs in the before-flush hook so any prompt queued during compaction
-	 * executes on the target model, and the idempotent post-return call covers
-	 * the early "nothing to compact" return that skips the hook. A cancelled or
-	 * failed compaction keeps the current model. A focused subagent switches
-	 * directly: `/compact` drives the main session, and the agent's own context
-	 * maintenance recovers an oversized transcript on its next turn.
+	 * Apply a model pick to the viewed session: update agent state and remember
+	 * the model as the default for new sessions (a focused subagent's pick stays
+	 * session-only). `compactFirst` runs compaction with the current model before
+	 * switching (the target cannot fit the transcript); the switch runs in the
+	 * before-flush hook so any prompt queued during compaction executes on the
+	 * target model, and the idempotent post-return call covers the early "nothing
+	 * to compact" return that skips the hook. A cancelled or failed compaction
+	 * keeps the current model. A focused subagent switches directly: `/compact`
+	 * drives the main session, and the agent's own context maintenance recovers
+	 * an oversized transcript on its next turn.
 	 */
 	async #applySessionModel(
 		model: Model,
@@ -773,7 +774,7 @@ export class SelectorController {
 		const focusedAgentId = this.ctx.focusedAgentId;
 		const apply = async () => {
 			const level = thinkingLevel ?? target.resolveTemporaryModelThinkingLevel(model);
-			await target.setModelTemporary(model, level);
+			await target.setModelTemporary(model, level, { rememberAsDefault: !focusedAgentId });
 			this.ctx.statusLine.invalidate();
 			this.ctx.updateEditorBorderColor();
 			if (focusedAgentId) {
@@ -781,7 +782,9 @@ export class SelectorController {
 				return;
 			}
 			const roleSelectorHint = appKey(this.ctx.keybindings, "app.model.select") || formatKeyHint("alt+m");
-			this.ctx.showStatus(`Session-only model: ${selector}. Use ${roleSelectorHint} or /model for roles.`);
+			this.ctx.showStatus(
+				`Model: ${selector} (remembered for new sessions). Use ${roleSelectorHint} or /model for roles.`,
+			);
 		};
 		if (!compactFirst || focusedAgentId) {
 			await apply();
@@ -801,9 +804,9 @@ export class SelectorController {
 	}
 
 	/**
-	 * Compact session-only model picker (alt+p / `/switch`): a floating
-	 * bottom-anchored overlay over the transcript. The current model is
-	 * highlighted and preselected; a leading `@` searches ctrl+p quick roles.
+	 * Compact model picker (alt+p / `/switch`): a floating bottom-anchored
+	 * overlay over the transcript. The current model is highlighted and
+	 * preselected; a leading `@` searches ctrl+p quick roles.
 	 */
 	#showModelPicker(options?: { selectOnly?: SelectOnlyModelSelectorOptions }): void {
 		const selectOnly = options?.selectOnly;

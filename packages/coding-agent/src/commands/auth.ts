@@ -23,6 +23,13 @@ import chalk from "@oh-my-pi/pi-utils/chalk";
 import { Args, CliUsageError, Command } from "@oh-my-pi/pi-utils/cli";
 import { authHelp as commandHelp } from "../cli/command-help";
 import { resolveAuthBrokerConfig } from "../session/auth-broker-config";
+import {
+	buildWorkerOsImport,
+	defaultWorkerOsDbPath,
+	readWorkerOsAccounts,
+	unsealWorkerOsAccounts,
+	type WorkerOsImportPlan,
+} from "./auth-workeros";
 
 /** Format version of the `omp auth export` document. */
 export const AUTH_EXPORT_VERSION = 1;
@@ -164,17 +171,55 @@ export async function importAuthCredentials(
 	return { imported: data.credentials.length, providers: [...byProvider.keys()] };
 }
 
+async function runWorkerOsImport(dbArg: string | undefined): Promise<void> {
+	const dbPath = dbArg ?? defaultWorkerOsDbPath();
+	if (!dbPath) {
+		process.stderr.write(`${chalk.red("error: %APPDATA% is not set; pass the Worker OS sidecar.db path.")}\n`);
+		process.exitCode = 1;
+		return;
+	}
+	let plan: WorkerOsImportPlan;
+	try {
+		const accounts = await unsealWorkerOsAccounts(readWorkerOsAccounts(dbPath));
+		plan = await buildWorkerOsImport(accounts);
+	} catch (error) {
+		if (!(error instanceof AuthTransferError)) throw error;
+		process.stderr.write(`${chalk.red(`error: ${error.message}`)}\n`);
+		process.exitCode = 1;
+		return;
+	}
+	for (const line of plan.report) {
+		process.stderr.write(
+			line.imported
+				? `  ${chalk.green("+")} ${line.name} ${chalk.dim(`(${line.identity ?? "anthropic"})`)}\n`
+				: `  ${chalk.yellow("-")} ${line.name} ${chalk.dim(`skipped: ${line.reason}`)}\n`,
+		);
+	}
+	if (plan.data.credentials.length === 0) {
+		process.stderr.write("No Claude accounts to import.\n");
+		return;
+	}
+	const store = await SqliteAuthCredentialStore.open(getAgentDbPath());
+	try {
+		const summary = await importAuthCredentials(store, plan.data);
+		process.stderr.write(`Imported ${summary.imported} Claude account(s) from Worker OS.\n`);
+	} finally {
+		store.close();
+	}
+}
+
 export default class Auth extends Command {
 	static description = commandHelp.description;
 
 	static args = {
 		action: Args.string({
-			description: "export or import",
+			description: "export, import, or import-workeros",
 			required: true,
-			options: ["export", "import"],
+			options: ["export", "import", "import-workeros"],
 		}),
 		file: Args.string({
-			description: "File written by `omp auth export`, or - for stdin (import)",
+			description:
+				"File written by `omp auth export`, or - for stdin (import); Worker OS sidecar.db path (import-workeros, optional)",
 			required: false,
 		}),
 	};
@@ -183,6 +228,7 @@ export default class Auth extends Command {
 		"# Write every stored credential to a file (keep it secret)\n  omp auth export > credentials.json",
 		"# Merge them into this machine's credential store\n  omp auth import credentials.json",
 		"# Copy credentials to another machine over SSH\n  omp auth export | ssh host omp auth import -",
+		"# Import every Claude account connected in the Worker OS desktop app\n  omp auth import-workeros",
 	];
 
 	async run(): Promise<void> {
@@ -223,6 +269,11 @@ export default class Auth extends Command {
 				);
 			}
 			process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+			return;
+		}
+
+		if (action === "import-workeros") {
+			await runWorkerOsImport(args.file);
 			return;
 		}
 

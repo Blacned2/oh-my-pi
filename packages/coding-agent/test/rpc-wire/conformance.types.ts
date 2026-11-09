@@ -19,6 +19,12 @@ import type { GoalModeState } from "@oh-my-pi/pi-coding-agent/goals/state";
 import type { RpcGoalResult } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-goal";
 import type { RpcMessagesPage } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-messages";
 import type {
+	RpcAgentModelEntry,
+	RpcModelCatalogModel,
+	RpcModelCatalogProvider,
+} from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-model-config";
+import type { RpcSessionListItem } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-sessions";
+import type {
 	RpcAbortAndRestoreQueueResult,
 	RpcAgentSessionEventFrame,
 	RpcAskDialogQuestion,
@@ -281,6 +287,10 @@ export type State = Assert<
 		btwHistoryRecord: Outbound<RpcBtwHistoryRecord, Wire.BtwHistoryRecord>;
 		btwHistoryTurn: Outbound<BtwHistoryTurn, Wire.BtwHistoryTurn>;
 		logoutAccount: Outbound<LogoutAccount, Wire.LogoutAccount>;
+		modelCatalogProvider: Outbound<RpcModelCatalogProvider, Wire.ModelCatalogProvider>;
+		modelCatalogModel: Outbound<RpcModelCatalogModel, Wire.ModelCatalogModel>;
+		agentModelEntry: Outbound<RpcAgentModelEntry, Wire.AgentModelEntry>;
+		sessionListItem: Outbound<RpcSessionListItem, Wire.SessionListItem>;
 		btwStatuses: Same<BtwHistoryTurn["status"], Wire.BtwStatus>;
 		model: OutboundSubset<Model, Wire.ModelInfo>;
 		modelCost: OutboundSubset<Model["cost"], Wire.ModelCost>;

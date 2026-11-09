@@ -4,7 +4,7 @@ import type { OAuthAccountIdentity } from "../../session/auth-storage";
 import { collapseSharedUsageReports, summarizeUsageResetCredits } from "@oh-my-pi/pi-tui/overlays/usage-display";
 import type { SlashCommandRuntime } from "../types";
 import { formatCodexUsageReportLabel, reportMatchesActiveAccount } from "./active-oauth-account";
-import { formatCoarseDuration, formatProviderName, renderAsciiBar } from "@oh-my-pi/pi-tui/chrome/format";
+import { formatCoarseDuration, formatProviderName, renderPlainAsciiBar } from "@oh-my-pi/pi-tui/chrome/format";
 
 function formatWindowSuffix(label: string, windowLabel: string | undefined): string {
 	if (!windowLabel) return "";
@@ -21,9 +21,38 @@ function formatUsageAmount(limit: UsageLimit): string {
 		amount.remainingFraction ??
 		(amount.usedFraction !== undefined ? Math.max(0, 1 - amount.usedFraction) : undefined);
 	const unit = amount.unit === "percent" ? "%" : ` ${amount.unit}`;
-	const usedText = used === undefined ? "unknown used" : `${used.toFixed(2)}${unit} used`;
-	const remainingText = remainingFraction === undefined ? "" : ` (${(remainingFraction * 100).toFixed(1)}% left)`;
+	const usedText = used === undefined ? "unknown used" : `${formatCompactNumber(used)}${unit} used`;
+	const remainingText =
+		remainingFraction === undefined ? "" : ` · ${formatCompactNumber(remainingFraction * 100)}% left`;
 	return `${usedText}${remainingText}`;
+}
+
+/** `0` → "0", `12.5` → "12.5", `33.333` → "33.33" — no trailing zeros. */
+function formatCompactNumber(value: number): string {
+	return String(Number(value.toFixed(2)));
+}
+
+const MODEL_LIST_WIDTH = 96;
+
+/** Pack model ids (provider prefix stripped) into comma-separated lines. */
+function formatModelList(provider: string, selectors: readonly string[]): string[] {
+	const prefix = `${provider}/`;
+	const names = selectors.map(selector =>
+		sanitizeText(selector.startsWith(prefix) ? selector.slice(prefix.length) : selector),
+	);
+	const lines: string[] = [];
+	let current = "";
+	for (const name of names) {
+		const next = current ? `${current}, ${name}` : name;
+		if (current && next.length > MODEL_LIST_WIDTH) {
+			lines.push(`${current},`);
+			current = name;
+		} else {
+			current = next;
+		}
+	}
+	if (current) lines.push(current);
+	return lines;
 }
 
 function formatUsageReportAccount(
@@ -73,8 +102,8 @@ function renderUsageReports(
 		lines.push("", formatProviderName(provider));
 		const reportingModels = usageModelSelectors.filter(selector => selector.startsWith(`${provider}/`));
 		if (reportingModels.length > 0) {
-			lines.push("  Models with usage data");
-			for (const selector of reportingModels) lines.push(`    ${sanitizeText(selector)}`);
+			lines.push(`  Models with usage data (${reportingModels.length}):`);
+			for (const line of formatModelList(provider, reportingModels)) lines.push(`    ${line}`);
 		}
 		const activeAccount = resolveActiveAccount?.(provider);
 		// Provider-wide disclaimers render once per provider, not per limit.
@@ -143,7 +172,7 @@ function renderUsageReports(
 				lines.push(
 					`  ${formatUsageReportAccount(report, providerReports, limit, index)}: ${formatUsageAmount(limit)}${inUse ? "  ← in use by this session" : ""}`,
 				);
-				lines.push(`  ${renderAsciiBar(limit.amount.usedFraction)}`);
+				lines.push(`  ${renderPlainAsciiBar(limit.amount.usedFraction)}`);
 				if (limit.window?.resetsAt && limit.window.resetsAt > nowMs) {
 					lines.push(
 						`  ${limit.window.resetLabel ?? "resets"} in ${formatCoarseDuration(limit.window.resetsAt - nowMs)}`,

@@ -1,6 +1,6 @@
 import { computeSessionContextBreakdown } from "../../session/context-usage-runtime";
 import type { SlashCommandRuntime } from "../types";
-import { renderAsciiBar } from "@oh-my-pi/pi-tui/chrome/format";
+import { renderPlainAsciiBar } from "@oh-my-pi/pi-tui/chrome/format";
 
 /**
  * Build the `/context` ACP-mode text. Tries the rich breakdown first
@@ -18,17 +18,17 @@ export function buildContextReportText(runtime: SlashCommandRuntime): string {
 		for (const category of breakdown.categories) {
 			if (category.tokens === 0) continue;
 			const fraction = category.tokens / breakdown.contextWindow;
-			lines.push(`  ${category.label.padEnd(16)} ${renderAsciiBar(fraction)}  ${category.tokens} tokens`);
+			lines.push(`  ${category.label.padEnd(16)} ${renderPlainAsciiBar(fraction)}  ${category.tokens} tokens`);
 		}
 		if (breakdown.autoCompactBufferTokens > 0) {
 			const fraction = breakdown.autoCompactBufferTokens / breakdown.contextWindow;
 			lines.push(
-				`  ${"Auto-compact buf".padEnd(16)} ${renderAsciiBar(fraction)}  ${breakdown.autoCompactBufferTokens} tokens`,
+				`  ${"Auto-compact buf".padEnd(16)} ${renderPlainAsciiBar(fraction)}  ${breakdown.autoCompactBufferTokens} tokens`,
 			);
 		}
 		if (breakdown.freeTokens > 0) {
 			const fraction = breakdown.freeTokens / breakdown.contextWindow;
-			lines.push(`  ${"Free".padEnd(16)} ${renderAsciiBar(fraction)}  ${breakdown.freeTokens} tokens`);
+			lines.push(`  ${"Free".padEnd(16)} ${renderPlainAsciiBar(fraction)}  ${breakdown.freeTokens} tokens`);
 		}
 		const snap = breakdown.snapcompact;
 		if (snap) {

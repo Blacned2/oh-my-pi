@@ -18,6 +18,7 @@ import { fileHyperlink } from "../render/hyperlink";
 import { getSessionAccentAnsi, getSessionAccentHex } from "../theme/session-color";
 import { summarizeLoopCondition } from "./loop";
 import { formatMetric } from "../components/metric";
+import { renderSparkline } from "../components/sparkline";
 import { formatBillingSummary } from "./metrics";
 import { sanitizeStatusText } from "../chrome/shared";
 import {
@@ -1033,6 +1034,57 @@ const cacheHitSegment: StatusLineSegment = {
 	},
 };
 
+/** Requests the `cache_trend` sparkline spans. */
+const CACHE_TREND_CELLS = 8;
+
+/**
+ * Prompt-cache hit share (0..1) of the latest assistant requests, oldest
+ * first, at most {@link CACHE_TREND_CELLS}. Requests without prompt tokens
+ * (aborted before usage, synthetic) are skipped.
+ */
+export function recentCacheHitShares(
+	messages: StatusLineSession["state"]["messages"],
+	cells: number = CACHE_TREND_CELLS,
+): number[] {
+	const shares: number[] = [];
+	for (let i = messages.length - 1; i >= 0 && shares.length < cells; i--) {
+		const message = messages[i];
+		if (!message || message.role !== "assistant") continue;
+		const usage = message.usage;
+		if (!usage) continue;
+		const prompt = usage.input + usage.cacheRead + usage.cacheWrite;
+		if (prompt <= 0) continue;
+		shares.push(usage.cacheRead / prompt);
+	}
+	return shares.reverse();
+}
+
+/** `▆▇▇█▇▇ 87%`: the cache hit of each recent request plus the latest one's percentage. */
+function cacheTrend(ctx: SegmentContext): { spark: string; pct: string } | undefined {
+	const shares = recentCacheHitShares(ctx.session.state.messages);
+	const latest = shares.at(-1);
+	if (latest === undefined) return undefined;
+	return {
+		spark: renderSparkline(shares, { min: 0, max: 1 }),
+		pct: `${Math.round(latest * 100)}%`,
+	};
+}
+
+const cacheTrendSegment: StatusLineSegment = {
+	id: "cache_trend",
+	render(ctx) {
+		const trend = cacheTrend(ctx);
+		if (!trend) return { content: "", visible: false };
+		const content = `${theme.fg("statusLineSpend", trend.spark)} ${theme.fg("muted", trend.pct)}`;
+		return { content: withIcon(theme.icon.cache, content), visible: true };
+	},
+	describe(ctx) {
+		const trend = cacheTrend(ctx);
+		if (!trend) return null;
+		return segView([span(trend.spark, "statusLineSpend"), span(` ${trend.pct}`, "muted")], "cache");
+	},
+};
+
 /**
  * One glyph, no words: the cache icon dim while cached, the same icon struck
  * through in the warning colour once the next message re-sends the prefix.
@@ -1351,6 +1403,7 @@ export const SEGMENTS: Record<StatusLineSegmentId, StatusLineSegment> = {
 	cache_read: cacheReadSegment,
 	cache_write: cacheWriteSegment,
 	cache_hit: cacheHitSegment,
+	cache_trend: cacheTrendSegment,
 	cache: cacheSegment,
 	session_name: sessionNameSegment,
 	usage: usageSegment,

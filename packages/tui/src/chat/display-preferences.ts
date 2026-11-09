@@ -8,6 +8,8 @@ export interface ChatTranscriptDisplayPreferences {
 	cacheMissMarker: boolean;
 	showTokenUsage: boolean;
 	showTurnTime: boolean;
+	/** Draw a one-line receipt (time, tokens, cache hit, tools, cost) under each finished turn. */
+	turnReceipt: boolean;
 	/** Max rows a collapsed advisor card shows below its header; 0 = no cap. */
 	advisorCollapsedLines: number;
 }
@@ -21,6 +23,7 @@ export const chatTranscriptDisplayPreferences: ChatTranscriptDisplayPreferences 
 	cacheMissMarker: false,
 	showTokenUsage: false,
 	showTurnTime: false,
+	turnReceipt: true,
 	advisorCollapsedLines: 0,
 };
 

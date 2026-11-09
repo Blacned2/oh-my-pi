@@ -475,3 +475,4 @@ export * from "./shell-trace";
 export * from "./shell-viz";
 export * from "./stream";
 export * from "./tsp";
+export * from "./collab-directory";

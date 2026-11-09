@@ -44,7 +44,7 @@ import {
 import type { EditModeSetting } from "../edit/settings";
 import type { AgentSessionEvent } from "./agent-session-events";
 import type { ModelCycleResult, ResolvedRoleModel, RoleModelCycle, RoleModelCycleResult } from "./agent-session-types";
-import { formatRoleModelValue, resolveRoleModelFull } from "./role-models";
+import { formatRoleModelValue, rememberDefaultModel, resolveRoleModelFull } from "./role-models";
 import { EPHEMERAL_MODEL_CHANGE_ROLE, PREWALK_MODEL_CHANGE_ROLE } from "./session-entries";
 import type { SessionManager } from "./session-manager";
 
@@ -346,16 +346,17 @@ export class ModelControls {
 	}
 
 	/**
-	 * Set model temporarily (for this session only).
+	 * Set model temporarily, without assigning a role. With `rememberAsDefault`
+	 * the pick also becomes the `default` role, so new sessions start on it.
 	 * Validates that a credential source is configured (synchronously, without
 	 * refreshing OAuth or running command-backed key programs), saves to session
-	 * log but NOT to settings.
+	 * log and (unless `rememberAsDefault`) not to settings.
 	 * @throws Error if no API key available for the model
 	 */
 	async setModelTemporary(
 		model: Model,
 		thinkingLevel?: ConfiguredThinkingLevel,
-		options?: { ephemeral?: boolean; prewalk?: boolean },
+		options?: { ephemeral?: boolean; prewalk?: boolean; rememberAsDefault?: boolean },
 		selection: "explicit" | "automatic" = "explicit",
 	): Promise<void> {
 		const previousEditMode = this.#host.resolveActiveEditMode();
@@ -372,6 +373,10 @@ export class ModelControls {
 			`${targetModel.provider}/${targetModel.id}`,
 			options?.prewalk ? PREWALK_MODEL_CHANGE_ROLE : options?.ephemeral ? EPHEMERAL_MODEL_CHANGE_ROLE : "temporary",
 		);
+		if (options?.rememberAsDefault) {
+			// New sessions start on the model the user last picked.
+			rememberDefaultModel(this.#host.settings, this.#host.modelRegistry, targetModel);
+		}
 		this.#host.settings.getStorage()?.recordModelUsage(`${targetModel.provider}/${targetModel.id}`);
 
 		// Apply explicit thinking level if given; otherwise prefer the model's

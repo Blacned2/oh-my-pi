@@ -19,6 +19,10 @@ export const stateDefs = {
 		"'full' | 'delta'",
 		"`set_event_filter` projection: `delta` replaces the accumulated snapshots with the block a start/end event touches.",
 	),
+	BashOutputMode: doc(
+		"'full' | 'chunks'",
+		"`set_event_filter` projection: `chunks` sends bash progress text as `bash_output` splices instead of full snapshots.",
+	),
 	TodoStatus: "'pending' | 'in_progress' | 'completed' | 'abandoned' | 'blocked'",
 	GoalOp: "'get' | 'create' | 'resume' | 'pause' | 'drop'",
 	GoalStatus: "'active' | 'paused' | 'budget-limited' | 'complete' | 'dropped'",
@@ -105,6 +109,14 @@ export const stateDefs = {
 	SessionState: {
 		"model?": "ModelInfo",
 		"thinkingLevel?": "ThinkingLevel",
+		"configuredThinkingLevel?": doc(
+			"ConfiguredThinkingLevel",
+			"The user's thinking selector (e.g. `auto`) behind `thinkingLevel`; absent when the model default applies.",
+		),
+		"wordCompletion?": doc(
+			"'off' | 'auto' | 'ngram' | 'smollm' | 'apple'",
+			"The `spelling.autocomplete` method `predict_word` uses; `off` means it always returns null.",
+		),
 		isStreaming: absentAs("boolean", false),
 		isCompacting: absentAs("boolean", false),
 		steeringMode: absentAs("QueueMode", "one-at-a-time"),
@@ -143,6 +155,13 @@ export const stateDefs = {
 		dumpTools: absentAs("ToolDescriptor[]", []),
 		"contextUsage?": "ContextUsage",
 		goal: absentAs(doc("GoalModeState | null", "Current goal mode; null when the session has no goal."), null),
+		configWarnings: absentAs(
+			doc(
+				"string[]",
+				"Configuration warnings the interactive header shows; `config_warnings_changed` marks a change.",
+			),
+			[],
+		),
 	},
 
 	BashResult: {
@@ -285,6 +304,43 @@ export const stateDefs = {
 		"OMP-native session entries in append order.",
 	),
 	SessionTree: doc({ tree: `${JSON_OBJECT}[]`, leafId: "string | null" }, "Raw session tree roots."),
+	SessionListItem: doc(
+		{
+			path: "string",
+			id: "string",
+			title: doc("string", "Display name: explicit title, else the first prompt, else a time label."),
+			cwd: doc("string", "Working directory from the session header; empty when unknown."),
+			mtime: doc("number.integer", "Last modification, epoch milliseconds."),
+			messageCount: "number.integer",
+			pinned: "boolean",
+		},
+		"One saved session, as the resume picker lists it.",
+	),
+	PathCompletionItem: doc(
+		{
+			value: doc("string", "Replacement for the mention, `@` included, quoted when the path has spaces."),
+			label: "string",
+			"description?": "string",
+			directory: "boolean",
+		},
+		"One `@` mention completion.",
+	),
+	PathCompletion: doc(
+		{
+			prefix: doc("string", "The mention text before the cursor that `value` replaces."),
+			items: "PathCompletionItem[]",
+		},
+		"Completions for the `@` mention at the cursor.",
+	),
+	PromptHistoryEntry: doc(
+		{
+			prompt: "string",
+			createdAt: doc("number.integer", "Submission time, epoch milliseconds."),
+			"cwd?": "string",
+			useCount: "number.integer",
+		},
+		"One submitted prompt from the shared prompt history.",
+	),
 	SubagentSnapshot: {
 		id: "string",
 		index: "number.integer",
@@ -342,6 +398,50 @@ export const stateDefs = {
 		"A side-question topic: its first turn's fields plus follow-ups; the latest turn is the last follow-up, else the record.",
 	),
 	LoginProvider: { id: "string", name: "string", available: "boolean", authenticated: "boolean" },
+	ModelCatalogModel: { id: "string", name: "string", scoped: "boolean" },
+	ModelCatalogProvider: { provider: "string", models: "ModelCatalogModel[]" },
+	ModelCatalog: doc(
+		{ enabledModels: "string[]", providers: "ModelCatalogProvider[]" },
+		"`enabledModels` is the raw scope pattern list; empty means every available model is in scope.",
+	),
+	AgentModelEntry: doc(
+		{
+			name: "string",
+			description: "string",
+			source: "string",
+			disabled: "boolean",
+			"agentModel?": doc("string[]", "Frontmatter `model` patterns."),
+			"overrideModel?": doc("string", "Saved `task.agentModelOverrides` entry, comma-joined."),
+			"effectiveModel?": doc("string", "`provider/id[:level]` the agent resolves to now."),
+		},
+		"A task agent and its model assignment.",
+	),
+	ExtensionEntry: doc(
+		{
+			id: doc("string", "`kind:name`; the key `set_extension_enabled` takes."),
+			kind: "'extension-module' | 'skill' | 'rule' | 'tool' | 'mcp' | 'prompt' | 'instruction' | 'context-file' | 'hook' | 'slash-command'",
+			name: "string",
+			displayName: "string",
+			"description?": "string",
+			"trigger?": "string",
+			path: "string",
+			provider: "string",
+			providerName: "string",
+			level: "'user' | 'project' | 'native'",
+			state: "'active' | 'disabled' | 'shadowed'",
+			"disabledReason?": "string",
+			"shadowedBy?": "string",
+			"mcpStatus?": doc("'connected' | 'connecting' | 'disconnected'", "Live MCP connection state."),
+			"mcpTools?": doc("number.integer", "Tools the connected MCP server exposes."),
+			"mcpError?": doc("string", "Last MCP connection failure, cleared on connect."),
+		},
+		"A discovered capability as the `/extensions` dashboard shows it.",
+	),
+	SetExtensionEnabledResult: doc(
+		{ live: "boolean" },
+		"`live` is true when the change already applies to this session.",
+	),
+	ReconnectMcpServerResult: { connected: "boolean" },
 	LogoutAccount: doc(
 		{
 			credentialId: "number.integer",
@@ -353,7 +453,30 @@ export const stateDefs = {
 		},
 		"A stored credential `logout` can remove; `active` marks credentials the session may be using.",
 	),
+	SessionAccount: doc(
+		{
+			position: "number.integer",
+			credentialId: "number.integer",
+			label: "string",
+			"email?": "string",
+			"orgName?": "string",
+			active: "boolean",
+		},
+		"A stored OAuth account the session can pin; `active` marks the one this session currently uses.",
+	),
+	SessionAccountList: doc(
+		{ provider: "string", accounts: "SessionAccount[]" },
+		"Stored OAuth accounts of the session model's provider.",
+	),
 	HandoffResult: { "savedPath?": "string" },
+	HighlightToken: doc(
+		{
+			text: "string",
+			"kind?":
+				"'comment' | 'keyword' | 'function' | 'variable' | 'string' | 'number' | 'type' | 'operator' | 'punctuation' | 'inserted' | 'deleted'",
+		},
+		"A run of highlighted source; `text` may span lines. No `kind` means plain text.",
+	),
 	PromptAck: doc(
 		{ "agentInvoked?": "boolean" },
 		"`agentInvoked: false` means the prompt completed locally and no `prompt_result` follows.",

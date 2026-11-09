@@ -7,6 +7,7 @@ import type {
 import type { ReactNode } from "react";
 import { memo, useEffect, useMemo, useState } from "react";
 import { fmtCost, fmtDuration, fmtTokens, relTime } from "../../lib/format";
+import { useI18n } from "../../lib/i18n";
 import "./agents.css";
 
 /** Re-render tick so running-tool durations and relative times stay live. */
@@ -87,6 +88,7 @@ export const AgentsPanel = memo(function AgentsPanel(props: {
 	onSelect(id: string | null): void;
 }): ReactNode {
 	const { agents, progress, lifecycle, selectedId, onSelect } = props;
+	const { t } = useI18n();
 	const now = useNow(1000);
 
 	const sorted = useMemo(() => {
@@ -104,7 +106,7 @@ export const AgentsPanel = memo(function AgentsPanel(props: {
 
 	return (
 		<div className="ag-panel">
-			<div className="ag-heading">Session</div>
+			<div className="ag-heading">{t("agents.session")}</div>
 			{sorted.mains.map(agent => (
 				<AgentRow
 					key={agent.id}
@@ -131,7 +133,7 @@ export const AgentsPanel = memo(function AgentsPanel(props: {
 					onSelect={onSelect}
 				/>
 			))}
-			{sorted.subs.length === 0 ? <div className="ag-empty">No subagents yet</div> : null}
+			{sorted.subs.length === 0 ? <div className="ag-empty">{t("agents.none")}</div> : null}
 		</div>
 	);
 });

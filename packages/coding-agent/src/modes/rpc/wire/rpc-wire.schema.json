@@ -272,7 +272,8 @@
 				"timeoutMs": null,
 				"completion": null,
 				"clientOmit": [
-					"messageUpdates"
+					"messageUpdates",
+					"bashOutput"
 				]
 			},
 			{
@@ -387,7 +388,7 @@
 			},
 			{
 				"name": "set_model",
-				"doc": "Select a model by provider and id.",
+				"doc": "Select a model by provider and id; it becomes the default for new sessions.",
 				"params": "SetModelParams",
 				"result": "ModelInfo",
 				"nullable": false,
@@ -398,7 +399,7 @@
 			},
 			{
 				"name": "cycle_model",
-				"doc": "Cycle to the next model.",
+				"doc": "Cycle to the next model; it becomes the default for new sessions.",
 				"params": null,
 				"result": "ModelCycleResult",
 				"nullable": true,
@@ -414,6 +415,83 @@
 				"result": "GetAvailableModelsResult",
 				"nullable": false,
 				"unwrap": "models",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "get_model_catalog",
+				"doc": "Connected providers' chat models, each marked in or out of the `enabledModels` scope.",
+				"params": null,
+				"result": "ModelCatalog",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "set_enabled_models",
+				"doc": "Persist the `enabledModels` scope; an empty list scopes to every available model.",
+				"params": "SetEnabledModelsParams",
+				"result": null,
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "get_agent_models",
+				"doc": "Discovered task agents with their saved model override and resolved model.",
+				"params": null,
+				"result": "GetAgentModelsResult",
+				"nullable": false,
+				"unwrap": "agents",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "set_agent_model",
+				"doc": "Save the `task.agentModelOverrides` entry for an agent; an empty or null `model` clears it.",
+				"params": "SetAgentModelParams",
+				"result": null,
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "get_extensions",
+				"doc": "Every discovered capability (skills, MCP servers, extension modules, rules, ...) as the `/extensions` dashboard lists it; MCP rows carry live connection state.",
+				"params": null,
+				"result": "GetExtensionsResult",
+				"nullable": false,
+				"unwrap": "extensions",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "set_extension_enabled",
+				"doc": "Enable or disable one capability by its `ExtensionEntry.id`. MCP servers connect or disconnect at once (`live: true`); other kinds apply on the next session or reload.",
+				"params": "SetExtensionEnabledParams",
+				"result": "SetExtensionEnabledResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "reconnect_mcp_server",
+				"doc": "Drop and re-open one MCP server connection, then rebind its tools.",
+				"params": "ReconnectMcpServerParams",
+				"result": "ReconnectMcpServerResult",
+				"nullable": false,
+				"unwrap": null,
 				"timeoutMs": null,
 				"completion": null,
 				"clientOmit": []
@@ -584,6 +662,17 @@
 				"clientOmit": []
 			},
 			{
+				"name": "list_sessions",
+				"doc": "Saved sessions, newest first with pinned ones on top, read without repairing or locking anything. Scope: `cwd`'s session directory (default: the current session's) plus that folder's directories in the repository's other git worktrees, as the resume picker lists them, or every project with `all`. Untitled empty sessions are left out unless pinned.",
+				"params": "ListSessionsParams",
+				"result": "ListSessionsResult",
+				"nullable": false,
+				"unwrap": "sessions",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
 				"name": "export_html",
 				"doc": "Export the session as HTML; returns the written path.",
 				"params": "ExportHtmlParams",
@@ -694,6 +783,28 @@
 				"clientOmit": []
 			},
 			{
+				"name": "rename_session",
+				"doc": "Rename a saved session file by path, as the resume picker does; the current session's path renames this session. Fails while another omp process owns the session. Returns the stored title.",
+				"params": "RenameSessionParams",
+				"result": "RenameSessionResult",
+				"nullable": false,
+				"unwrap": "title",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "highlight_code",
+				"doc": "Syntax-highlight `code` with the native highlighter. `lang` is a language name, alias or file extension; an unknown one yields a single plain token. Joining the token texts gives back `code`. Results are cached.",
+				"params": "HighlightCodeParams",
+				"result": "HighlightCodeResult",
+				"nullable": false,
+				"unwrap": "tokens",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
 				"name": "handoff",
 				"doc": "Hand the conversation off to a fresh session; null when no handoff was produced.",
 				"params": "HandoffParams",
@@ -749,6 +860,17 @@
 				"clientOmit": []
 			},
 			{
+				"name": "login_cancel",
+				"doc": "Cancel the running `login`: it fails with code `cancelled` and its pending `input` request is cancelled. `cancelled` is false when no login was running.",
+				"params": null,
+				"result": "LoginCancelResult",
+				"nullable": false,
+				"unwrap": "cancelled",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
 				"name": "get_logout_accounts",
 				"doc": "List the stored credentials `logout` can remove for a provider, active first.",
 				"params": "GetLogoutAccountsParams",
@@ -771,6 +893,28 @@
 				"clientOmit": []
 			},
 			{
+				"name": "get_session_accounts",
+				"doc": "List the stored OAuth accounts of a provider (default: the session model's provider), marking the one in use; null when no provider is given and no model is selected.",
+				"params": "GetSessionAccountsParams",
+				"result": "SessionAccountList",
+				"nullable": true,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "pin_session_account",
+				"doc": "Switch this session to one stored OAuth account. Fails while a turn is streaming or when the credential is no longer available.",
+				"params": "PinSessionAccountParams",
+				"result": "PinSessionAccountResult",
+				"nullable": false,
+				"unwrap": "provider",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
 				"name": "predict_word",
 				"doc": "Ghost-text suffix for the prose word ending at `cursor` (a UTF-16 offset); null when none applies.",
 				"params": "PredictWordParams",
@@ -778,6 +922,39 @@
 				"nullable": false,
 				"unwrap": "suffix",
 				"timeoutMs": 155000,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "complete_path",
+				"doc": "Path completions for the `@` mention ending at `cursor` (a UTF-16 offset), relative to the session cwd; null outside a mention or when nothing matches.",
+				"params": "CompletePathParams",
+				"result": "PathCompletion",
+				"nullable": true,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "get_prompt_history",
+				"doc": "Submitted prompts shared with the interactive editor, newest first; `query` searches them, `cwd` keeps one project's.",
+				"params": "GetPromptHistoryParams",
+				"result": "GetPromptHistoryResult",
+				"nullable": false,
+				"unwrap": "entries",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "add_prompt_history",
+				"doc": "Record a submitted prompt in the shared prompt history under the session's cwd and id.",
+				"params": "AddPromptHistoryParams",
+				"result": null,
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
 				"completion": null,
 				"clientOmit": []
 			},
@@ -2291,6 +2468,14 @@
 			"type": "string",
 			"description": "`set_event_filter` projection: `delta` replaces the accumulated snapshots with the block a start/end event touches."
 		},
+		"BashOutputMode": {
+			"enum": [
+				"full",
+				"chunks"
+			],
+			"type": "string",
+			"description": "`set_event_filter` projection: `chunks` sends bash progress text as `bash_output` splices instead of full snapshots."
+		},
 		"TodoStatus": {
 			"enum": [
 				"pending",
@@ -2640,6 +2825,21 @@
 				"thinkingLevel": {
 					"$ref": "#/$defs/ThinkingLevel"
 				},
+				"configuredThinkingLevel": {
+					"$ref": "#/$defs/ConfiguredThinkingLevel",
+					"description": "The user's thinking selector (e.g. `auto`) behind `thinkingLevel`; absent when the model default applies."
+				},
+				"wordCompletion": {
+					"enum": [
+						"off",
+						"auto",
+						"ngram",
+						"smollm",
+						"apple"
+					],
+					"type": "string",
+					"description": "The `spelling.autocomplete` method `predict_word` uses; `off` means it always returns null."
+				},
 				"isStreaming": {
 					"type": "boolean",
 					"default": false
@@ -2770,6 +2970,14 @@
 					],
 					"description": "Current goal mode; null when the session has no goal.",
 					"default": null
+				},
+				"configWarnings": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"description": "Configuration warnings the interactive header shows; `config_warnings_changed` marks a change.",
+					"default": []
 				}
 			},
 			"required": [
@@ -3379,6 +3587,113 @@
 			],
 			"description": "Raw session tree roots."
 		},
+		"SessionListItem": {
+			"type": "object",
+			"properties": {
+				"path": {
+					"type": "string"
+				},
+				"id": {
+					"type": "string"
+				},
+				"title": {
+					"type": "string",
+					"description": "Display name: explicit title, else the first prompt, else a time label."
+				},
+				"cwd": {
+					"type": "string",
+					"description": "Working directory from the session header; empty when unknown."
+				},
+				"mtime": {
+					"type": "integer",
+					"description": "Last modification, epoch milliseconds."
+				},
+				"messageCount": {
+					"type": "integer"
+				},
+				"pinned": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"path",
+				"id",
+				"title",
+				"cwd",
+				"mtime",
+				"messageCount",
+				"pinned"
+			],
+			"description": "One saved session, as the resume picker lists it."
+		},
+		"PathCompletionItem": {
+			"type": "object",
+			"properties": {
+				"value": {
+					"type": "string",
+					"description": "Replacement for the mention, `@` included, quoted when the path has spaces."
+				},
+				"label": {
+					"type": "string"
+				},
+				"directory": {
+					"type": "boolean"
+				},
+				"description": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"value",
+				"label",
+				"directory"
+			],
+			"description": "One `@` mention completion."
+		},
+		"PathCompletion": {
+			"type": "object",
+			"properties": {
+				"prefix": {
+					"type": "string",
+					"description": "The mention text before the cursor that `value` replaces."
+				},
+				"items": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/PathCompletionItem"
+					}
+				}
+			},
+			"required": [
+				"prefix",
+				"items"
+			],
+			"description": "Completions for the `@` mention at the cursor."
+		},
+		"PromptHistoryEntry": {
+			"type": "object",
+			"properties": {
+				"prompt": {
+					"type": "string"
+				},
+				"createdAt": {
+					"type": "integer",
+					"description": "Submission time, epoch milliseconds."
+				},
+				"useCount": {
+					"type": "integer"
+				},
+				"cwd": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"prompt",
+				"createdAt",
+				"useCount"
+			],
+			"description": "One submitted prompt from the shared prompt history."
+		},
 		"SubagentSnapshot": {
 			"type": "object",
 			"properties": {
@@ -3604,6 +3919,223 @@
 				"authenticated"
 			]
 		},
+		"ModelCatalogModel": {
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "string"
+				},
+				"name": {
+					"type": "string"
+				},
+				"scoped": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"id",
+				"name",
+				"scoped"
+			]
+		},
+		"ModelCatalogProvider": {
+			"type": "object",
+			"properties": {
+				"provider": {
+					"type": "string"
+				},
+				"models": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/ModelCatalogModel"
+					}
+				}
+			},
+			"required": [
+				"provider",
+				"models"
+			]
+		},
+		"ModelCatalog": {
+			"type": "object",
+			"properties": {
+				"enabledModels": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"providers": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/ModelCatalogProvider"
+					}
+				}
+			},
+			"required": [
+				"enabledModels",
+				"providers"
+			],
+			"description": "`enabledModels` is the raw scope pattern list; empty means every available model is in scope."
+		},
+		"AgentModelEntry": {
+			"type": "object",
+			"properties": {
+				"name": {
+					"type": "string"
+				},
+				"description": {
+					"type": "string"
+				},
+				"source": {
+					"type": "string"
+				},
+				"disabled": {
+					"type": "boolean"
+				},
+				"agentModel": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"description": "Frontmatter `model` patterns."
+				},
+				"overrideModel": {
+					"type": "string",
+					"description": "Saved `task.agentModelOverrides` entry, comma-joined."
+				},
+				"effectiveModel": {
+					"type": "string",
+					"description": "`provider/id[:level]` the agent resolves to now."
+				}
+			},
+			"required": [
+				"name",
+				"description",
+				"source",
+				"disabled"
+			],
+			"description": "A task agent and its model assignment."
+		},
+		"ExtensionEntry": {
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "string",
+					"description": "`kind:name`; the key `set_extension_enabled` takes."
+				},
+				"kind": {
+					"enum": [
+						"extension-module",
+						"skill",
+						"rule",
+						"tool",
+						"mcp",
+						"prompt",
+						"instruction",
+						"context-file",
+						"hook",
+						"slash-command"
+					],
+					"type": "string"
+				},
+				"name": {
+					"type": "string"
+				},
+				"displayName": {
+					"type": "string"
+				},
+				"path": {
+					"type": "string"
+				},
+				"provider": {
+					"type": "string"
+				},
+				"providerName": {
+					"type": "string"
+				},
+				"level": {
+					"enum": [
+						"user",
+						"project",
+						"native"
+					],
+					"type": "string"
+				},
+				"state": {
+					"enum": [
+						"active",
+						"disabled",
+						"shadowed"
+					],
+					"type": "string"
+				},
+				"description": {
+					"type": "string"
+				},
+				"trigger": {
+					"type": "string"
+				},
+				"disabledReason": {
+					"type": "string"
+				},
+				"shadowedBy": {
+					"type": "string"
+				},
+				"mcpStatus": {
+					"enum": [
+						"connected",
+						"connecting",
+						"disconnected"
+					],
+					"type": "string",
+					"description": "Live MCP connection state."
+				},
+				"mcpTools": {
+					"type": "integer",
+					"description": "Tools the connected MCP server exposes."
+				},
+				"mcpError": {
+					"type": "string",
+					"description": "Last MCP connection failure, cleared on connect."
+				}
+			},
+			"required": [
+				"id",
+				"kind",
+				"name",
+				"displayName",
+				"path",
+				"provider",
+				"providerName",
+				"level",
+				"state"
+			],
+			"description": "A discovered capability as the `/extensions` dashboard shows it."
+		},
+		"SetExtensionEnabledResult": {
+			"type": "object",
+			"properties": {
+				"live": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"live"
+			],
+			"description": "`live` is true when the change already applies to this session."
+		},
+		"ReconnectMcpServerResult": {
+			"type": "object",
+			"properties": {
+				"connected": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"connected"
+			]
+		},
 		"LogoutAccount": {
 			"type": "object",
 			"properties": {
@@ -3640,6 +4172,55 @@
 			],
 			"description": "A stored credential `logout` can remove; `active` marks credentials the session may be using."
 		},
+		"SessionAccount": {
+			"type": "object",
+			"properties": {
+				"position": {
+					"type": "integer"
+				},
+				"credentialId": {
+					"type": "integer"
+				},
+				"label": {
+					"type": "string"
+				},
+				"active": {
+					"type": "boolean"
+				},
+				"email": {
+					"type": "string"
+				},
+				"orgName": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"position",
+				"credentialId",
+				"label",
+				"active"
+			],
+			"description": "A stored OAuth account the session can pin; `active` marks the one this session currently uses."
+		},
+		"SessionAccountList": {
+			"type": "object",
+			"properties": {
+				"provider": {
+					"type": "string"
+				},
+				"accounts": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/SessionAccount"
+					}
+				}
+			},
+			"required": [
+				"provider",
+				"accounts"
+			],
+			"description": "Stored OAuth accounts of the session model's provider."
+		},
 		"HandoffResult": {
 			"type": "object",
 			"properties": {
@@ -3647,6 +4228,34 @@
 					"type": "string"
 				}
 			}
+		},
+		"HighlightToken": {
+			"type": "object",
+			"properties": {
+				"text": {
+					"type": "string"
+				},
+				"kind": {
+					"enum": [
+						"comment",
+						"keyword",
+						"function",
+						"variable",
+						"string",
+						"number",
+						"type",
+						"operator",
+						"punctuation",
+						"inserted",
+						"deleted"
+					],
+					"type": "string"
+				}
+			},
+			"required": [
+				"text"
+			],
+			"description": "A run of highlighted source; `text` may span lines. No `kind` means plain text."
 		},
 		"PromptAck": {
 			"type": "object",
@@ -3900,6 +4509,32 @@
 				"toolCallId",
 				"toolName"
 			]
+		},
+		"BashOutputEvent": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "bash_output"
+				},
+				"toolCallId": {
+					"type": "string"
+				},
+				"keep": {
+					"type": "integer",
+					"description": "Characters of the previous preview to keep; 0 replaces it."
+				},
+				"chunk": {
+					"type": "string",
+					"description": "Text appended after the kept prefix."
+				}
+			},
+			"required": [
+				"type",
+				"toolCallId",
+				"keep",
+				"chunk"
+			],
+			"description": "Opt-in (`bashOutput: 'chunks'`) splice of a bash progress preview; selected together with `tool_execution_update`."
 		},
 		"ToolStreamUpdateEvent": {
 			"type": "object",
@@ -4454,6 +5089,9 @@
 				},
 				{
 					"$ref": "#/$defs/ToolExecutionUpdateEvent"
+				},
+				{
+					"$ref": "#/$defs/BashOutputEvent"
 				},
 				{
 					"$ref": "#/$defs/ToolStreamUpdateEvent"
@@ -6486,6 +7124,9 @@
 				},
 				"messageUpdates": {
 					"$ref": "#/$defs/MessageUpdates"
+				},
+				"bashOutput": {
+					"$ref": "#/$defs/BashOutputMode"
 				}
 			},
 			"required": [
@@ -6510,6 +7151,9 @@
 				},
 				"messageUpdates": {
 					"$ref": "#/$defs/MessageUpdates"
+				},
+				"bashOutput": {
+					"$ref": "#/$defs/BashOutputMode"
 				}
 			},
 			"required": [
@@ -6705,6 +7349,95 @@
 				"models"
 			]
 		},
+		"SetEnabledModelsParams": {
+			"type": "object",
+			"properties": {
+				"patterns": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			},
+			"required": [
+				"patterns"
+			]
+		},
+		"GetAgentModelsResult": {
+			"type": "object",
+			"properties": {
+				"agents": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/AgentModelEntry"
+					}
+				}
+			},
+			"required": [
+				"agents"
+			]
+		},
+		"SetAgentModelParams": {
+			"type": "object",
+			"properties": {
+				"agent": {
+					"type": "string"
+				},
+				"model": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					]
+				}
+			},
+			"required": [
+				"agent"
+			]
+		},
+		"GetExtensionsResult": {
+			"type": "object",
+			"properties": {
+				"extensions": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/ExtensionEntry"
+					}
+				}
+			},
+			"required": [
+				"extensions"
+			]
+		},
+		"SetExtensionEnabledParams": {
+			"type": "object",
+			"properties": {
+				"extension": {
+					"type": "string"
+				},
+				"enabled": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"extension",
+				"enabled"
+			]
+		},
+		"ReconnectMcpServerParams": {
+			"type": "object",
+			"properties": {
+				"name": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"name"
+			]
+		},
 		"SetThinkingLevelParams": {
 			"type": "object",
 			"properties": {
@@ -6864,6 +7597,34 @@
 				"unknown"
 			]
 		},
+		"ListSessionsParams": {
+			"type": "object",
+			"properties": {
+				"cwd": {
+					"type": "string"
+				},
+				"all": {
+					"type": "boolean"
+				},
+				"limit": {
+					"type": "integer"
+				}
+			}
+		},
+		"ListSessionsResult": {
+			"type": "object",
+			"properties": {
+				"sessions": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/SessionListItem"
+					}
+				}
+			},
+			"required": [
+				"sessions"
+			]
+		},
 		"ExportHtmlParams": {
 			"type": "object",
 			"properties": {
@@ -6995,6 +7756,60 @@
 				"name"
 			]
 		},
+		"RenameSessionParams": {
+			"type": "object",
+			"properties": {
+				"path": {
+					"type": "string"
+				},
+				"name": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"path",
+				"name"
+			]
+		},
+		"RenameSessionResult": {
+			"type": "object",
+			"properties": {
+				"title": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"title"
+			]
+		},
+		"HighlightCodeParams": {
+			"type": "object",
+			"properties": {
+				"code": {
+					"type": "string"
+				},
+				"lang": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"code"
+			]
+		},
+		"HighlightCodeResult": {
+			"type": "object",
+			"properties": {
+				"tokens": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/HighlightToken"
+					}
+				}
+			},
+			"required": [
+				"tokens"
+			]
+		},
 		"HandoffParams": {
 			"type": "object",
 			"properties": {
@@ -7064,6 +7879,17 @@
 				"providerId"
 			]
 		},
+		"LoginCancelResult": {
+			"type": "object",
+			"properties": {
+				"cancelled": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"cancelled"
+			]
+		},
 		"GetLogoutAccountsParams": {
 			"type": "object",
 			"properties": {
@@ -7112,6 +7938,39 @@
 				}
 			}
 		},
+		"GetSessionAccountsParams": {
+			"type": "object",
+			"properties": {
+				"providerId": {
+					"type": "string"
+				}
+			}
+		},
+		"PinSessionAccountParams": {
+			"type": "object",
+			"properties": {
+				"credentialId": {
+					"type": "integer"
+				},
+				"providerId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"credentialId"
+			]
+		},
+		"PinSessionAccountResult": {
+			"type": "object",
+			"properties": {
+				"provider": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"provider"
+			]
+		},
 		"PredictWordParams": {
 			"type": "object",
 			"properties": {
@@ -7143,6 +8002,60 @@
 			},
 			"required": [
 				"suffix"
+			]
+		},
+		"CompletePathParams": {
+			"type": "object",
+			"properties": {
+				"text": {
+					"type": "string"
+				},
+				"cursor": {
+					"type": "integer"
+				}
+			},
+			"required": [
+				"text",
+				"cursor"
+			]
+		},
+		"GetPromptHistoryParams": {
+			"type": "object",
+			"properties": {
+				"query": {
+					"type": "string"
+				},
+				"limit": {
+					"type": "integer"
+				},
+				"cwd": {
+					"type": "string"
+				}
+			}
+		},
+		"GetPromptHistoryResult": {
+			"type": "object",
+			"properties": {
+				"entries": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/PromptHistoryEntry"
+					}
+				}
+			},
+			"required": [
+				"entries"
+			]
+		},
+		"AddPromptHistoryParams": {
+			"type": "object",
+			"properties": {
+				"prompt": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"prompt"
 			]
 		},
 		"PredictWordFeedbackParams": {

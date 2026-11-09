@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -24,7 +25,7 @@ describe("AuthStorage account rotation", () => {
 		provider: string,
 		initialCredentials: OAuthCredential[],
 		finalCredentials: OAuthCredential[],
-	): Promise<{ sessionId: string; stickyKey: string; freshKey: string }> => {
+	): Promise<{ sessionId: string; stickyKey: string }> => {
 		const control = await AuthStorage.create(":memory:", {
 			usageProviderResolver: () => undefined,
 		});
@@ -34,10 +35,12 @@ describe("AuthStorage account rotation", () => {
 
 			for (let attempt = 0; attempt < 128; attempt += 1) {
 				const sessionId = `issue-4982-session-${attempt}`;
-				const stickyKey = await authStorage.keys.get(provider, sessionId);
-				const freshKey = await control.keys.get(provider, sessionId);
+				const stickyKey = await authStorage.keys.get(provider, sessionId, { recordAffinity: false });
+				const freshKey = await control.keys.get(provider, sessionId, { recordAffinity: false });
 				if (stickyKey && freshKey && stickyKey !== freshKey) {
-					return { sessionId, stickyKey, freshKey };
+					// Record the session's sticky now that the probe proved hash selection differs.
+					await authStorage.keys.get(provider, sessionId);
+					return { sessionId, stickyKey };
 				}
 			}
 		} finally {
@@ -428,7 +431,7 @@ describe("AuthStorage account rotation", () => {
 			email: "target-c@example.com",
 		};
 		const targetFinalCredentials = [...targetInitialCredentials, targetAddedCredential];
-		const { sessionId, stickyKey, freshKey } = await findSessionWhereFreshSelectionChanges(
+		const { sessionId } = await findSessionWhereFreshSelectionChanges(
 			targetProvider,
 			targetInitialCredentials,
 			targetFinalCredentials,
@@ -468,9 +471,15 @@ describe("AuthStorage account rotation", () => {
 		authStorage = await createRotationStorage(path.join(tempDir, "testauth.db"));
 		await authStorage.credentials.reload();
 
-		const reloadedTargetKey = await authStorage.keys.get(targetProvider, sessionId);
-		expect(reloadedTargetKey).toBe(freshKey);
-		expect(reloadedTargetKey).not.toBe(stickyKey);
+		const inspect = new Database(path.join(tempDir, "testauth.db"), { readonly: true });
+		try {
+			const stickyRow = (provider: string, session: string) =>
+				inspect.query("SELECT value FROM cache WHERE key = ?").get(`session:sticky:${provider}:${session}`);
+			expect(stickyRow(targetProvider, sessionId)).toBeNull();
+			expect(stickyRow(unrelatedProvider, unrelatedSessionId)).not.toBeNull();
+		} finally {
+			inspect.close();
+		}
 		expect(await authStorage.keys.get(unrelatedProvider, unrelatedSessionId)).toBe(unrelatedStickyKey);
 	});
 });

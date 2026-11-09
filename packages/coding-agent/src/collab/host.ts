@@ -29,6 +29,7 @@ import { stripImagesFromMessage, USER_INTERRUPT_LABEL } from "../session/message
 import type { SessionEntry as StoredSessionEntry } from "../session/session-entries";
 import { TASK_SUBAGENT_LIFECYCLE_CHANNEL, TASK_SUBAGENT_PROGRESS_CHANNEL } from "../task/types";
 import { generateRoomKey, generateWriteToken, importRoomKey } from "./crypto";
+import { acquireCollabDirectory, type CollabDirectoryLease, webOrigin } from "./directory";
 import { collabDisplayName } from "./display-name";
 import {
 	type AgentSnapshot,
@@ -216,6 +217,8 @@ export class CollabHost {
 	readonly #access: CollabAccess;
 	#relayConnected = false;
 	#registryPublication: CollabHostPublication | null = null;
+	/** Share of the loopback session directory the Collab web UI lists tabs from. */
+	#directoryLease: CollabDirectoryLease | null = null;
 	/** Publication still being created; teardown awaits and withdraws it. */
 	#pendingPublication: Promise<CollabHostPublication | null> | null = null;
 	/** Set by the first teardown (explicit stop or fatal relay close); every later stop() awaits it. */
@@ -541,6 +544,11 @@ export class CollabHost {
 			throw new Error("relay connection closed during startup");
 		}
 		this.#registryPublication = publication;
+		// Only a published room is listable, so only then serve the directory.
+		if (publication) {
+			const origin = webUrl ? webOrigin(webUrl) : null;
+			this.#directoryLease = acquireCollabDirectory(origin ? [origin] : []);
+		}
 	}
 
 	/**
@@ -587,6 +595,8 @@ export class CollabHost {
 		if (this.#ctx.collabHost === this) this.#ctx.collabHost = undefined;
 		const publication = this.#registryPublication;
 		this.#registryPublication = null;
+		this.#directoryLease?.release();
+		this.#directoryLease = null;
 		if (publication) {
 			// close() removes discovery metadata synchronously before awaiting the
 			// server shutdown, so a stopped room disappears from lists immediately;

@@ -9,7 +9,20 @@ import { HeaderBar } from "./components/shell/HeaderBar";
 import { Toasts } from "./components/shell/Toasts";
 import { Transcript } from "./components/transcript/Transcript";
 import { GuestClient } from "./lib/client";
+import { useI18n } from "./lib/i18n";
+import { DirectoryError, fetchLocalLink } from "./lib/local-directory";
+import {
+	loadTabs,
+	mergeDiscoveredTabs,
+	neighbourTab,
+	removeTab,
+	type SessionTab,
+	saveTabs,
+	tabKey,
+	upsertTab,
+} from "./lib/session-tabs";
 import { useGuestSnapshot } from "./lib/use-guest";
+import { useLocalSessions } from "./lib/use-local-sessions";
 import type { ToolRenderHost } from "./tool-render";
 import "./components/shell/shell.css";
 
@@ -18,6 +31,12 @@ const NAME_KEY = "omp.collab.name";
 interface Creds {
 	link: string;
 	name: string;
+}
+
+/** Host and room generation a link was resolved from, remembered on its tab. */
+interface TabOrigin {
+	hostId: string;
+	generation: number;
 }
 
 function storedName(): string {
@@ -39,9 +58,24 @@ function hashLink(): string | null {
 export function App(): ReactNode {
 	const [client, setClient] = useState<GuestClient | null>(null);
 	const [connectError, setConnectError] = useState<string | null>(null);
+	const [tabs, setTabs] = useState<SessionTab[]>(loadTabs);
+	const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+	const [activeLink, setActiveLink] = useState<string | null>(null);
 	const credsRef = useRef<Creds | null>(null);
+	const local = useLocalSessions();
+	const { t } = useI18n();
 
-	const connect = useCallback((link: string, name: string): void => {
+	useEffect(() => {
+		saveTabs(tabs);
+	}, [tabs]);
+
+	// Only the pasted/opened tabs are persisted; discovered ones are re-listed from the host.
+	const shownTabs = useMemo(
+		() => mergeDiscoveredTabs(tabs, local.sessions, dismissed),
+		[tabs, local.sessions, dismissed],
+	);
+
+	const connect = useCallback((link: string, name: string, origin?: TabOrigin): void => {
 		let next: GuestClient;
 		try {
 			next = new GuestClient(link, name);
@@ -58,6 +92,10 @@ export function App(): ReactNode {
 		credsRef.current = { link, name };
 		window.location.hash = link;
 		setConnectError(null);
+		setTabs(prev =>
+			upsertTab(prev, { link, name, title: "", hostId: origin?.hostId, generation: origin?.generation }),
+		);
+		setActiveLink(link);
 		setClient(prev => {
 			prev?.close();
 			return next;
@@ -69,7 +107,66 @@ export function App(): ReactNode {
 			prev?.close();
 			return null;
 		});
+		setActiveLink(null);
 		history.replaceState(null, "", window.location.pathname + window.location.search);
+	}, []);
+
+	const selectTab = useCallback(
+		(tab: SessionTab): void => {
+			if (tab.link) {
+				connect(tab.link, tab.name);
+				return;
+			}
+			// Discovered tab: the host hands out its link only now, for this one session.
+			const { hostId, generation } = tab;
+			if (hostId === undefined || generation === undefined) return;
+			void (async () => {
+				const target = { instanceId: hostId, generation };
+				try {
+					let url: string;
+					try {
+						url = await fetchLocalLink(local.token, target, "control");
+					} catch (err) {
+						if (!(err instanceof DirectoryError) || err.code !== "access_unavailable") throw err;
+						url = await fetchLocalLink(local.token, target, "view");
+					}
+					connect(url, storedName(), { hostId, generation });
+				} catch {
+					setConnectError(t("tabs.localFailed"));
+				}
+			})();
+		},
+		[connect, local.token, t],
+	);
+
+	const closeTab = useCallback(
+		(tab: SessionTab): void => {
+			// A discovered session stays listed by the host; remember the close so it doesn't come back.
+			if (tab.hostId !== undefined && tab.generation !== undefined) {
+				const dismissedKey = tabKey({
+					link: "",
+					name: "",
+					title: "",
+					hostId: tab.hostId,
+					generation: tab.generation,
+				});
+				setDismissed(prev => new Set(prev).add(dismissedKey));
+			}
+			if (tab.link) setTabs(prev => removeTab(prev, tab.link));
+			if (!tab.link || tab.link !== activeLink) return;
+			const next = neighbourTab(shownTabs, tabKey(tab));
+			if (next) selectTab(next);
+			else leave();
+		},
+		[activeLink, shownTabs, selectTab, leave],
+	);
+
+	const renameTab = useCallback((link: string, title: string): void => {
+		setTabs(prev =>
+			prev.some(t => t.link === link && t.title !== title)
+				? prev.map(t => (t.link === link ? { ...t, title } : t))
+				: prev,
+		);
 	}, []);
 
 	const rejoin = useCallback((): void => {
@@ -108,18 +205,55 @@ export function App(): ReactNode {
 	}, [client]);
 
 	if (!client) {
-		return <ConnectScreen defaultName={storedName()} error={connectError} onConnect={connect} />;
+		return (
+			<ConnectScreen
+				defaultName={storedName()}
+				error={connectError}
+				onConnect={connect}
+				tabs={shownTabs}
+				onSelectTab={selectTab}
+				onCloseTab={closeTab}
+				pairToken={local.token}
+				pairProblem={local.problem}
+				onPairToken={local.setToken}
+			/>
+		);
 	}
-	return <Session client={client} onLeave={leave} onRejoin={rejoin} />;
+	return (
+		<Session
+			client={client}
+			tabs={shownTabs}
+			activeLink={activeLink}
+			onLeave={leave}
+			onRejoin={rejoin}
+			onSelectTab={selectTab}
+			onCloseTab={closeTab}
+			onRenameTab={renameTab}
+		/>
+	);
 }
 
 interface SessionProps {
 	client: GuestClient;
+	tabs: readonly SessionTab[];
+	activeLink: string | null;
 	onLeave(): void;
 	onRejoin(): void;
+	onSelectTab(tab: SessionTab): void;
+	onCloseTab(tab: SessionTab): void;
+	onRenameTab(link: string, title: string): void;
 }
 
-function Session({ client, onLeave, onRejoin }: SessionProps): ReactNode {
+function Session({
+	client,
+	tabs,
+	activeLink,
+	onLeave,
+	onRejoin,
+	onSelectTab,
+	onCloseTab,
+	onRenameTab,
+}: SessionProps): ReactNode {
 	const snap = useGuestSnapshot(client);
 	const [railOpen, setRailOpen] = useState(false);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -151,6 +285,9 @@ function Session({ client, onLeave, onRejoin }: SessionProps): ReactNode {
 	useEffect(() => {
 		document.title = `${title} · omp collab`;
 	}, [title]);
+	useEffect(() => {
+		if (activeLink && snap.header?.title) onRenameTab(activeLink, snap.header.title);
+	}, [activeLink, snap.header?.title, onRenameTab]);
 
 	const drawerAgent = selectedId != null ? snap.agents.find(a => a.id === selectedId) : undefined;
 	const toggleRail = useCallback(() => setRailOpen(open => !open), []);
@@ -166,8 +303,13 @@ function Session({ client, onLeave, onRejoin }: SessionProps): ReactNode {
 				readOnly={snap.readOnly}
 				subCount={subCount}
 				railOpen={railOpen}
+				tabs={tabs}
+				activeLink={activeLink}
 				onToggleRail={toggleRail}
 				onLeave={onLeave}
+				onSelectTab={onSelectTab}
+				onCloseTab={onCloseTab}
+				onNewTab={onLeave}
 			/>
 			<main className="sh-main">
 				<section className="sh-panel" data-rail={railOpen ? "true" : "false"}>

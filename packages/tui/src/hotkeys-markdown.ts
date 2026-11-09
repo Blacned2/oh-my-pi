@@ -129,7 +129,7 @@ function hotkeyGroups(bindings: HotkeysMarkdownBindings): HotkeyGroup[] {
 				{ keys: [act("app.thinking.cycle")], action: "Cycle thinking level" },
 				{ keys: [act("app.model.cycleForward")], action: "Cycle role models (slow/default/smol)" },
 				{ keys: [act("app.model.cycleBackward")], action: "Cycle role models (backward)" },
-				{ keys: [act("app.model.selectTemporary")], action: "Select model (temporary)" },
+				{ keys: [act("app.model.selectTemporary")], action: "Select model (remembered for new sessions)" },
 				{ keys: [act("app.model.select")], action: "Select model (set roles)" },
 				{ keys: [act("app.plan.toggle")], action: "Toggle plan mode" },
 				{ keys: [act("app.history.search")], action: "Search prompt history" },

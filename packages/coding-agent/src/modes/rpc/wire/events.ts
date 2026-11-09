@@ -62,6 +62,15 @@ export const eventDefs = {
 		"args?": "unknown",
 		"partialResult?": "unknown",
 	},
+	BashOutputEvent: doc(
+		{
+			type: "'bash_output'",
+			toolCallId: "string",
+			keep: doc("number.integer", "Characters of the previous preview to keep; 0 replaces it."),
+			chunk: doc("string", "Text appended after the kept prefix."),
+		},
+		"Opt-in (`bashOutput: 'chunks'`) splice of a bash progress preview; selected together with `tool_execution_update`.",
+	),
 	ToolStreamUpdateEvent: {
 		type: "'tool_stream_update'",
 		toolCallId: "string",
@@ -205,6 +214,7 @@ export const eventDefs = {
 			"MessageEndEvent",
 			"ToolExecutionStartEvent",
 			"ToolExecutionUpdateEvent",
+			"BashOutputEvent",
 			"ToolStreamUpdateEvent",
 			"ToolExecutionEndEvent",
 			"AutoCompactionStartEvent",

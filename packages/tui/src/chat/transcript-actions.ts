@@ -9,7 +9,7 @@ import type { SpotlightDetails } from "./spotlight";
 export type TranscriptAction =
 	/** Retry the last failed turn (`app.retry`). */
 	| { readonly act: "retry" }
-	/** Open the temporary model picker (`app.model.selectTemporary`). */
+	/** Open the model picker (`app.model.selectTemporary`). */
 	| { readonly act: "switch-model" }
 	/** Open the transcript rewind selector. */
 	| { readonly act: "rewind" }

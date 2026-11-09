@@ -298,6 +298,95 @@ describe("RpcSessionEventForwarder", () => {
 	});
 });
 
+describe("RpcSessionEventForwarder bash output chunks", () => {
+	function bashUpdate(
+		text: string,
+		details: Record<string, unknown> = {},
+		toolName = "bash",
+	): Extract<AgentSessionEvent, { type: "tool_execution_update" }> {
+		return {
+			type: "tool_execution_update",
+			toolCallId: "call-1",
+			toolName,
+			args: { command: "build" },
+			partialResult: { content: [{ type: "text", text }], details },
+		};
+	}
+
+	test("a client splicing bash_output frames rebuilds every preview snapshot, including rolling-tail rewrites and surrogate pairs", () => {
+		const frames: RpcProjectedSessionEventFrame[] = [];
+		const forwarder = new RpcSessionEventForwarder(frame => frames.push(frame));
+		forwarder.setFilter(null, "full", "chunks");
+		const snapshots = ["line 1", "line 1\nline 2", "[1 line elided]\nline 2\nline 3", "x\u{1F600}", "x\u{1F601}"];
+		let rebuilt = "";
+		for (const snapshot of snapshots) {
+			frames.length = 0;
+			forwarder.forward(bashUpdate(snapshot));
+			expect(frames).toHaveLength(1);
+			const frame = frames[0];
+			if (frame.type !== "bash_output") throw new Error(`unexpected ${frame.type}`);
+			// Never splits a surrogate pair: the kept prefix and the chunk are each well-formed.
+			expect(rebuilt.slice(0, frame.keep)).not.toMatch(/[\uD800-\uDBFF]$/);
+			expect(frame.chunk).not.toMatch(/^[\uDC00-\uDFFF]/);
+			rebuilt = rebuilt.slice(0, frame.keep) + frame.chunk;
+			expect(rebuilt).toBe(snapshot);
+		}
+		expect(frames[0]).toMatchObject({ keep: 1 });
+
+		// An append sends only the new text.
+		frames.length = 0;
+		forwarder.forward(bashUpdate("x\u{1F601} more"));
+		expect(frames).toEqual([{ type: "bash_output", toolCallId: "call-1", keep: 3, chunk: " more" }]);
+	});
+
+	test("details still travel as a text-less update, an unchanged preview sends nothing, and a finished call starts over", () => {
+		const frames: RpcProjectedSessionEventFrame[] = [];
+		const forwarder = new RpcSessionEventForwarder(frame => frames.push(frame));
+		forwarder.setFilter(null, "full", "chunks");
+
+		forwarder.forward(bashUpdate("out"));
+		forwarder.forward(bashUpdate("out"));
+		forwarder.forward(bashUpdate("out", { replies: ["y"] }));
+		expect(frames).toEqual([
+			{ type: "bash_output", toolCallId: "call-1", keep: 0, chunk: "out" },
+			{
+				type: "tool_execution_update",
+				toolCallId: "call-1",
+				toolName: "bash",
+				args: { command: "build" },
+				partialResult: { content: [], details: { replies: ["y"] } },
+			},
+		]);
+
+		frames.length = 0;
+		forwarder.forward({
+			type: "tool_execution_end",
+			toolCallId: "call-1",
+			toolName: "bash",
+			result: {},
+			isError: false,
+		});
+		forwarder.forward(bashUpdate("out"));
+		expect(frames.at(-1)).toEqual({ type: "bash_output", toolCallId: "call-1", keep: 0, chunk: "out" });
+	});
+
+	test("full mode and other tools keep the whole snapshot; a filter without tool_execution_update drops the chunks", () => {
+		const frames: RpcProjectedSessionEventFrame[] = [];
+		const forwarder = new RpcSessionEventForwarder(frame => frames.push(frame));
+		const full = bashUpdate("out");
+		forwarder.forward(full);
+		forwarder.setFilter(null, "full", "chunks");
+		const other = bashUpdate("out", {}, "ssh");
+		forwarder.forward(other);
+		expect(frames).toEqual([full, other]);
+
+		frames.length = 0;
+		forwarder.setFilter(["tool_execution_end"], "full", "chunks");
+		forwarder.forward(bashUpdate("more"));
+		expect(frames).toEqual([]);
+	});
+});
+
 type Block = AssistantMessage["content"][number];
 
 /** What a plain RPC client does with delta frames: no snapshots, only starts, increments, and ends. */

@@ -118,6 +118,32 @@
 - Edit auto-repair now accounts for retry costs and stops before exceeding the session cost cap.
 - MCP prompt commands now correctly assign positional arguments that follow `key=value` arguments.
 - `/shake thinking` now reports and preserves reasoning blocks that the provider continues to replay, avoiding inaccurate context-reduction claims.
+### Added
+
+- RPC clients can list skills, MCP servers, extension modules and other capabilities with live MCP status (`get_extensions`), enable or disable them (`set_extension_enabled`) and reconnect an MCP server (`reconnect_mcp_server`), matching the `/extensions` dashboard and `/mcp reconnect`
+- RPC clients can list a session's provider accounts (`get_session_accounts`) and switch the session to one (`pin_session_account`), the same pin `/session pin` does in the terminal UI
+- A publishing collab host now serves its machine's live sessions to the Collab web UI on `127.0.0.1:7467` (token-protected, no links until a session is picked); `omp collab pair` prints the pairing token
+- `omp config list --json` now reports each setting's settings-panel tab, group, label, warning and choices, so other tools can build a settings screen from it
+- `omp auth import-workeros` imports every Claude account connected in the Worker OS desktop app, so all of them can be used side by side
+- RPC mode adds `get_model_catalog`, `set_enabled_models`, `get_agent_models` and `set_agent_model`, so RPC clients can list connected providers' models, edit the scoped model list and set per-agent models like the `/agents` hub
+- Each finished turn ends with a one-line receipt: time, tokens, a cache-hit bar, tool calls and errors, and cost (turn off with `display.turnReceipt`)
+- RPC mode adds `list_sessions` (`cwd`, `all`, `limit`), so RPC clients can show the resume picker's sessions, pinned first and including the folder's other git worktrees, without locking or repairing them
+- RPC mode adds `login_cancel`, so RPC clients can cancel a running `login` (its open prompt closes and `login` fails with code `cancelled`)
+- RPC mode adds `rename_session` (`path`, `name`), so RPC clients can rename the current or a saved session like the resume picker
+- RPC mode adds `highlight_code` (`code`, `lang?`), so RPC clients get omp's syntax highlighting as `{ text, kind }` tokens they color with their own theme
+- RPC `set_event_filter` accepts `bashOutput: "chunks"`, so RPC clients receive running bash output as small `bash_output` splices instead of the whole preview on every update
+- RPC `get_state` now reports `configuredThinkingLevel` (the chosen level, including `auto`) and `wordCompletion` (the inline word-prediction method)
+- RPC mode adds `complete_path`, `get_prompt_history` and `add_prompt_history`, so RPC clients can offer `@file` completion and share the prompt history with the interactive editor
+- RPC `get_state` now reports `configWarnings`, so RPC clients can show the configuration warnings behind `config_warnings_changed`
+- New `cache_trend` status-line segment shows a sparkline of the latest requests' cache hit and the newest percentage; it is on by default in the `default` and `full` presets
+
+### Fixed
+
+- Desktop chat now shows full project names and a clickable `ctrl + t` thinking toggle, without the redundant send hint.
+- `/usage` no longer omits accounts added in another process or marks the wrong account "in use by this session"; it now picks up external credential changes before fetching
+- Picking a model for a session in the terminal picker, the model hub, or an ACP/RPC client now also sets it as the default, so new sessions start on it instead of resetting to the configured default
+- Plain-text `/usage` and `/context` replies no longer show raw ANSI escape codes in their progress bars; `/usage` also lists models compactly and prints amounts as `0% used · 100% left`
+- `/usage` lists only models in your `enabledModels` scope instead of every available model
 
 ## [18.18.1] - 2026-11-08
 

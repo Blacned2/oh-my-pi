@@ -4,15 +4,18 @@ import type { ReactNode } from "react";
 import { memo } from "react";
 import type { ConnectionPhase } from "../../lib/client";
 import { fmtPercent, shortenPath } from "../../lib/format";
+import { type MessageKey, useI18n } from "../../lib/i18n";
+import type { SessionTab } from "../../lib/session-tabs";
 import { OmpMark } from "./OmpMark";
-import { ThemeToggle } from "./ThemeToggle";
+import { SessionTabs } from "./SessionTabs";
+import { SettingsMenu } from "./SettingsMenu";
 
-const PHASE_LABEL: Record<ConnectionPhase, string> = {
-	connecting: "Connecting",
-	waiting: "Joining",
-	live: "Live",
-	reconnecting: "Reconnecting",
-	ended: "Ended",
+const PHASE_LABEL: Record<ConnectionPhase, MessageKey> = {
+	connecting: "phase.connecting",
+	waiting: "phase.waiting",
+	live: "phase.live",
+	reconnecting: "phase.reconnecting",
+	ended: "phase.ended",
 };
 
 export interface HeaderBarProps {
@@ -22,8 +25,13 @@ export interface HeaderBarProps {
 	readOnly: boolean;
 	subCount: number;
 	railOpen: boolean;
+	tabs: readonly SessionTab[];
+	activeLink: string | null;
 	onToggleRail(): void;
 	onLeave(): void;
+	onSelectTab(tab: SessionTab): void;
+	onCloseTab(tab: SessionTab): void;
+	onNewTab(): void;
 }
 
 /** Memoized on its snapshot fields, so streaming frames that leave them untouched skip it. */
@@ -34,10 +42,16 @@ export const HeaderBar = memo(function HeaderBar({
 	readOnly,
 	subCount,
 	railOpen,
+	tabs,
+	activeLink,
 	onToggleRail,
 	onLeave,
+	onSelectTab,
+	onCloseTab,
+	onNewTab,
 }: HeaderBarProps): ReactNode {
-	const title = header?.title ?? state?.sessionName ?? "session";
+	const { t } = useI18n();
+	const title = header?.title ?? state?.sessionName ?? t("header.untitled");
 	const usage = state?.contextUsage;
 	let pct: number | null = null;
 	if (usage) {
@@ -50,69 +64,85 @@ export const HeaderBar = memo(function HeaderBar({
 
 	return (
 		<header className="sh-header">
-			<div className="sh-header-left">
-				<span className="sh-brand" aria-label="omp collab">
+			<div className="sh-tabbar">
+				<span className="sh-brand" aria-label={t("brand.aria")}>
 					<OmpMark />
-					<span className="sh-brand-slash">/</span>
 				</span>
-				<span className="sh-title" title={title}>
-					{title}
-				</span>
-				{state?.cwd && (
-					<span className="sh-cwd" title={state.cwd}>
-						{shortenPath(state.cwd)}
-					</span>
-				)}
-			</div>
-			<div className="sh-header-right">
-				<span className={`sh-status sh-status-${phase}`} title={`connection: ${phase}`}>
-					<span className={`sh-dot sh-dot-${phase}`} />
-					{PHASE_LABEL[phase]}
-				</span>
-				{readOnly && (
-					<span className="sh-chip" title="you joined with a read-only link — watching only">
-						read-only
-					</span>
-				)}
-				{state?.model && <span className="sh-chip sh-chip-meta">{state.model.name}</span>}
-				{state?.thinkingLevel && <span className="sh-chip sh-chip-meta">{state.thinkingLevel}</span>}
-				{pct != null && (
-					<span
-						className={pct > 80 ? "sh-gauge sh-gauge-warn" : "sh-gauge"}
-						title={`context · ${fmtPercent(pct)}`}
-					>
-						<span className="sh-gauge-track">
-							<span className="sh-gauge-fill" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+				<SessionTabs
+					tabs={tabs}
+					activeLink={activeLink}
+					phase={phase}
+					onSelect={onSelectTab}
+					onClose={onCloseTab}
+					onNew={onNewTab}
+				/>
+				<div className="sh-tabbar-right">
+					{state && state.participants.length > 0 && (
+						<span className="sh-avatars">
+							{state.participants.map((p, i) => (
+								<span
+									key={`${p.name}:${i}`}
+									className={p.role === "host" ? "sh-avatar sh-avatar-host" : "sh-avatar"}
+									title={`${p.name} · ${p.role}${p.readOnly ? ` · ${t("header.viewOnly")}` : ""}`}
+								>
+									{(p.name[0] ?? "?").toUpperCase()}
+								</span>
+							))}
 						</span>
-						<span className="sh-gauge-pct">{fmtPercent(pct)}</span>
+					)}
+					<SettingsMenu tabs={tabs} activeLink={activeLink} onSelectTab={onSelectTab} onCloseTab={onCloseTab} />
+					<button
+						type="button"
+						className={railOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
+						onClick={onToggleRail}
+						title={railOpen ? t("header.hideAgents") : t("header.showAgents")}
+					>
+						<PanelRight size={14} />
+						{subCount > 0 && <span className="sh-badge">{subCount}</span>}
+					</button>
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onLeave} title={t("header.leave")}>
+						<LogOut size={14} />
+					</button>
+				</div>
+			</div>
+			<div className="sh-info">
+				<div className="sh-info-left">
+					<span className="sh-title" title={title}>
+						{title}
 					</span>
-				)}
-				{state && state.participants.length > 0 && (
-					<span className="sh-avatars">
-						{state.participants.map((p, i) => (
-							<span
-								key={`${p.name}:${i}`}
-								className={p.role === "host" ? "sh-avatar sh-avatar-host" : "sh-avatar"}
-								title={`${p.name} · ${p.role}${p.readOnly ? " · view-only" : ""}`}
-							>
-								{(p.name[0] ?? "?").toUpperCase()}
+					{state?.cwd && (
+						<span className="sh-cwd" title={state.cwd}>
+							{shortenPath(state.cwd)}
+						</span>
+					)}
+				</div>
+				<div className="sh-info-right">
+					<span
+						className={`sh-status sh-status-${phase}`}
+						title={t("header.connection", { phase: t(PHASE_LABEL[phase]) })}
+					>
+						<span className={`sh-dot sh-dot-${phase}`} />
+						{t(PHASE_LABEL[phase])}
+					</span>
+					{readOnly && (
+						<span className="sh-chip" title={t("header.readOnlyHint")}>
+							{t("header.readOnly")}
+						</span>
+					)}
+					{state?.model && <span className="sh-chip sh-chip-meta">{state.model.name}</span>}
+					{state?.thinkingLevel && <span className="sh-chip sh-chip-meta">{state.thinkingLevel}</span>}
+					{pct != null && (
+						<span
+							className={pct > 80 ? "sh-gauge sh-gauge-warn" : "sh-gauge"}
+							title={t("header.context", { percent: fmtPercent(pct) })}
+						>
+							<span className="sh-gauge-track">
+								<span className="sh-gauge-fill" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
 							</span>
-						))}
-					</span>
-				)}
-				<ThemeToggle />
-				<button
-					type="button"
-					className={railOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
-					onClick={onToggleRail}
-					title={railOpen ? "hide agents" : "show agents"}
-				>
-					<PanelRight size={14} />
-					{subCount > 0 && <span className="sh-badge">{subCount}</span>}
-				</button>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onLeave} title="leave session">
-					<LogOut size={14} />
-				</button>
+							<span className="sh-gauge-pct">{fmtPercent(pct)}</span>
+						</span>
+					)}
+				</div>
 			</div>
 		</header>
 	);

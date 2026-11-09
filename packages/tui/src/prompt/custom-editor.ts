@@ -1739,7 +1739,7 @@ export class CustomEditor extends Editor {
 				return;
 			}
 
-			// Intercept configured temporary model selector shortcut
+			// Intercept configured model picker shortcut
 			if (this.#matchesAction(canonical, "app.model.selectTemporary") && this.onSelectModelTemporary) {
 				this.onSelectModelTemporary();
 				return;

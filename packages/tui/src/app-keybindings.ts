@@ -135,7 +135,7 @@ export const KEYBINDINGS = {
 	},
 	"app.model.selectTemporary": {
 		defaultKeys: "alt+p",
-		description: "Select temporary model for current session",
+		description: "Select model (remembered for new sessions)",
 	},
 	"app.tools.expand": {
 		defaultKeys: "ctrl+o",

@@ -49,6 +49,28 @@ function executeXdevDispatch(props: ToolViewProps): XdevDispatch | null {
 	return { tool: xdev.tool, args: isRecord(xdev.args) ? xdev.args : {}, inner: xdev.inner };
 }
 
+type ToolKind = "read" | "shell" | "write";
+
+const TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
+	read: "read",
+	grep: "read",
+	find: "read",
+	search: "read",
+	ast_grep: "read",
+	web_search: "read",
+	fetch: "read",
+	bash: "shell",
+	python: "shell",
+	edit: "write",
+	write: "write",
+	ast_edit: "write",
+};
+
+/** Colour family of a tool card; undefined for tools without one. */
+function toolKind(name: string): ToolKind | undefined {
+	return Object.hasOwn(TOOL_KINDS, name) ? TOOL_KINDS[name] : undefined;
+}
+
 export function ToolView(props: ToolViewProps): ReactNode {
 	const [open, setOpen] = useState(props.defaultOpen ?? false);
 	const xdev = executeXdevDispatch(props);
@@ -72,7 +94,7 @@ export function ToolView(props: ToolViewProps): ReactNode {
 	const partial = props.running && !props.result && props.partial ? stripAnsi(replaceTabs(props.partial)) : "";
 
 	return (
-		<div className={`tv-card${isError ? " tv-card--error" : ""}`}>
+		<div className={`tv-card${isError ? " tv-card--error" : ""}`} data-kind={toolKind(name)}>
 			<button
 				type="button"
 				className="tv-head"

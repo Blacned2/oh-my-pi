@@ -98,6 +98,31 @@
 	color: var(--tv-muted);
 }
 
+/* Tool kind colouring: read-like = blue, shell = green, mutation = amber. */
+.tv-card {
+	--tv-kind: var(--tv-muted);
+}
+
+.tv-card[data-kind="read"] {
+	--tv-kind: var(--info, oklch(0.74 0.12 255));
+}
+
+.tv-card[data-kind="shell"] {
+	--tv-kind: var(--tv-ok);
+}
+
+.tv-card[data-kind="write"] {
+	--tv-kind: var(--tv-warn);
+}
+
+.tv-card:not(.tv-card--error)[data-kind] {
+	border-left: 2px solid color-mix(in oklch, var(--tv-kind) 70%, transparent);
+}
+
+.tv-card[data-kind] .tv-name {
+	color: var(--tv-kind);
+}
+
 .tv-sum {
 	flex: 1;
 	min-width: 0;
