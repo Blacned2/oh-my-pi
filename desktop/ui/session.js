@@ -4159,7 +4159,7 @@
   function openFolder(dir) {
     closeFolderMenu();
     saveRecent(dir);
-    start(dir, true);
+    start(dir, false); // a project switch opens a fresh chat; `--continue` would reopen that folder's latest session
   }
   function openFolderMenu() {
     closeFolderMenu();
