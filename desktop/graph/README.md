@@ -64,7 +64,9 @@ The workspace tests use disposable Git repositories and compare the source index
 
 ### Packaged Desktop check
 
-The packaged runtime loads the native addon only when its version matches the checkout. Development runs warn about a mismatch, but a packaged sidecar exits before responding. Rebuild the addon with `bun run build:native` after a version bump. On this toolchain, CMake selects Ninja, so put a `ninja.exe` on `PATH` for that command, for example the one in Visual Studio Build Tools under `Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja`.
+The packaged runtime loads the native addon only when its version matches the checkout. Development runs only warn about a mismatch. `stage-runtime.ps1` therefore loads the staged addon with the staged Bun and an empty natives cache, and stops with a `bun run build:native` hint when it does not load. Rebuild the addon after every version bump, including upstream merges. On this toolchain, CMake selects Ninja, so put a `ninja.exe` on `PATH` for that command, for example the one in Visual Studio Build Tools under `Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja`.
+
+If the sidecar exits before answering, the Desktop bridge appends the `error:` line from its stderr to the dialog message, for example when another Kostomp instance already owns the Graph data directory.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/stage-runtime.ps1 -NoStats

@@ -86,6 +86,30 @@ foreach ($name in $wanted) {
     $copied++
 }
 
+# The packaged loader refuses an addon built for another release, and the Graph sidecar then exits
+# at its first request. Load it with the staged bun now so a stale addon fails the build instead.
+# An empty PI_NATIVES_DIR keeps a valid copy in this machine's ~/.omp/natives from masking it.
+$nativesDest = Join-Path $dest "node_modules\@oh-my-pi\pi-natives"
+if (Test-Path -LiteralPath $nativesDest) {
+    $probe = "const { expandWindowsLongPath } = await import('@oh-my-pi/pi-natives/path'); expandWindowsLongPath('C:\\');"
+    $cache = Join-Path ([IO.Path]::GetTempPath()) ("kostomp-natives-probe-" + [guid]::NewGuid())
+    New-Item -ItemType Directory -Path $cache | Out-Null
+    Push-Location $dest
+    $previous = $ErrorActionPreference, $env:PI_NATIVES_DIR
+    $ErrorActionPreference = "Continue"
+    $env:PI_NATIVES_DIR = $cache
+    try { $output = & (Join-Path $dest "bun.exe") --no-env-file -e $probe 2>&1 | Out-String }
+    finally {
+        $ErrorActionPreference, $env:PI_NATIVES_DIR = $previous
+        Pop-Location
+        Remove-Item -LiteralPath $cache -Recurse -Force
+    }
+    if ($LASTEXITCODE -ne 0) {
+        $reason = ($output -split "`r?`n" | Where-Object { $_ -match "reports @oh-my-pi/pi-natives@|Failed to load" } | Select-Object -First 2) -join "`n"
+        throw "The staged native addon does not load. Run 'bun run build:native' at the repo root, then stage again.`n$reason"
+    }
+}
+
 $version = (Get-Content (Join-Path (Get-PkgDir $ompPkg) "package.json") -Raw | ConvertFrom-Json).version
 $parts = @()
 if (-not $NoOmp) { $parts += "omp" }
