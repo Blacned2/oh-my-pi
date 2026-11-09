@@ -256,7 +256,7 @@ try {
 		error?: string;
 		planError?: string;
 		logs?: string[];
-		draft?: { id: string; hash: string; tasks: { id: string; files: string[] }[] };
+		draft?: { id: string; hash: string; source: string; tasks: { id: string; files: string[] }[] };
 	};
 	const settle = async () => {
 		let status: Status;
@@ -277,8 +277,20 @@ try {
 		["contract", "backend", "frontend"],
 	);
 	deepStrictEqual(toolCalls, ["kostomp_graph_read_file", "kostomp_graph_submit_plan", "kostomp_graph_submit_plan"]);
+	await stopService?.();
+	request = startService();
+	status = await settle();
+	deepStrictEqual(status.draft, draft, "A restart restores the exact proposal without rerunning the Planner");
+	strictEqual(status.run, undefined, "Restoring a draft does not authorize work");
+	strictEqual(draft.source, input.source);
+	const approveDraft = { op: "approve", input: { draft: draft.id, hash: draft.hash } };
+	const editedSourceFile = temp.join("source", backend);
+	await Bun.write(editedSourceFile, "new user edit\n");
+	await rejects(request(approveDraft), /source changed/);
+	deepStrictEqual((await settle()).draft, draft, "Rejected approval leaves the draft available");
+	await Bun.write(editedSourceFile, files[backend]);
 	await rejects(request({ op: "approve", input: { draft: draft.id, hash: "0".repeat(64) } }), /plan changed/);
-	const { id } = await request<{ id: string }>({ op: "approve", input: { draft: draft.id, hash: draft.hash } });
+	const { id } = await request<{ id: string }>(approveDraft);
 	await rejects(request({ op: "plan", input }), /already active/);
 	status = await settle();
 	strictEqual(status.status, "ready_to_export", JSON.stringify(status));
@@ -302,6 +314,8 @@ try {
 	request = startService();
 	const saved = await request<{ id: string }[]>({ op: "list" });
 	strictEqual(saved[0]?.id, id);
+	strictEqual((await settle()).draft, undefined, "An approved proposal does not return after a restart");
+	await rejects(request(approveDraft), /plan changed/);
 	await request({ op: "open", input: id });
 	deepStrictEqual(await request({ op: "patch" }), artifact);
 	status = await request<Status>({ op: "status" });
@@ -329,11 +343,18 @@ try {
 	blockReview = false;
 	await request({ op: "retry", input: "review" });
 	strictEqual((await settle()).status, "ready_to_export");
-	await Bun.write(temp.join("source", backend), "new user edit\n");
+	await request({ op: "plan", input });
+	const discarded = (await settle()).draft;
+	if (!discarded) throw new Error("Planner produced no draft to discard");
+	await request({ op: "discard" });
+	await stopService?.();
+	request = startService();
+	strictEqual((await settle()).draft, undefined, "A discarded proposal stays deleted after restart");
+	await Bun.write(editedSourceFile, "new user edit\n");
 	await rejects(request({ op: "patch" }), /source changed/);
 	strictEqual((await request<{ status: string }>({ op: "status" })).status, "stale_base");
 	process.stdout.write(
-		"Graph planning, approval, parallel Coders, scoped repair, logs, restart, targeted retry and release gates passed\n",
+		"Graph draft recovery and discard, approval, parallel Coders, scoped repair, logs, retry and release gates passed\n",
 	);
 } finally {
 	try {

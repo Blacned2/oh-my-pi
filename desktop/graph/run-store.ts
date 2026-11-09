@@ -2,7 +2,14 @@ import type { Database } from "bun:sqlite";
 import { openSqliteDatabaseSync } from "@oh-my-pi/pi-utils";
 import { type GraphNode, type GraphPlan, parseGraphPlan } from "./plan";
 import type { GraphReview } from "./review";
-import { coderNodeId, type GraphTask, type WriteScopeKeys, writeScopeKeys, writeScopesOverlap } from "./task-plan";
+import {
+	coderNodeId,
+	type GraphTask,
+	type GraphTaskPlan,
+	type WriteScopeKeys,
+	writeScopeKeys,
+	writeScopesOverlap,
+} from "./task-plan";
 
 type NodeStatus = "queued" | "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
 
@@ -47,6 +54,18 @@ export interface GraphRunContext {
 	approvedAt?: number;
 }
 
+/** The sidecar's single validated proposal awaiting explicit approval. */
+export interface GraphDraft {
+	id: string;
+	input: Pick<GraphRunContext, "objective" | "files"> & { source: string };
+	baseSha: string;
+	profileHash: string;
+	plan: GraphTaskPlan;
+	hash: string;
+}
+
+type DraftIdentity = Pick<GraphDraft, "id" | "hash">;
+
 export interface GraphAttempt {
 	runId: string;
 	nodeId: string;
@@ -81,6 +100,9 @@ export class GraphRunStore implements Disposable {
 		this.#db = openSqliteDatabaseSync(file, db => {
 			db.exec(`
 				PRAGMA synchronous = FULL;
+				CREATE TABLE IF NOT EXISTS graph_draft (
+					slot INTEGER PRIMARY KEY CHECK (slot = 1), snapshot TEXT NOT NULL
+				);
 				CREATE TABLE IF NOT EXISTS graph_runs (id TEXT PRIMARY KEY, snapshot TEXT NOT NULL);
 				CREATE TABLE IF NOT EXISTS graph_events (
 					run_id TEXT NOT NULL, sequence INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY (run_id, sequence)
@@ -101,7 +123,24 @@ export class GraphRunStore implements Disposable {
 		this.#db.close();
 	}
 
-	create(input: unknown, context?: GraphRunContext): GraphRun {
+	draft(): GraphDraft | null {
+		const row = this.#db.query<{ snapshot: string }, []>("SELECT snapshot FROM graph_draft WHERE slot = 1").get();
+		return row ? (JSON.parse(row.snapshot) as GraphDraft) : null;
+	}
+
+	saveDraft(draft: GraphDraft): void {
+		this.#db.run(
+			"INSERT INTO graph_draft (slot, snapshot) VALUES (1, ?) ON CONFLICT (slot) DO UPDATE SET snapshot = excluded.snapshot",
+			[JSON.stringify(draft)],
+		);
+	}
+
+	discardDraft(): void {
+		this.#db.run("DELETE FROM graph_draft WHERE slot = 1");
+	}
+
+	/** When approving a proposal, creating the run and consuming the proposal commit together. */
+	create(input: unknown, context?: GraphRunContext, approval?: DraftIdentity): GraphRun {
 		const plan = parseGraphPlan(input);
 		const run: GraphRun = {
 			id: crypto.randomUUID(),
@@ -115,6 +154,13 @@ export class GraphRunStore implements Disposable {
 		};
 		this.#db
 			.transaction(() => {
+				if (approval) {
+					const draft = this.draft();
+					if (draft?.id !== approval.id || draft.hash !== approval.hash) {
+						throw new Error("The proposed plan changed. Review it again before approving");
+					}
+					this.discardDraft();
+				}
 				this.#record(run, "created");
 				this.#db.run("INSERT INTO graph_runs (id, snapshot) VALUES (?, ?)", [run.id, JSON.stringify(run)]);
 			})

@@ -70,11 +70,10 @@ Paketlenmiş Desktop’ta görsel kontroller yapıldı. Sahte model ve gerçek D
 
 Öncelik sırasıyla:
 
-1. **Taslak kalıcılığı.** Onaylanmamış plan sidecar yeniden başlarsa kayboluyor.
-2. **Plan düzenleme.** Plan yalnızca onaylanabiliyor veya atılabiliyor; düzenlenen plan da host doğrulamasından geçmeli.
-3. **Context Manager.** Daha büyük kapsamlar veya gerçek kullanımda bağlam sorunu görüldüğünde.
-4. **Jev.** Sidecar’a gözlem modunda bağlanmalı ve sonuç denemeyle birlikte kaydedilmeli.
-5. **Planner logu.** Planlama run kaydından önce çalıştığı için tutulmuyor.
+1. **Plan düzenleme.** Plan yalnızca onaylanabiliyor veya atılabiliyor; düzenlenen plan da host doğrulamasından geçmeli.
+2. **Context Manager.** Daha büyük kapsamlar veya gerçek kullanımda bağlam sorunu görüldüğünde.
+3. **Jev.** Sidecar’a gözlem modunda bağlanmalı ve sonuç denemeyle birlikte kaydedilmeli.
+4. **Planner logu.** Planlama run kaydından önce çalıştığı için tutulmuyor.
 
 Kapsam dışı bırakılanlar: eşzamanlı run’lar ve birden fazla Tester komutu.
 
@@ -118,3 +117,7 @@ Faz tamamlandı. Aşağıdaki hazırlık ve kararlar uygulandı.
 ## Faz 5: Hedefli düzeltme
 
 Reviewer bulgularını dosya sahipliğine bağladık. Scheduler, hedefi tek bir Coder’a indirebildiğinde run başına iki otomatik düzeltme açabiliyor. Her denemede önceki patch ve ilgili kanıt iletiliyor. Değişen adayın test ve review sonuçları yeniden üretiliyor; bağımsız Coder çıktıları korunuyor. Hedef belirsizse veya deneme sınırı dolduysa dialog durma nedenini gösteriyor. OMP çekirdeği değişmedi.
+
+## Faz 6: Plan taslağının kalıcılığı
+
+Sidecar, host doğrulamasından geçen son taslağı run veritabanında saklıyor. Yeniden başlatınca aynı taslak kimliği ve plan hash’i geri geliyor. Dialog hangi repo ve hedef için onay istendiğini gösteriyor. Onay sırasında plan, profil ve taban yeniden kontrol ediliyor. Run’ın oluşturulması ve taslağın silinmesi tek SQLite işlemi; **Discard plan** da taslağı kalıcı olarak siliyor. Yeni planlama başarısız olursa veya iptal edilirse önceki taslak korunuyor.

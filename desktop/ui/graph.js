@@ -17,6 +17,7 @@
   const resume = document.getElementById("graph-resume");
   const planPanel = document.getElementById("graph-plan");
   const planTitle = document.getElementById("graph-plan-title");
+  const planSummary = document.getElementById("graph-plan-summary");
   const tasks = document.getElementById("graph-tasks");
   const planActions = document.getElementById("graph-plan-actions");
   const approve = document.getElementById("graph-approve");
@@ -79,6 +80,8 @@
     if (planKey !== shownPlan) {
       shownPlan = planKey;
       shownDraft = draft && { draft: draft.id, hash: draft.hash };
+      planSummary.hidden = !draft;
+      planSummary.textContent = draft ? `${draft.objective} · ${draft.source}` : "";
       renderTasks(planTasks ?? []);
     }
     planPanel.hidden = !planTasks;
@@ -116,7 +119,7 @@
       snapshot?.error ||
       snapshot?.planError ||
       (snapshot?.planning ? "Planning…" : "") ||
-      (draft && !snapshot?.running ? "Review the plan. Coders start only after approval." : "") ||
+      (draft && !snapshot?.run ? "Review the plan. Coders start only after approval." : "") ||
       snapshot?.reason ||
       states[snapshot?.status] ||
       (snapshot?.running ? "Graph running" : snapshot?.run?.cancelled ? "Run cancelled" : snapshot?.run ? "Run finished" : "");

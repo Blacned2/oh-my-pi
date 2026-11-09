@@ -4,10 +4,9 @@ import { type } from "@oh-my-pi/omptype";
 import { isEnoent, isFullyQualifiedPath, readLines, toError, tryAcquireFileLock } from "@oh-my-pi/pi-utils";
 import { createApprovedGraphExecutors } from "./agent-executors";
 import { type GraphRun, type GraphRunContext, GraphRunStore } from "./run-store";
-import { type GraphTaskPlan, graphPlanForTasks, parseTaskPlan, taskPlanHash } from "./task-plan";
+import { graphPlanForTasks, parseTaskPlan, taskPlanHash } from "./task-plan";
 import {
 	type ApprovedGraphExecutors,
-	type ApprovedGraphInput,
 	DEFAULT_MAX_CODERS,
 	graphWork,
 	parseApprovedGraphInput,
@@ -43,16 +42,6 @@ interface ActiveRun extends Job {
 	id: string;
 }
 
-/** A validated proposal awaiting the user's decision. No Coder runs before approval. */
-interface Draft {
-	id: string;
-	input: ApprovedGraphInput;
-	baseSha: string;
-	profileHash: string;
-	plan: GraphTaskPlan;
-	hash: string;
-}
-
 interface LoadedProfile {
 	hash: string;
 	maxCoders: number;
@@ -70,9 +59,8 @@ using store = new GraphRunStore(path.join(dataRoot, "runs.sqlite"));
 const profilePath = path.join(dataRoot, "profile.json");
 let active: ActiveRun | undefined;
 let planning: Job | undefined;
-let draft: Draft | undefined;
 let planError: string | undefined;
-let selected: string | undefined = store.recent()[0]?.id;
+let selected: string | undefined = store.draft() ? undefined : store.recent()[0]?.id;
 let failure: { id: string; message: string } | undefined;
 const staleRuns = new Set<string>();
 
@@ -148,7 +136,6 @@ async function proposePlan(value: unknown) {
 	const { sourceRoot, baseSha } = await inspectGraphSource(input.source);
 	const scoped = { ...input, source: sourceRoot };
 	const controller = new AbortController();
-	draft = undefined;
 	planError = undefined;
 	selected = undefined;
 	const job = (async () => {
@@ -156,14 +143,15 @@ async function proposePlan(value: unknown) {
 			await using workspace = await GraphWorkspace.pin(sourceRoot, controller.signal);
 			if (workspace.baseSha !== baseSha) throw new Error("The source changed while planning");
 			const plan = await proposeGraphPlan(workspace, scoped, profile.executors, controller.signal);
-			draft = {
+			controller.signal.throwIfAborted();
+			store.saveDraft({
 				id: crypto.randomUUID(),
 				input: scoped,
 				baseSha,
 				profileHash: profile.hash,
 				plan,
 				hash: taskPlanHash(plan),
-			};
+			});
 		} catch (error) {
 			if (!controller.signal.aborted) planError = toError(error).message.slice(0, 2048);
 		} finally {
@@ -175,6 +163,7 @@ async function proposePlan(value: unknown) {
 
 /** Admit exactly the plan the user reviewed, then record it with the new run. */
 async function approvePlan({ draft: id, hash }: { draft: string; hash: string }) {
+	const draft = store.draft();
 	if (!draft || draft.id !== id || draft.hash !== hash) {
 		throw new Error("The proposed plan changed. Review it again before approving");
 	}
@@ -194,8 +183,7 @@ async function approvePlan({ draft: id, hash }: { draft: string; hash: string })
 		planHash: hash,
 		approvedAt: Date.now(),
 	};
-	const run = store.create(graphPlanForTasks(plan), context);
-	draft = undefined;
+	const run = store.create(graphPlanForTasks(plan), context, { id, hash });
 	launch({ ...run, context }, profile);
 	return { id: run.id };
 }
@@ -228,7 +216,7 @@ async function handle(request: typeof requestSchema.infer) {
 	}
 	if (request.op === "discard") {
 		planning?.controller.abort();
-		draft = undefined;
+		store.discardDraft();
 		planError = undefined;
 		return null;
 	}
@@ -273,12 +261,14 @@ async function handle(request: typeof requestSchema.infer) {
 		return release.artifact;
 	}
 	const idle = !active && !planning;
+	const draft = store.draft() ?? undefined;
 	const proposal = {
 		planning: !!planning,
 		planError,
 		draft: draft && {
 			id: draft.id,
 			hash: draft.hash,
+			source: draft.input.source,
 			objective: draft.input.objective,
 			baseSha: draft.baseSha,
 			tasks: draft.plan.tasks,
