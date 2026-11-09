@@ -179,6 +179,7 @@
 </div>
 <dialog id="graph-dialog" aria-labelledby="graph-title">
   <header><h2 id="graph-title">Graph</h2><button type="button" id="graph-close" aria-label="Close Graph">×</button></header>
+  <label>Recent runs <select id="graph-history"><option value="">Select a run</option></select></label>
   <form id="graph-form">
     <label>Repository <input name="source" placeholder="C:\Projects\repository" required></label>
     <label>Objective <textarea name="objective" rows="3" maxlength="8192" required></textarea></label>
@@ -191,6 +192,11 @@
   </form>
   <p id="graph-status" role="status"></p>
   <ol id="graph-nodes"></ol>
+  <div class="graph-actions">
+    <select id="graph-retry-node" aria-label="Node to retry" disabled></select>
+    <button type="button" id="graph-retry" disabled>Retry node</button>
+    <button type="button" id="graph-resume" hidden>Continue queued work</button>
+  </div>
   <p id="graph-base" hidden></p>
   <textarea id="graph-output" aria-label="Verified patch" rows="8" readonly hidden></textarea>
 </dialog>

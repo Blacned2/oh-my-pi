@@ -51,6 +51,17 @@ export async function graphBaseIsCurrent(sourceRoot: string, baseSha: string, si
 	);
 }
 
+export async function inspectGraphSource(sourceDirectory: string, signal?: AbortSignal) {
+	const source = vcs.requireGit(sourceDirectory);
+	const { repoRoot: sourceRoot, gitDir, commonDir } = source.info();
+	const baseSha = await source.headSha(signal);
+	if (!baseSha || !sha1.test(baseSha)) throw new Error("Graph requires a checked-out SHA-1 Git commit");
+	if ((await source.isDirty(signal)) || (await source.headSha(signal)) !== baseSha) {
+		throw new Error("Graph requires a clean, stable source checkout");
+	}
+	return { sourceRoot, gitDir, commonDir, baseSha };
+}
+
 interface CandidateData {
 	patch: string;
 	spellings: ReadonlyMap<string, string>;
@@ -98,13 +109,7 @@ export class GraphWorkspace implements AsyncDisposable {
 	) {}
 
 	static async pin(sourceDirectory: string, signal?: AbortSignal): Promise<GraphWorkspace> {
-		const source = vcs.requireGit(sourceDirectory);
-		const { repoRoot: sourceRoot, gitDir, commonDir } = source.info();
-		const baseSha = await source.headSha(signal);
-		if (!baseSha || !sha1.test(baseSha)) throw new Error("Graph requires a checked-out SHA-1 Git commit");
-		if ((await source.isDirty(signal)) || (await source.headSha(signal)) !== baseSha) {
-			throw new Error("Graph requires a clean, stable source checkout");
-		}
+		const { sourceRoot, gitDir, commonDir, baseSha } = await inspectGraphSource(sourceDirectory, signal);
 		const temporaryRoot = await fs.realpath(os.tmpdir());
 		const metadataRoots = await Promise.all([gitDir, commonDir].map(directory => fs.realpath(directory)));
 		if (

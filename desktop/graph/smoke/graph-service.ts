@@ -105,24 +105,30 @@ try {
 			},
 		}),
 	);
-	const deadline = AbortSignal.timeout(90_000);
-	const child = ptree.spawn([bunPath, "--no-env-file", service, data, cliPath], { stdin: "pipe", signal: deadline });
-	stopService = async () => {
-		child.stdin.end();
-		await child.exited;
-	};
-	const lines = readLines(child.stdout, deadline);
-	const decoder = new TextDecoder();
-	async function request<T>(value: object): Promise<T> {
-		child.stdin.write(`${JSON.stringify(value)}\n`);
-		child.stdin.flush();
-		const line = await lines.next();
-		if (line.done) throw new Error(`Graph sidecar exited: ${child.peekStderr()}`);
-		const result = JSON.parse(decoder.decode(line.value)) as { ok: boolean; data: T; error?: string };
-		if (!result.ok) throw new Error(result.error);
-		return result.data;
+	function startService() {
+		const deadline = AbortSignal.timeout(90_000);
+		const child = ptree.spawn([bunPath, "--no-env-file", service, data, cliPath], {
+			stdin: "pipe",
+			signal: deadline,
+		});
+		stopService = async () => {
+			child.stdin.end();
+			await child.exited;
+		};
+		const lines = readLines(child.stdout, deadline);
+		const decoder = new TextDecoder();
+		return async function request<T>(value: object): Promise<T> {
+			child.stdin.write(`${JSON.stringify(value)}\n`);
+			child.stdin.flush();
+			const line = await lines.next();
+			if (line.done) throw new Error(`Graph sidecar exited: ${child.peekStderr()}`);
+			const result = JSON.parse(decoder.decode(line.value)) as { ok: boolean; data: T; error?: string };
+			if (!result.ok) throw new Error(result.error);
+			return result.data;
+		};
 	}
-	await request({
+	let request = startService();
+	const { id } = await request<{ id: string }>({
 		op: "start",
 		input: { source: source.info().repoRoot, files: [file], objective: "Set the backend fixture text" },
 	});
@@ -137,6 +143,23 @@ try {
 	strictEqual(artifact.baseSha, await source.headSha());
 	strictEqual(await Bun.file(temp.join("source", file)).text(), original[file]);
 	strictEqual(await source.isDirty(), false);
+	await stopService?.();
+	request = startService();
+	const saved = await request<{ id: string }[]>({ op: "list" });
+	strictEqual(saved[0]?.id, id);
+	await request({ op: "open", input: id });
+	deepStrictEqual(await request({ op: "patch" }), artifact);
+	await request({ op: "retry", input: "test" });
+	await rejects(request({ op: "patch" }), /no verified patch/);
+	do {
+		await Bun.sleep(200);
+		status = await request({ op: "status" });
+	} while (status.running);
+	strictEqual(status.status, "ready_to_export", JSON.stringify(status));
+	strictEqual(status.run.nodes.test.attempt, 2);
+	strictEqual(status.run.nodes.code.attempt, 1);
+	strictEqual(status.run.nodes.review.attempt, 1);
+	strictEqual(status.run.nodes.release.attempt, 1);
 	deepStrictEqual(toolCalls, [
 		"kostomp_graph_read_file",
 		"kostomp_graph_submit_patch",
@@ -146,7 +169,7 @@ try {
 	await Bun.write(temp.join("source", file), "new user edit\n");
 	await rejects(request({ op: "patch" }), /source changed/);
 	strictEqual((await request<{ status: string }>({ op: "status" })).status, "stale_base");
-	process.stdout.write("Graph sidecar Coder → Docker Tester → Reviewer → verified patch passed\n");
+	process.stdout.write("Graph workflow, restart, targeted retry and stale release passed\n");
 } finally {
 	try {
 		await stopService?.();

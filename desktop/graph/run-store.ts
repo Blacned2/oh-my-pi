@@ -20,6 +20,15 @@ export interface GraphRun {
 	sequence: number;
 	cancelled: boolean;
 	nodes: Record<string, NodeState>;
+	context?: GraphRunContext;
+}
+
+export interface GraphRunContext {
+	sourceRoot: string;
+	baseSha: string;
+	objective: string;
+	files: string[];
+	profileHash: string;
 }
 
 export interface GraphAttempt {
@@ -63,13 +72,14 @@ export class GraphRunStore implements Disposable {
 		this.#db.close();
 	}
 
-	create(input: unknown): GraphRun {
+	create(input: unknown, context?: GraphRunContext): GraphRun {
 		const plan = parseGraphPlan(input);
 		const run: GraphRun = {
 			id: crypto.randomUUID(),
 			plan,
 			sequence: 0,
 			cancelled: false,
+			context,
 			nodes: Object.fromEntries(
 				plan.nodes.map(node => [node.id, { status: "queued", attempt: 0, usedAttempts: 0 }]),
 			),
@@ -88,6 +98,35 @@ export class GraphRunStore implements Disposable {
 			.query<{ snapshot: string }, [string]>("SELECT snapshot FROM graph_runs WHERE id = ?")
 			.get(runId);
 		return row ? (JSON.parse(row.snapshot) as GraphRun) : null;
+	}
+
+	recent(): Pick<GraphRun, "id" | "context">[] {
+		return this.#db
+			.query<{ snapshot: string }, []>("SELECT snapshot FROM graph_runs ORDER BY rowid DESC LIMIT 50")
+			.all()
+			.map(({ snapshot }) => {
+				const { id, context } = JSON.parse(snapshot) as GraphRun;
+				return { id, context };
+			});
+	}
+
+	readyNodes(run: GraphRun): string[] {
+		return run.cancelled ? [] : this.#walk(run).ready.map(([node]) => node.id);
+	}
+
+	retryableNodes(run: GraphRun): string[] {
+		if (run.cancelled || Object.values(run.nodes).some(state => state.status === "running")) return [];
+		const { current } = this.#walk(run);
+		return run.plan.nodes
+			.filter(node => {
+				const state = run.nodes[node.id];
+				return (
+					state.status !== "queued" &&
+					state.usedAttempts < node.maxAttempts &&
+					node.dependsOn.every(id => current.has(id))
+				);
+			})
+			.map(node => node.id);
 	}
 
 	events(runId: string, after: number): GraphRunEvent[] {
@@ -183,11 +222,8 @@ export class GraphRunStore implements Disposable {
 	/** An explicit retry at quiescence. Retry budget is per set of upstream artifacts. */
 	retry(runId: string, nodeId: string): boolean {
 		return this.#update(runId, (run, record) => {
-			if (run.cancelled || Object.values(run.nodes).some(state => state.status === "running")) return false;
-			const node = run.plan.nodes.find(candidate => candidate.id === nodeId);
-			if (!node) return false;
+			if (!this.retryableNodes(run).includes(nodeId)) return false;
 			const state = run.nodes[nodeId];
-			if (state.status === "queued" || state.usedAttempts >= node.maxAttempts) return false;
 			state.status = "queued";
 			delete state.artifact;
 			delete state.error;

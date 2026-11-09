@@ -21,7 +21,7 @@ Use a full Desktop build with the bundled OMP runtime. Create `graph/profile.jso
 
 Provision the model and credentials in `graph/profile-home/.omp/agent/` using the normal OMP profile files. Both workers use that private profile in separate headless processes. The Graph dialog accepts a clean checkout, an objective and up to 32 approved repository-relative file paths. The Coder proposes a patch, the host validates its actual scope, Docker tests the candidate, and a separate Reviewer inspects it. **Show verified patch** rechecks the source and displays the patch and base SHA for manual use.
 
-The current Desktop workflow uses an explicit user-approved scope and a fixed four-node plan. The active view and export session live in the sidecar. SQLite preserves node history and artifacts. The dialog polls the current run and supports cancellation. Dynamic planning, targeted retry controls and reopening past runs from the dialog remain integration work.
+The current Desktop workflow uses an explicit user-approved scope and a fixed four-node plan. **Recent runs** reopens saved runs after the sidecar restarts. **Retry node** reruns one eligible step. Steps downstream rerun when their input artifacts change. **Continue queued work** resumes eligible work after an interruption. A run allows up to three attempts per node and set of inputs. Retries require the original clean base and matching `profile.json` settings. Older snapshots without a saved execution context can be inspected in the history.
 
 ## Current contracts
 
@@ -66,6 +66,6 @@ The probe exercises an executable tracked file, attempted access to disposable s
 
 ## Next integration boundaries
 
-- **Planner and retry** can build on the fixed plan in `workflow.ts`. Keep scope approval before Coder dispatch. Candidate handles belong to their workspace instance. Rebuild them from validated change sets for any future restart or retry implementation.
-- **Tester profiles and logs** can build on the host-approved profile consumed by `service.ts`. Only the host can record the returned tree and exit code as test evidence. Test logs are raw host-side output. Sanitize them before display or external classification.
+- **Planner** can build on the fixed plan in `workflow.ts`. Keep scope approval before Coder dispatch. Retry reconstructs candidate handles from validated change sets and verifies the saved tree ID.
+- **Tester profiles and logs** can build on the host-approved profile consumed by `service.ts`. The workflow stores the candidate tree and exit code as stable evidence. Raw logs stay with the test executor. Sanitize them before display or external classification.
 - **Jev** can be added after the Tester produces a sanitized summary. Keep the initial integration in observation mode and record the returned result with its attempt. Verify hosted credentials and data policy before enabling it in a Desktop build.

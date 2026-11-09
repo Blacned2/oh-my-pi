@@ -9,10 +9,15 @@
   const status = document.getElementById("graph-status");
   const output = document.getElementById("graph-output");
   const base = document.getElementById("graph-base");
+  const history = document.getElementById("graph-history");
+  const retryNode = document.getElementById("graph-retry-node");
+  const retry = document.getElementById("graph-retry");
+  const resume = document.getElementById("graph-resume");
   const states = { ready_to_export: "Verified patch ready", needs_input: "Graph needs input", stale_base: "Source checkout changed" };
   let polling;
   let pending = Promise.resolve();
   let generation = 0;
+  let currentRun;
 
   async function request(op, input) {
     const response = await invoke("graph_request", { request: { op, input } });
@@ -22,14 +27,23 @@
 
   async function refresh() {
     const snapshot = await request("status");
-    start.disabled = !!snapshot?.running;
+    start.disabled = !!snapshot?.busy;
     cancel.disabled = !snapshot?.running;
     showPatch.disabled = snapshot?.status !== "ready_to_export";
-    if (showPatch.disabled) {
+    const runId = snapshot?.run?.id;
+    if (showPatch.disabled || currentRun !== runId) {
       output.value = "";
       output.hidden = true;
       base.hidden = true;
     }
+    currentRun = runId;
+    history.value = runId ?? "";
+    const eligible = snapshot?.retryable ?? [];
+    if (eligible.join() !== [...retryNode.options].map(option => option.value).join()) {
+      retryNode.replaceChildren(...eligible.map(id => new Option(id, id)));
+    }
+    retry.disabled = retryNode.disabled = eligible.length === 0;
+    resume.hidden = !snapshot?.resumable;
     nodes.replaceChildren(...(snapshot?.run?.plan.nodes ?? []).map(node => {
       const item = document.createElement("li");
       const state = snapshot.run.nodes[node.id];
@@ -39,6 +53,15 @@
     }));
     const label = snapshot?.error || states[snapshot?.status] || (snapshot?.running ? "Graph running" : snapshot?.run?.cancelled ? "Run cancelled" : snapshot ? "Run finished" : "");
     if (status.textContent !== label) status.textContent = label;
+  }
+
+  async function refreshHistory() {
+    const runs = await request("list");
+    history.replaceChildren(new Option("Select a run", ""), ...runs.map(run => {
+      const objective = run.context?.objective.trim().replace(/\s+/g, " ").slice(0, 70);
+      return new Option(`${objective || "Saved run"} · ${run.id.slice(0, 8)}`, run.id);
+    }));
+    await refresh();
   }
 
   function action(run) {
@@ -57,6 +80,7 @@
 
   document.getElementById("graph-open").addEventListener("click", () => {
     dialog.showModal();
+    void action(refreshHistory);
     tick(++generation);
   });
   document.getElementById("graph-close").addEventListener("click", () => dialog.close());
@@ -73,13 +97,22 @@
       output.value = "";
       output.hidden = true;
       base.hidden = true;
-      await refresh();
+      await refreshHistory();
     });
   });
   cancel.addEventListener("click", () => void action(async () => {
     await request("cancel");
     await refresh();
   }));
+  history.addEventListener("change", () => {
+    const id = history.value;
+    if (id) void action(async () => { await request("open", id); await refresh(); });
+  });
+  retry.addEventListener("click", () => {
+    const node = retryNode.value;
+    if (node) void action(async () => { await request("retry", node); await refresh(); });
+  });
+  resume.addEventListener("click", () => void action(async () => { await request("resume"); await refresh(); }));
   showPatch.addEventListener("click", () => void action(async () => {
     const artifact = await request("patch");
     base.textContent = `Base ${artifact.baseSha}`;
