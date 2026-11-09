@@ -65,7 +65,7 @@ Teslimat kapısı, Graph değişikliklerinin `desktop/` ile sınırlı kalması 
 - Desktop Tester, Coder ve Reviewer denemelerinin logunu gösteriyor. Loglar ANSI ve kontrol karakterlerinden temizlenip deneme başına saklanıyor ve artifact kimliğine girmiyor. Planner logu tutulmuyor; planlama hatası dialogda gösteriliyor.
 - Kullanıcı planı Desktop’ta düzenleyemiyor. Yalnızca onaylayabiliyor veya atabiliyor.
 
-Paketlenmiş Desktop’ta görsel kontrol yapıldı. Sahte model ve gerçek Docker kullanıldı. Plan önerisi, onay, bağımlı iki Coder, test, review ve patch adımları görüldü. Kontrol, açık Kostomp’un yanında ayrı bir WebView2 profiliyle açılan ikinci örnekte yapıldı. Aynı uygulamada sohbet akarken Graph çalıştırma senaryosu henüz doğrulanmadı.
+Paketlenmiş Desktop’ta görsel kontroller yapıldı. Sahte model ve gerçek Docker kullanıldı. Plan önerisi, onay, paralel Coder’lar, test, review, loglar ve patch görüldü. Aynı uygulamada sohbet, Graph run’ından önce, iki Coder çalışırken ve release sonrasında yanıt verdi; sohbet de sahte modelle ve ayrı bir agent dizininde çalıştı. Kontroller, açık Kostomp’un yanında ayrı bir WebView2 profiliyle açılan ikinci örnekte yapıldı.
 
 ## Faz 4: Paralel Coder
 

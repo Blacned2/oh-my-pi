@@ -78,13 +78,21 @@ cd desktop; bunx @tauri-apps/cli@2 build --no-bundle; cd ..
 
 `--no-bundle` leaves the version, installer and local update folder unchanged. A second instance can run beside an open Kostomp when it gets its own WebView2 profile. A debugging port lets a CDP client inspect the dialog.
 
+The second instance also starts a chat. Keep that chat away from your real sessions: use a new WebView2 profile each time, start the app from an empty folder, and point `PI_CODING_AGENT_DIR` at a private agent directory. Otherwise the chat reopens the folder's latest session, and a session already open in your instance is forked into a new session file on every launch. The private directory needs a `models.yml` for the loopback mock model and a `config.yml` with `modelRoles.default` set to it; chat sessions then stay in that directory.
+
 ```powershell
-$env:WEBVIEW2_USER_DATA_FOLDER = "$env:TEMP\kostomp-graph-visual-webview"
+$check = New-Item -ItemType Directory -Path "$env:TEMP\kostomp-graph-check-$(New-Guid)"
+New-Item -ItemType Directory -Path "$check\chat-folder", "$check\chat-agent" | Out-Null
+# Write chat-agent\models.yml and chat-agent\config.yml for the mock model here.
+$env:WEBVIEW2_USER_DATA_FOLDER = "$check\webview"
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9333"
-desktop\target\release\kostomp-desktop.exe
+$env:PI_CODING_AGENT_DIR = "$check\chat-agent"
+Start-Process -FilePath (Resolve-Path desktop\target\release\kostomp-desktop.exe) -WorkingDirectory "$check\chat-folder"
 ```
 
-Both instances share `%APPDATA%\dev.kostomp.desktop`. Point the Graph profile at a loopback mock model, as the service probe does, then remove `graph\` afterwards. The last check covered the proposed plan, approval, two dependent Coders, Docker, review and the verified patch. The source checkout stayed clean.
+Both instances share `%APPDATA%\dev.kostomp.desktop`. Point the Graph profile at the loopback mock model, as the service probe does, then remove `graph\` and the check directory afterwards.
+
+The last packaged checks covered the proposed plan, approval, parallel Coders, Docker, review, Coder and test logs, the collapsible sections and the verified patch. A chat in the same instance answered before the run, while both Coders were running and after the release. The source checkout stayed clean.
 
 ## Tester backend
 
