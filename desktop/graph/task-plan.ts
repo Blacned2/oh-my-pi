@@ -30,6 +30,7 @@ export interface GraphTaskPlan {
 }
 
 export const coderNodeId = (taskId: string): string => `code-${taskId}`;
+export const contextNodeId = "context";
 
 /** Windows identities a Coder writes, plus their parent directories, for the dispatch-time overlap check. */
 export interface WriteScopeKeys {
@@ -145,12 +146,14 @@ export function graphPlanForTasks(plan: GraphTaskPlan): GraphPlan {
 	return parseGraphPlan({
 		version: 1,
 		nodes: [
+			{ id: contextNodeId, role: "context", dependsOn: [], maxAttempts: 3 },
 			...plan.tasks.map(task => ({
 				id: coderNodeId(task.id),
 				role: "coder",
-				dependsOn: plan.tasks
-					.filter(other => closure.get(task.id)!.has(other.id))
-					.map(other => coderNodeId(other.id)),
+				dependsOn: [
+					contextNodeId,
+					...plan.tasks.filter(other => closure.get(task.id)!.has(other.id)).map(other => coderNodeId(other.id)),
+				],
 				maxAttempts: 3,
 			})),
 			{ id: "test", role: "tester", dependsOn: coders, maxAttempts: 3 },

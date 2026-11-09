@@ -116,6 +116,12 @@ const server = Bun.serve({
 			if (omitPlan) steps.pop();
 		} else if (resultTool === "kostomp_graph_submit_patch") {
 			const owned = Object.keys(edits).find(file => prompt.includes(`Owned files:\\n[\\"${file}`))!;
+			strictEqual(prompt.includes("Pinned source hints"), true, "A new Coder gets the Context Manager's output");
+			if (owned === backend) {
+				strictEqual(prompt.includes("initial backend"), true, "The owned file excerpt is included");
+				strictEqual(prompt.includes("code-contract"), true, "The Coder gets the prerequisite's changed files");
+				strictEqual(prompt.includes("token v1"), false, "Prerequisite context cannot supply a stale base excerpt");
+			}
 			if (owned === backend) strictEqual(prompt.includes(editedBrief), true, "The Coder receives the approved edit");
 			if (prompt.includes(finding.expectedChange)) {
 				strictEqual(owned, backend, "The review finding must reach only the file owner");
@@ -359,8 +365,10 @@ try {
 	strictEqual(status.status, "ready_to_export", JSON.stringify(status));
 	const nodes = status.run!.nodes;
 	deepStrictEqual(
-		["code-contract", "code-backend", "code-frontend", "test", "review", "release"].map(node => nodes[node].attempt),
-		[1, 3, 1, 2, 2, 2],
+		["context", "code-contract", "code-backend", "code-frontend", "test", "review", "release"].map(
+			node => nodes[node].attempt,
+		),
+		[1, 1, 3, 1, 2, 2, 2],
 		"The same backend result reruns nothing downstream",
 	);
 	strictEqual(toolCalls.filter(name => name === "kostomp_graph_review").length, reviews);

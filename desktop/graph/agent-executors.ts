@@ -119,7 +119,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 			if (!accepted) throw new Error("Planner did not submit a valid Graph plan");
 			return accepted;
 		},
-		async code(view, task, work, signal, log, repair) {
+		async code(view, task, work, signal, log, repair, context) {
 			let patch: string | undefined;
 			await run(
 				coderPrompt,
@@ -129,6 +129,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 					objective: work.objective,
 					title: task.title,
 					brief: task.brief,
+					context: context ? JSON.stringify(context) : "",
 					repair: repair ? JSON.stringify(repair) : "",
 				},
 				[

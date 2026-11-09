@@ -18,7 +18,7 @@ Dayanaklar: [Desktop RPC köprüsü](../src/rpc.rs), [runtime seçimi](../src/ru
 | Düğüm | Girdi ve çıktı | Bugünkü durum |
 | --- | --- | --- |
 | Planner | Kullanıcı isteği ve repo özeti → düğümler, gerçek bağımlılıklar, önerilen yazma kapsamı ve kabul kriterleri | Var. Hedef ve onaylı dosyalardan görevler, bağımlılıklar ve görev başına dosya sahipliği önerir. Kabul kriteri görev brief’inin içindedir. |
-| Context Manager | Sabit repo snapshot’ı ve düğüm brief’i → ilgili dosya ve sembol referansları, gerekli upstream artifact’ler ve boyutu sınırlı bağlam | Yok. Coder’lar onaylı dosyaları doğrudan okur. |
+| Context Manager | Sabit repo snapshot’ı ve düğüm brief’i → ilgili dosya ve satır referansları, gerekli upstream artifact’ler ve boyutu sınırlı bağlam | Var. Yeni planlarda görev başına en fazla dört kısa kaynak referansı hazırlanır. Coder’a bağımlı görevlerin değiştirdiği dosyalar ayrıca verilir. |
 | Coder | Kendi brief’i ve bağımlılık çıktıları → çalışma kopyasından host tarafından çıkarılan değişiklik seti | Var. Ayrık kapsamlar paralel çalışır. |
 | Tester | Birleştirilmiş aday snapshot → komut, exit code, süre, log referansı ve test edilen tree kimliği | Var. Log artifact’ten ayrı saklanır. |
 | Reviewer | Aynı aday snapshot ve kabul kriterleri → ayrı OMP oturumundan yapılandırılmış bulgular ve karar | Var. `changes_requested` kararı, sahipliği doğrulanan dosya, sorun ve beklenen değişikliği içerir. |
@@ -70,8 +70,7 @@ Paketlenmiş Desktop’ta görsel kontroller yapıldı. Sahte model ve gerçek D
 
 Öncelik sırasıyla:
 
-1. **Context Manager.** Daha büyük kapsamlar veya gerçek kullanımda bağlam sorunu görüldüğünde.
-2. **Jev.** Sidecar’a gözlem modunda bağlanmalı ve sonuç denemeyle birlikte kaydedilmeli.
+1. **Jev.** Sidecar’a gözlem modunda bağlanmalı ve sonuç denemeyle birlikte kaydedilmeli.
 
 Kapsam dışı bırakılanlar: eşzamanlı run’lar ve birden fazla Tester komutu.
 
@@ -127,3 +126,7 @@ Graph dialogunda Coder görevleri eklenip çıkarılabiliyor; talimatlar, bağı
 ## Faz 8: Planner logları
 
 Planner’ın son tamamlanan denemesi, reddedilen öneriler ve hata ayrıntısıyla birlikte yeniden başlatma sonrasında da **Logs** bölümünden okunabiliyor. Onaylanan run, kendi taslağını üreten transcript’i saklıyor. Başarısız bir sonraki öneri mevcut taslağı ve ona ait transcript’i değiştirmiyor.
+
+## Faz 9: Context Manager
+
+Yeni planlarda Context Manager, sabit Git tabanındaki onaylı dosyaları tarar. Görev brief’i ve hedefle eşleşen satırları önceliklendirip görev başına en fazla dört kısa kaynak referansı üretir. Başka Coder’ın sahip olduğu dosyanın taban alıntısı verilmez. Bağımlı Coder, o görevin değiştirdiği dosyaları ayrı bir listede görür ve güncel içeriklerini mevcut okuma aracıyla açar. Daha önce kaydedilen run’lar kendi planlarıyla devam eder.

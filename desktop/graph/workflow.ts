@@ -1,11 +1,12 @@
 import { type } from "@oh-my-pi/omptype";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
+import { buildGraphContext, type GraphCoderContext, type GraphContextManifest } from "./context";
 import type { GraphTestResult } from "./docker-tester";
 import { writablePathKey } from "./repo-path";
 import { cleanDiagnostic, type GraphReview } from "./review";
 import type { CoderRepairFeedback, GraphRunContext, GraphRunStore } from "./run-store";
 import { driveGraphRun, type GraphExecutor } from "./scheduler";
-import { coderNodeId, type GraphTaskPlan, parseTaskPlan } from "./task-plan";
+import { coderNodeId, contextNodeId, type GraphTaskPlan, parseTaskPlan } from "./task-plan";
 import {
 	graphBaseIsCurrent,
 	type GraphCandidate,
@@ -96,6 +97,7 @@ export interface ApprovedGraphExecutors {
 		signal: AbortSignal,
 		log: GraphLog,
 		repair?: RepairBrief,
+		context?: GraphCoderContext,
 	): Promise<string>;
 	test(workspace: GraphWorkspace, candidate: GraphCandidate, signal: AbortSignal): Promise<GraphTestResult>;
 	review(
@@ -207,6 +209,7 @@ export async function runApprovedGraph(
 	if (planned.length !== coders.size || planned.some(id => !coders.has(id))) {
 		throw new Error("Graph run plan does not match its approved tasks");
 	}
+	const hasContext = run?.plan.nodes.some(node => node.id === contextNodeId && node.role === "context");
 	let candidate: GraphCandidate | undefined;
 	let candidateInputs: string | undefined;
 	const readArtifact = <T>(id: string): T => {
@@ -222,11 +225,20 @@ export async function runApprovedGraph(
 		});
 	const execute: GraphExecutor = async (attempt, attemptSignal) => {
 		const { nodeId, inputs } = attempt;
+		if (hasContext && nodeId === contextNodeId) {
+			return JSON.stringify(await buildGraphContext(workspace, work, attemptSignal));
+		}
 		// Worker output is untrusted model and tool text; a late call from a stale attempt is ignored.
 		const log: GraphLog = text => store.recordLog(attempt, sanitizeText(text));
 		const task = coders.get(nodeId);
 		if (task) {
-			const upstream = readCode(inputs).map(saved => saved.changes);
+			const manifest = hasContext ? readArtifact<GraphContextManifest>(inputs[0]) : undefined;
+			if (manifest && manifest.baseSha !== workspace.baseSha) throw new Error("Graph context base changed");
+			const upstream = readCode(hasContext ? inputs.slice(1) : inputs).map(saved => saved.changes);
+			const context = manifest && {
+				references: manifest.references[nodeId],
+				upstream: upstream.map(({ nodeId, changes }) => ({ nodeId, files: changes.map(change => change.path) })),
+			};
 			const view = upstream.length > 0 ? await workspace.compose(scopes, upstream, attemptSignal) : undefined;
 			const files: GraphFileView = {
 				read: (file, readSignal) =>
@@ -238,7 +250,7 @@ export async function runApprovedGraph(
 					readArtifact<CodeArtifact>(attempt.repair.previousArtifact).changes.patch,
 				).slice(0, 12_000),
 			};
-			const patch = await executors.code(files, task, work, attemptSignal, log, repair);
+			const patch = await executors.code(files, task, work, attemptSignal, log, repair, context);
 			const changes = await workspace.captureChangeSet(nodeId, task.files, patch, attemptSignal);
 			const proposed = await workspace.compose(scopes, [...upstream, changes], attemptSignal);
 			return JSON.stringify({ ...proposed, changes } satisfies CodeArtifact);

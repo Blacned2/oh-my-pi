@@ -122,10 +122,14 @@ test("an approved plan runs dependent Coders on upstream results and a same-resu
 				],
 			};
 		},
-		async code(view, task, work, signal) {
+		async code(view, task, work, signal, _log, _repair, context) {
 			calls.push(task.nodeId);
 			expect(work.files).toEqual(input.files);
 			if (task.nodeId === "code-api") return backendChange.patch;
+			expect(context).toEqual({
+				references: [{ file: frontend, line: 1, excerpt: "initial frontend" }],
+				upstream: [{ nodeId: "code-api", files: [backend] }],
+			});
 			const upstream = decode((await view.read(backend, signal)).data).trim();
 			const { patch } = await changeSet(frontendRepo, task.nodeId, { [frontend]: `client of ${upstream}\n` });
 			return patch;

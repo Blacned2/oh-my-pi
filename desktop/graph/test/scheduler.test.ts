@@ -157,7 +157,11 @@ function taskRun(store: GraphRunStore, tasks: { id: string; files: string[]; dep
 		files: [],
 		profileHash: "",
 	};
-	return store.create(graphPlanForTasks({ version: 1, tasks: approved }), { ...context, tasks: approved }).id;
+	const { id } = store.create(graphPlanForTasks({ version: 1, tasks: approved }), { ...context, tasks: approved });
+	// These cases begin after the read-only context node so they can exercise concurrent dispatch directly.
+	const [contextAttempt] = store.claimReady(id, 1);
+	store.complete(contextAttempt, "context fixture");
+	return id;
 }
 
 test("dispatch admits disjoint Coders together and holds back a scope that collides on Windows", () => {
