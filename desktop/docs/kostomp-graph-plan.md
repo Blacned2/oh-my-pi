@@ -58,7 +58,7 @@ Teslimat kapısı, Graph değişikliklerinin `desktop/` ile sınırlı kalması 
 | 1. RPC ve Windows izolasyon spike’ı | Tamam. Worker, Docker tester ve sidecar probları geçiyor. | `cb7dbe27c7` |
 | 2. Deterministik scheduler ve run deposu | Tamam. SQLite geçmişi, yeniden açma ve hedefli retry var. | `cb7dbe27c7`, `b70887c837` |
 | 3. Uçtan uca MVP | Kısmen. Planner ve kullanıcı onayı, Coder → Tester → Reviewer → Gate akışı ve patch gösterimi çalışıyor. | `7dda121165` |
-| 4. Paralel Coder | Sıradaki faz. Ayrıntılar aşağıda. | — |
+| 4. Paralel Coder | Tamam. Ayrık kapsamlı Coder’lar aynı anda çalışıyor. Ayrıntılar aşağıda. | `f9ab195125` |
 
 3\. adımda kalanlar:
 - Context Manager düğümü yok. Coder’lar onaylı dosyaları, sabit tabanı ve bağımlı oldukları görevlerin değişikliklerini okuyor.
@@ -67,22 +67,21 @@ Teslimat kapısı, Graph değişikliklerinin `desktop/` ile sınırlı kalması 
 
 Paketlenmiş Desktop’ta görsel kontrol yapıldı. Sahte model ve gerçek Docker kullanıldı. Plan önerisi, onay, bağımlı iki Coder, test, review ve patch adımları görüldü. Kontrol, açık Kostomp’un yanında ayrı bir WebView2 profiliyle açılan ikinci örnekte yapıldı. Aynı uygulamada sohbet akarken Graph çalıştırma senaryosu henüz doğrulanmadı.
 
-## Sonraki faz: Paralel Coder
+## Faz 4: Paralel Coder
 
-Bu bölüm fazın hazırlığıdır. Uygulama başlamadı.
+Faz tamamlandı. Aşağıdaki hazırlık ve kararlar uygulandı.
 
 **Amaç:** Dosya kapsamları ayrık ve aralarında bağımlılık olmayan Coder görevleri aynı anda çalışsın. Onaylanan görev başına dosya sahipliği dispatch sözleşmesi olarak kalır. Test, review ve gate bütün Coder çıktılarını birleştiren tek aday üzerinde değişmeden çalışır.
 
-**Bugünkü serileştirme noktaları:**
-- `GraphRunStore.claimReady()` bir Coder çalışırken ikinci Coder’ı almaz (`coderRunning`).
-- `runApprovedGraph()`, `driveGraphRun()` fonksiyonunu eşzamanlılık 1 ile çağırır.
-- `scheduler.test.ts` içindeki “independent coders are serialized” testi bu davranışı sabitler. Testin yeni sözleşmeye göre değişmesi gerekir.
-- Sidecar aynı anda tek run veya tek planlama işi kabul eder (`assertIdle()`).
+**Sonuç:**
+- `GraphRunStore.claimReady()` artık Coder’ları tek tek sıraya sokmuyor. Her dispatch’te yazma kapsamını kayıttaki görevlerden yeniden türetiyor ve yalnızca ayrık kapsamları birlikte alıyor. Görev kaydı olmayan eski run’larda Coder’lar yine tek tek çalışıyor.
+- Workspace’in eşzamanlı yazmaları testle doğrulandı: aynı nesneleri aynı anda yazan sekiz yakalama ve birleştirme, tekrarlanabilir ağaçlar üretti.
+- Sidecar hâlâ aynı anda tek run veya tek planlama işi kabul ediyor (`assertIdle()`).
 
-**Yapılacaklar:**
+**Uygulananlar:**
 1. **Host’ta dispatch anı kontrolü:** Store, bir Coder’ı ancak dosya kapsamı çalışan diğer Coder’larınkiyle Windows anahtarları düzeyinde ayrıksa alır. Kapsam `run.context.tasks` kaydından yeniden türetilir. Planın daha önce doğrulanmış olmasına güvenilmez. Eski tek Coder’lı kayıtlar değişmeden çalışır.
 2. **Eşzamanlılık sınırı:** `runApprovedGraph()` sabit 1 yerine `profile.json` içindeki isteğe bağlı `maxCoders` değeriyle çalışır. Değer 1–4 arasında bir tam sayıdır, verilmezse 2 kullanılır. Bu alan profil hash’ine yalnızca tanımlıysa girer. Böylece mevcut kayıtların hash’i değişmez ve retry’ları çalışmaya devam eder.
-3. **Workspace eşzamanlılığı:** `captureChangeSet()` ve `compose()` her çağrıda ayrı bir private index kullanıyor. Aynı scratch nesne veritabanına eşzamanlı yazmanın güvenli olduğu bir testle doğrulanmalı.
+3. **Workspace eşzamanlılığı:** `captureChangeSet()` ve `compose()` her çağrıda ayrı bir private index kullanıyor. Aynı scratch nesne veritabanına eşzamanlı yazmanın güvenli olduğu testle doğrulandı.
 4. **Worker profili:** Her deneme ayrı bir geçici `HOME` alır. `profile-home/.omp/agent` bu dizine kopyalanır, `TEMP` ve `TMP` de bu dizini gösterir. Deneme bitince dizin silinir. Kaynak profil yalnızca okunur. Paylaşılan dizinin eşzamanlı kullanımda güvenli olduğu doğrulanmadığı için kopya tercih edildi. Bunun bedeli, denemede yenilenen OAuth token’larının kaynak profile geri yazılmamasıdır. API anahtarlı profiller etkilenmez.
 5. **İptal ve restart:** İptal, çalışan bütün Coder’ların süreç ağaçlarını kapatır. Restart sonrasında yarım kalan bütün denemeler `interrupted` olur.
 6. **Planner rehberliği:** Lockfile, ortak şema ve üretilen dosyalar tek göreve atanır. Bu dosyalara ihtiyaç duyan diğer görevler o göreve bağımlı olur. Benzersiz sahiplik kuralı host’ta zaten uygulanıyor. Buradaki değişiklik yalnızca prompt’u kapsar.
