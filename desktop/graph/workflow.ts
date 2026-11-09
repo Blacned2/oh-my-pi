@@ -106,6 +106,17 @@ export interface ApprovedGraphExecutors {
 	): Promise<GraphReview>;
 }
 
+/** Use the same admission checks for Planner output and user edits. */
+export function validateGraphTaskPlan(
+	workspace: GraphWorkspace,
+	proposal: unknown,
+	files: readonly string[],
+): GraphTaskPlan {
+	const plan = parseTaskPlan(proposal, files);
+	workspace.checkScopes(new Map(plan.tasks.map(task => [task.id, task.files])));
+	return plan;
+}
+
 /** Ask the Planner for tasks and admit only a plan that fits the approved scope and the pinned tree. */
 export async function proposeGraphPlan(
 	workspace: GraphWorkspace,
@@ -114,11 +125,7 @@ export async function proposeGraphPlan(
 	signal: AbortSignal,
 ): Promise<GraphTaskPlan> {
 	workspace.checkScopes(new Map([["approved", input.files]]));
-	const validate = (proposal: unknown) => {
-		const plan = parseTaskPlan(proposal, input.files);
-		workspace.checkScopes(new Map(plan.tasks.map(task => [task.id, task.files])));
-		return plan;
-	};
+	const validate = (proposal: unknown) => validateGraphTaskPlan(workspace, proposal, input.files);
 	return validate(await executors.plan(workspace, input, validate, signal));
 }
 

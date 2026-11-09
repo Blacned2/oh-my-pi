@@ -5,6 +5,7 @@ import { $which, ptree, readLines, TempDir } from "@oh-my-pi/pi-utils";
 import { changeSet, fixture, original } from "../fixtures/git";
 import { completion, type CompletionRequest } from "../fixtures/openai";
 import type { GraphRun } from "../run-store";
+import type { GraphTask } from "../task-plan";
 
 const imageId = Bun.argv[2];
 const dockerPath = await $which("docker");
@@ -24,6 +25,7 @@ const edits: Record<string, string> = {
 };
 const backend = "src/backend.txt";
 const initialBackend = "unrestricted refresh endpoint";
+const editedBrief = "Serve token refresh and verify authorization";
 const finding = {
 	file: backend,
 	issue: "The refresh endpoint has no guard",
@@ -112,6 +114,7 @@ const server = Bun.serve({
 				throw new Error("Graph did not reject the out-of-scope plan");
 		} else if (resultTool === "kostomp_graph_submit_patch") {
 			const owned = Object.keys(edits).find(file => prompt.includes(`Owned files:\\n[\\"${file}`))!;
+			if (owned === backend) strictEqual(prompt.includes(editedBrief), true, "The Coder receives the approved edit");
 			if (prompt.includes(finding.expectedChange)) {
 				strictEqual(owned, backend, "The review finding must reach only the file owner");
 				strictEqual(prompt.includes(initialBackend), true, "The previous patch must reach the Coder");
@@ -256,7 +259,7 @@ try {
 		error?: string;
 		planError?: string;
 		logs?: string[];
-		draft?: { id: string; hash: string; source: string; tasks: { id: string; files: string[] }[] };
+		draft?: { id: string; hash: string; source: string; tasks: GraphTask[] };
 	};
 	const settle = async () => {
 		let status: Status;
@@ -283,13 +286,31 @@ try {
 	deepStrictEqual(status.draft, draft, "A restart restores the exact proposal without rerunning the Planner");
 	strictEqual(status.run, undefined, "Restoring a draft does not authorize work");
 	strictEqual(draft.source, input.source);
-	const approveDraft = { op: "approve", input: { draft: draft.id, hash: draft.hash } };
+	const shownDraft = { draft: draft.id, hash: draft.hash };
 	const editedSourceFile = temp.join("source", backend);
 	await Bun.write(editedSourceFile, "new user edit\n");
-	await rejects(request(approveDraft), /source changed/);
+	await rejects(request({ op: "approve", input: shownDraft }), /source changed/);
 	deepStrictEqual((await settle()).draft, draft, "Rejected approval leaves the draft available");
 	await Bun.write(editedSourceFile, files[backend]);
-	await rejects(request({ op: "approve", input: { draft: draft.id, hash: "0".repeat(64) } }), /plan changed/);
+	const invalidTasks = draft.tasks.map(task =>
+		task.id === "backend" ? { ...task, files: ["src/secret.txt"] } : task,
+	);
+	await rejects(
+		request({ op: "edit", input: { ...shownDraft, plan: { tasks: invalidTasks } } }),
+		/outside the approved scope/,
+	);
+	deepStrictEqual((await settle()).draft, draft, "Rejected edits leave the original draft available");
+	const editedTasks = draft.tasks.map(task => (task.id === "backend" ? { ...task, brief: editedBrief } : task));
+	await request({ op: "edit", input: { ...shownDraft, plan: { tasks: editedTasks } } });
+	await stopService?.();
+	request = startService();
+	status = await settle();
+	const edited = status.draft;
+	if (!edited) throw new Error("Edited draft did not survive restart");
+	deepStrictEqual(edited.tasks, editedTasks);
+	strictEqual(status.run, undefined, "Saving edits does not approve a run");
+	await rejects(request({ op: "approve", input: shownDraft }), /plan changed/);
+	const approveDraft = { op: "approve", input: { draft: edited.id, hash: edited.hash } };
 	const { id } = await request<{ id: string }>(approveDraft);
 	await rejects(request({ op: "plan", input }), /already active/);
 	status = await settle();
@@ -319,7 +340,7 @@ try {
 	await request({ op: "open", input: id });
 	deepStrictEqual(await request({ op: "patch" }), artifact);
 	status = await request<Status>({ op: "status" });
-	strictEqual(status.run?.context?.planHash, draft.hash);
+	strictEqual(status.run?.context?.planHash, edited.hash);
 	strictEqual(await request<string>({ op: "log", input: "test" }), testLog, "The log survives a restart");
 	const reviews = toolCalls.filter(name => name === "kostomp_graph_review").length;
 	await request({ op: "retry", input: "code-backend" });
@@ -354,7 +375,7 @@ try {
 	await rejects(request({ op: "patch" }), /source changed/);
 	strictEqual((await request<{ status: string }>({ op: "status" })).status, "stale_base");
 	process.stdout.write(
-		"Graph draft recovery and discard, approval, parallel Coders, scoped repair, logs, retry and release gates passed\n",
+		"Graph draft recovery, editing, approval, parallel Coders, scoped repair, logs, retry and release gates passed\n",
 	);
 } finally {
 	try {

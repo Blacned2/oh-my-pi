@@ -195,9 +195,22 @@
     <p id="graph-plan-summary" hidden></p>
     <ol id="graph-tasks"></ol>
     <div class="graph-actions" id="graph-plan-actions">
+      <button type="button" id="graph-edit-plan">Edit plan</button>
       <button type="button" id="graph-approve">Approve and run</button>
       <button type="button" id="graph-discard">Discard plan</button>
     </div>
+    <form id="graph-plan-editor" hidden>
+      <p id="graph-approved-scope"></p>
+      <p id="graph-edit-error" role="alert" hidden></p>
+      <fieldset id="graph-editor-fields">
+        <div id="graph-edit-tasks"></div>
+        <div class="graph-actions">
+          <button type="button" id="graph-add-task">Add task</button>
+          <button type="submit" id="graph-save-plan">Save changes</button>
+          <button type="button" id="graph-cancel-edit">Cancel editing</button>
+        </div>
+      </fieldset>
+    </form>
   </section>
   <p id="graph-status" role="status"></p>
   <ol id="graph-nodes"></ol>

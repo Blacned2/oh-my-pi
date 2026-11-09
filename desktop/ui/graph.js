@@ -20,6 +20,13 @@
   const planSummary = document.getElementById("graph-plan-summary");
   const tasks = document.getElementById("graph-tasks");
   const planActions = document.getElementById("graph-plan-actions");
+  const edit = document.getElementById("graph-edit-plan");
+  const editor = document.getElementById("graph-plan-editor");
+  const editorFields = document.getElementById("graph-editor-fields");
+  const editTasks = document.getElementById("graph-edit-tasks");
+  const approvedScope = document.getElementById("graph-approved-scope");
+  const editError = document.getElementById("graph-edit-error");
+  const save = document.getElementById("graph-save-plan");
   const approve = document.getElementById("graph-approve");
   const discard = document.getElementById("graph-discard");
   const logNode = document.getElementById("graph-log-node");
@@ -33,6 +40,7 @@
   let shownPlan = "";
   /** The proposal on screen. Approval names it so the host rejects a plan the user has not seen. */
   let shownDraft;
+  let editingDraft;
   /** `run:node:attempt` of the log on screen. A newer attempt hides it. */
   let shownLog = "";
   let logKeys = new Map();
@@ -52,6 +60,54 @@
       item.append(title, meta, brief);
       return item;
     }));
+  }
+
+  function addEditTask(task) {
+    const item = document.createElement("fieldset");
+    const legend = document.createElement("legend");
+    legend.textContent = "Coder task";
+    item.append(legend);
+    function field(name, caption, value, { rows, maxLength, required = true } = {}) {
+      const label = document.createElement("label");
+      label.textContent = caption;
+      const input = document.createElement(rows ? "textarea" : "input");
+      if (rows) input.rows = rows;
+      if (maxLength) input.maxLength = maxLength;
+      input.name = name;
+      input.required = required;
+      input.value = value;
+      label.append(input);
+      item.append(label);
+      return input;
+    }
+    const id = field("id", "Task ID", task?.id ?? "", { maxLength: 32 });
+    id.pattern = "[a-z][a-z0-9\\-]*";
+    field("title", "Title", task?.title ?? "", { maxLength: 200 });
+    field("brief", "Instructions and acceptance criteria", task?.brief ?? "", { rows: 3, maxLength: 4096 });
+    field("dependsOn", "Depends on task IDs (one per line)", task?.dependsOn.join("\n") ?? "", { rows: 2, required: false });
+    field("files", "Owned files (one per line)", task?.files.join("\n") ?? "", { rows: 2 });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Remove task";
+    remove.addEventListener("click", () => item.remove());
+    item.append(remove);
+    editTasks.append(item);
+    if (!task) id.focus();
+  }
+
+  function setEditError(message = "") {
+    editError.textContent = message;
+    editError.hidden = !message;
+  }
+
+  function closeEditor() {
+    editingDraft = undefined;
+    editor.hidden = true;
+    editorFields.disabled = false;
+    tasks.hidden = false;
+    planActions.hidden = !shownDraft;
+    editTasks.replaceChildren();
+    setEditError();
   }
 
   async function request(op, input) {
@@ -79,15 +135,16 @@
     const planKey = draft ? `draft:${draft.id}:${draft.hash}` : context?.planHash ? `run:${runId}` : "";
     if (planKey !== shownPlan) {
       shownPlan = planKey;
-      shownDraft = draft && { draft: draft.id, hash: draft.hash };
+      shownDraft = draft;
+      if (editingDraft) closeEditor();
       planSummary.hidden = !draft;
       planSummary.textContent = draft ? `${draft.objective} · ${draft.source}` : "";
       renderTasks(planTasks ?? []);
     }
     planPanel.hidden = !planTasks;
     planTitle.textContent = draft ? "Proposed plan" : "Approved plan";
-    planActions.hidden = !draft;
-    approve.disabled = !!snapshot?.busy;
+    planActions.hidden = !draft || !!editingDraft;
+    approve.disabled = edit.disabled = save.disabled = !!snapshot?.busy;
     const eligible = snapshot?.retryable ?? [];
     if (eligible.join() !== [...retryNode.options].map(option => option.value).join()) {
       retryNode.replaceChildren(...eligible.map(id => new Option(id, id)));
@@ -173,7 +230,43 @@
   });
   approve.addEventListener("click", () => {
     const chosen = shownDraft;
-    if (chosen) void action(async () => { await request("approve", chosen); await refreshHistory(); });
+    if (chosen) void action(async () => { await request("approve", { draft: chosen.id, hash: chosen.hash }); await refreshHistory(); });
+  });
+  edit.addEventListener("click", () => {
+    if (!shownDraft) return;
+    editingDraft = { draft: shownDraft.id, hash: shownDraft.hash };
+    approvedScope.textContent = `Approved files: ${shownDraft.files.join(", ")}`;
+    for (const task of shownDraft.tasks) addEditTask(task);
+    tasks.hidden = planActions.hidden = true;
+    editor.hidden = false;
+    editTasks.querySelector("input")?.focus();
+  });
+  document.getElementById("graph-add-task").addEventListener("click", () => addEditTask());
+  document.getElementById("graph-cancel-edit").addEventListener("click", () => { closeEditor(); edit.focus(); });
+  editor.addEventListener("submit", event => {
+    event.preventDefault();
+    if (!editingDraft || editorFields.disabled) return;
+    const lines = value => value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const plan = { tasks: [...editTasks.children].map(item => {
+      const value = name => item.elements.namedItem(name).value.trim();
+      return { id: value("id"), title: value("title"), brief: value("brief"), dependsOn: lines(value("dependsOn")), files: lines(value("files")) };
+    }) };
+    const selected = editingDraft;
+    editorFields.disabled = true;
+    setEditError();
+    void action(async () => {
+      if (editingDraft !== selected) return;
+      try {
+        await request("edit", { ...selected, plan });
+      } catch (error) {
+        setEditError(error.message || String(error));
+        editorFields.disabled = false;
+        return;
+      }
+      closeEditor();
+      await refresh();
+      edit.focus();
+    });
   });
   discard.addEventListener("click", () => void action(async () => { await request("discard"); await refresh(); }));
   cancel.addEventListener("click", () => void action(async () => {

@@ -14,6 +14,7 @@ import {
 	readGraphRelease,
 	retryGraphNode,
 	runApprovedGraph,
+	validateGraphTaskPlan,
 } from "./workflow";
 import { graphBaseIsCurrent, GraphWorkspace, inspectGraphSource } from "./workspace";
 
@@ -28,9 +29,11 @@ const profileSchema = type({
 	},
 	"maxCoders?": "1 <= number.integer <= 4",
 });
+const draftSelection = type({ draft: "string", hash: "string" });
 const requestSchema = type({ op: "'status' | 'cancel' | 'patch' | 'list' | 'resume' | 'discard'" })
 	.or({ op: "'plan'", input: "unknown" })
-	.or({ op: "'approve'", input: { draft: "string", hash: "string" } })
+	.or({ op: "'approve'", input: draftSelection })
+	.or({ op: "'edit'", input: draftSelection.and({ plan: "unknown" }) })
 	.or({ op: "'open' | 'retry' | 'log'", input: "string" });
 
 interface Job {
@@ -161,12 +164,32 @@ async function proposePlan(value: unknown) {
 	planning = { controller, job };
 }
 
-/** Admit exactly the plan the user reviewed, then record it with the new run. */
-async function approvePlan({ draft: id, hash }: { draft: string; hash: string }) {
+function selectedDraft({ draft: id, hash }: typeof draftSelection.infer) {
 	const draft = store.draft();
 	if (!draft || draft.id !== id || draft.hash !== hash) {
 		throw new Error("The proposed plan changed. Review it again before approving");
 	}
+	return draft;
+}
+
+async function editPlan(selection: typeof draftSelection.infer, proposal: unknown): Promise<void> {
+	const draft = selectedDraft(selection);
+	if ((await loadProfile()).hash !== draft.profileHash) throw new Error("The Graph profile changed. Plan again");
+	if (!(await graphBaseIsCurrent(draft.input.source, draft.baseSha)))
+		throw new Error("The source changed. Plan again");
+	await using workspace = await GraphWorkspace.pin(draft.input.source);
+	if (workspace.baseSha !== draft.baseSha || workspace.sourceRoot !== draft.input.source) {
+		throw new Error("The source changed. Plan again");
+	}
+	const plan = validateGraphTaskPlan(workspace, proposal, draft.input.files);
+	store.saveDraft({ ...draft, plan, hash: taskPlanHash(plan) });
+	planError = undefined;
+}
+
+/** Admit exactly the plan the user reviewed, then record it with the new run. */
+async function approvePlan(selection: typeof draftSelection.infer) {
+	const draft = selectedDraft(selection);
+	const { id, hash } = draft;
 	const { input, baseSha, profileHash } = draft;
 	const plan = parseTaskPlan(draft.plan, input.files);
 	if (taskPlanHash(plan) !== hash) throw new Error("The proposed plan changed. Review it again before approving");
@@ -213,6 +236,11 @@ async function handle(request: typeof requestSchema.infer) {
 	if (request.op === "approve") {
 		assertIdle();
 		return approvePlan(request.input);
+	}
+	if (request.op === "edit") {
+		assertIdle();
+		await editPlan(request.input, request.input.plan);
+		return null;
 	}
 	if (request.op === "discard") {
 		planning?.controller.abort();
@@ -270,6 +298,7 @@ async function handle(request: typeof requestSchema.infer) {
 			hash: draft.hash,
 			source: draft.input.source,
 			objective: draft.input.objective,
+			files: draft.input.files,
 			baseSha: draft.baseSha,
 			tasks: draft.plan.tasks,
 		},
