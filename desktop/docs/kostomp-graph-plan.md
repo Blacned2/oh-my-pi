@@ -62,7 +62,7 @@ Teslimat kapısı, Graph değişikliklerinin `desktop/` ile sınırlı kalması 
 
 3\. adımda kalanlar:
 - Context Manager düğümü yok. Coder’lar onaylı dosyaları, sabit tabanı ve bağımlı oldukları görevlerin değişikliklerini okuyor.
-- Desktop yalnızca Tester logunu gösteriyor. Log, ANSI ve kontrol karakterlerinden temizlenip deneme başına saklanıyor ve artifact kimliğine girmiyor. Coder ve Reviewer worker transcript’leri gösterilmiyor.
+- Desktop Tester, Coder ve Reviewer denemelerinin logunu gösteriyor. Loglar ANSI ve kontrol karakterlerinden temizlenip deneme başına saklanıyor ve artifact kimliğine girmiyor. Planner logu tutulmuyor; planlama hatası dialogda gösteriliyor.
 - Kullanıcı planı Desktop’ta düzenleyemiyor. Yalnızca onaylayabiliyor veya atabiliyor.
 
 Paketlenmiş Desktop’ta görsel kontrol yapıldı. Sahte model ve gerçek Docker kullanıldı. Plan önerisi, onay, bağımlı iki Coder, test, review ve patch adımları görüldü. Kontrol, açık Kostomp’un yanında ayrı bir WebView2 profiliyle açılan ikinci örnekte yapıldı. Aynı uygulamada sohbet akarken Graph çalıştırma senaryosu henüz doğrulanmadı.

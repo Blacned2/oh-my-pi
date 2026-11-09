@@ -65,6 +65,9 @@ export interface GraphFileView {
 	read(file: string, signal: AbortSignal): Promise<{ data: Uint8Array }>;
 }
 
+/** Receives an attempt's display log. Text is sanitized and stored only while the attempt is live. */
+export type GraphLog = (text: string) => void;
+
 export interface ApprovedGraphExecutors {
 	/** Return the raw proposal. `validate` lets the Planner correct a rejected proposal. */
 	plan(
@@ -73,13 +76,14 @@ export interface ApprovedGraphExecutors {
 		validate: (proposal: unknown) => GraphTaskPlan,
 		signal: AbortSignal,
 	): Promise<unknown>;
-	code(view: GraphFileView, task: CoderBrief, work: GraphWork, signal: AbortSignal): Promise<string>;
+	code(view: GraphFileView, task: CoderBrief, work: GraphWork, signal: AbortSignal, log: GraphLog): Promise<string>;
 	test(workspace: GraphWorkspace, candidate: GraphCandidate, signal: AbortSignal): Promise<GraphTestResult>;
 	review(
 		workspace: GraphWorkspace,
 		candidate: GraphCandidate,
 		work: GraphWork,
 		signal: AbortSignal,
+		log: GraphLog,
 	): Promise<ReviewVerdict>;
 }
 
@@ -152,6 +156,8 @@ export async function runApprovedGraph(
 		maxCoders,
 		async (attempt, attemptSignal) => {
 			const { nodeId, inputs } = attempt;
+			// Worker output is untrusted model and tool text; a late call from a stale attempt is ignored.
+			const log: GraphLog = text => store.recordLog(attempt, sanitizeText(text));
 			const task = coders.get(nodeId);
 			if (task) {
 				const upstream = readCode(inputs).map(saved => saved.changes);
@@ -160,7 +166,7 @@ export async function runApprovedGraph(
 					read: (file, readSignal) =>
 						view ? workspace.readCandidateFile(view, file, readSignal) : workspace.readBaseFile(file, readSignal),
 				};
-				const patch = await executors.code(files, task, work, attemptSignal);
+				const patch = await executors.code(files, task, work, attemptSignal, log);
 				const changes = await workspace.captureChangeSet(nodeId, task.files, patch, attemptSignal);
 				const proposed = await workspace.compose(scopes, [...upstream, changes], attemptSignal);
 				return JSON.stringify({ ...proposed, changes } satisfies CodeArtifact);
@@ -192,7 +198,7 @@ export async function runApprovedGraph(
 					if (test?.treeId !== candidate.treeId || test.exitCode !== 0) return "null";
 					const review = {
 						treeId: candidate.treeId,
-						verdict: await executors.review(workspace, candidate, work, attemptSignal),
+						verdict: await executors.review(workspace, candidate, work, attemptSignal, log),
 					};
 					return JSON.stringify(review);
 				}

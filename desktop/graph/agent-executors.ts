@@ -8,7 +8,7 @@ import coderPrompt from "./prompts/coder.md" with { type: "text" };
 import plannerPrompt from "./prompts/planner.md" with { type: "text" };
 import reviewerPrompt from "./prompts/reviewer.md" with { type: "text" };
 import type { GraphTaskPlan } from "./task-plan";
-import type { ApprovedGraphExecutors, ReviewVerdict } from "./workflow";
+import type { ApprovedGraphExecutors, GraphLog, ReviewVerdict } from "./workflow";
 
 /** `home` is the source profile. Each attempt runs in its own copy so concurrent workers share no writable state. */
 type WorkerProfile = Pick<OmpWorkerOptions, "bunPath" | "cliPath" | "home" | "provider" | "model" | "timeoutMs">;
@@ -46,6 +46,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 		context: Record<string, string>,
 		tools: RpcClientCustomTool[],
 		signal: AbortSignal,
+		log?: GraphLog,
 	) => {
 		await using tmp = await TempDir.create("@kostomp-graph-attempt-");
 		const cwd = tmp.join("worker");
@@ -58,7 +59,20 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 			if (isEnoent(error)) throw new Error(`Graph worker profile is missing at ${path.join(worker.home, agentDir)}`);
 			throw error;
 		}
-		await runOmpWorker({ ...worker, home, cwd, signal, tools, prompt: prompt.render(template, context) });
+		const transcript: string[] = [];
+		try {
+			await runOmpWorker({
+				...worker,
+				home,
+				cwd,
+				signal,
+				tools,
+				transcript,
+				prompt: prompt.render(template, context),
+			});
+		} finally {
+			if (transcript.length > 0) log?.(transcript.join("\n"));
+		}
 	};
 	return {
 		async plan(workspace, input, validate, signal) {
@@ -103,7 +117,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 			if (!accepted) throw new Error("Planner did not submit a valid Graph plan");
 			return accepted;
 		},
-		async code(view, task, work, signal) {
+		async code(view, task, work, signal, log) {
 			let patch: string | undefined;
 			await run(
 				coderPrompt,
@@ -142,12 +156,13 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 					},
 				],
 				signal,
+				log,
 			);
 			if (!patch) throw new Error("Coder did not submit a Graph patch");
 			return patch;
 		},
 		test: (workspace, candidate, signal) => testCandidateInDocker(workspace, candidate, tester, signal),
-		async review(workspace, candidate, work, signal) {
+		async review(workspace, candidate, work, signal, log) {
 			let verdict: ReviewVerdict | undefined;
 			await run(
 				reviewerPrompt,
@@ -182,6 +197,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 					},
 				],
 				signal,
+				log,
 			);
 			if (!verdict) throw new Error("Reviewer did not submit a verdict");
 			return verdict;

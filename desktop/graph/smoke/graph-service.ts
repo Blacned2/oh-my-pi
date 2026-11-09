@@ -227,12 +227,16 @@ try {
 	status = await settle();
 	strictEqual(status.status, "ready_to_export", JSON.stringify(status));
 	deepStrictEqual(coderStarts.sort(), ["src/backend.txt", "src/frontend.txt"]);
-	deepStrictEqual(status.logs, ["test"]);
+	deepStrictEqual(status.logs, ["code-contract", "code-backend", "code-frontend", "test", "review"]);
+	const coderLog = await request<string>({ op: "log", input: "code-backend" });
+	strictEqual(/→ kostomp_graph_read_file[\s\S]*← kostomp_graph_submit_patch/.test(coderLog), true, coderLog);
+	strictEqual(coderLog.includes("token v2 with refresh"), true, "The Coder log shows the upstream contract it read");
+	strictEqual((await request<string>({ op: "log", input: "review" })).includes("kostomp_graph_review"), true);
 	const testLog = await request<string>({ op: "log", input: "test" });
 	strictEqual(testLog.includes("Exit code 0"), true, testLog);
 	strictEqual(/graph-smoke-stdout[\s\S]*graph-smoke-stderr/.test(testLog), true, testLog);
 	strictEqual(testLog.includes("\x1b"), false, "ANSI reaches the log");
-	await rejects(request({ op: "log", input: "review" }), /no log/);
+	await rejects(request({ op: "log", input: "release" }), /no log/);
 	const artifact = await request<{ patch: string; baseSha: string }>({ op: "patch" });
 	for (const text of Object.values(edits)) strictEqual(artifact.patch.includes(`+${text.trim()}`), true);
 	strictEqual(artifact.baseSha, await source.headSha());

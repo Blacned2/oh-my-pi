@@ -285,3 +285,29 @@ test("test output is kept as a sanitized log, and a rerun with new output but th
 	expect(reviews).toBe(1);
 	expect(readGraphRelease(store, id)?.status).toBe("ready_to_export");
 });
+
+test("a failed Coder keeps its sanitized worker log with the attempt", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-coder-log-");
+	const source = await fixture(temp.join("source"));
+	const sourceRoot = source.info().repoRoot;
+	const tasks = [{ id: "api", title: "API", brief: "Change the API", dependsOn: [], files: [backend] }];
+	const executors: ApprovedGraphExecutors = {
+		plan: unusedPlanner,
+		async code(_view, _task, _work, _signal, log) {
+			log("→ kostomp_graph_read_file\n\x1b[31m✗ kostomp_graph_submit_patch: rejected\x1b[0m");
+			throw new Error("Coder did not submit a Graph patch");
+		},
+		test: async () => {
+			throw new Error("unreachable");
+		},
+		review: async () => "accepted",
+	};
+	using store = new GraphRunStore(":memory:");
+	await using workspace = await GraphWorkspace.pin(sourceRoot);
+	const context = { sourceRoot, baseSha: workspace.baseSha, objective: "Log", files: [backend], profileHash: "" };
+	const { id } = store.create(graphPlanForTasks({ version: 1, tasks }), { ...context, tasks });
+	await runApprovedGraph(store, id, workspace, graphWork(store.get(id)!.context!), executors);
+	const run = store.get(id)!;
+	expect(run.nodes["code-api"]).toMatchObject({ status: "failed", error: "Coder did not submit a Graph patch" });
+	expect(store.log(run, "code-api")).toBe("→ kostomp_graph_read_file\n✗ kostomp_graph_submit_patch: rejected");
+});
