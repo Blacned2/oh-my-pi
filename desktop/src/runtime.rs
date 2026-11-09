@@ -55,6 +55,22 @@ pub fn omp_command() -> Result<Command, String> {
     Ok(cmd)
 }
 
+pub fn graph_command(data: &Path) -> Result<Command, String> {
+    let runtime = bundled().ok_or("Graph requires the bundled OMP runtime")?;
+    let cli = runtime.cli.as_ref().ok_or("Graph requires the bundled OMP entry")?;
+    let script = runtime.bun.with_file_name("graph").join("service.ts");
+    if !script.is_file() {
+        return Err("Graph sidecar is missing from the bundled runtime".into());
+    }
+    let mut cmd = Command::new(&runtime.bun);
+    cmd.arg("--no-env-file")
+        .arg(script)
+        .arg(data)
+        .arg(cli)
+        .creation_flags(CREATE_NO_WINDOW);
+    Ok(cmd)
+}
+
 /// A command that starts the stats server; the caller appends `--port`.
 pub fn stats_command() -> (Command, PathBuf) {
     let override_entry = std::env::var("KOSTOMP_STATS_ENTRY").ok().map(PathBuf::from);

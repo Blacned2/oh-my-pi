@@ -1,0 +1,22 @@
+#graph-dialog {
+  width: min(38rem, 90vw);
+  max-height: 85vh;
+  padding: 1.25rem;
+  color: var(--ink-1);
+  background: var(--panel);
+  border: 1px solid var(--line-3);
+  border-radius: 0.75rem;
+  box-shadow: var(--shadow-2);
+}
+
+#graph-dialog::backdrop { background: rgb(0 0 0 / 55%); }
+#graph-dialog header, .graph-actions { display: flex; align-items: center; gap: 0.6rem; }
+#graph-dialog header { justify-content: space-between; }
+#graph-dialog h2 { margin: 0 0 0.6rem; }
+#graph-dialog label { display: grid; gap: 0.25rem; margin-bottom: 0.65rem; }
+#graph-dialog input, #graph-dialog textarea { width: 100%; padding: 0.4rem; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line-3); border-radius: 0.3rem; }
+#graph-dialog textarea { resize: vertical; }
+#graph-dialog button { padding: 0.3rem 0.6rem; background: var(--raised); border: 1px solid var(--line-3); border-radius: 0.35rem; }
+#graph-dialog button:disabled { opacity: 0.55; cursor: default; }
+#graph-dialog #graph-output { font-family: var(--mono); white-space: pre; }
+#graph-status, #graph-nodes { overflow-wrap: anywhere; }

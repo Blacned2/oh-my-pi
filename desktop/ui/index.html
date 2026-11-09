@@ -17,6 +17,7 @@
   })();
 </script>
 <link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="graph.css">
 </head>
 <body>
 <div class="blobs" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
@@ -34,6 +35,7 @@
   <div class="spacer"></div>
   <div class="status" id="status">starting…</div>
   <button type="button" id="update" class="link update" hidden></button>
+  <button type="button" id="graph-open" class="link" aria-haspopup="dialog">Graph</button>
   <button type="button" id="theme" class="icon" title="Theme"></button>
       <div class="layout-anchor">
         <button type="button" id="layout-btn" class="layout-btn" aria-haspopup="true" aria-expanded="false" aria-controls="layout-menu" title="Layouts (Alt+L switches)">
@@ -175,10 +177,28 @@
   </figure>
   <button type="button" id="lightbox-close" class="lightbox-close" aria-label="Close preview" title="Close (Esc)">×</button>
 </div>
+<dialog id="graph-dialog" aria-labelledby="graph-title">
+  <header><h2 id="graph-title">Graph</h2><button type="button" id="graph-close" aria-label="Close Graph">×</button></header>
+  <form id="graph-form">
+    <label>Repository <input name="source" placeholder="C:\Projects\repository" required></label>
+    <label>Objective <textarea name="objective" rows="3" maxlength="8192" required></textarea></label>
+    <label>Approved files <textarea name="files" rows="3" placeholder="One repository-relative path per line" required></textarea></label>
+    <div class="graph-actions">
+      <button type="submit" id="graph-start">Run Graph</button>
+      <button type="button" id="graph-cancel" disabled>Cancel run</button>
+      <button type="button" id="graph-patch" disabled>Show verified patch</button>
+    </div>
+  </form>
+  <p id="graph-status" role="status"></p>
+  <ol id="graph-nodes"></ol>
+  <p id="graph-base" hidden></p>
+  <textarea id="graph-output" aria-label="Verified patch" rows="8" readonly hidden></textarea>
+</dialog>
 <script src="session.js"></script>
 <script src="layout.js"></script>
 <script src="app.js"></script>
 <script src="settings.js"></script>
 <script src="updater.js"></script>
+<script src="graph.js"></script>
 </body>
 </html>

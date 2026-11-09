@@ -65,6 +65,15 @@ foreach ($r in $roots) { [void]$wanted.Add($r) }
 if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
 New-Item -ItemType Directory -Path $dest | Out-Null
 if ($roots.Count -gt 0) { Copy-Item -LiteralPath $Bun -Destination (Join-Path $dest "bun.exe") }
+if (-not $NoOmp) {
+    $graphSource = Join-Path $PSScriptRoot "..\graph"
+    $graphDest = Join-Path $dest "graph"
+    New-Item -ItemType Directory -Path $graphDest | Out-Null
+    Get-ChildItem -LiteralPath $graphSource -File -Filter "*.ts" | Copy-Item -Destination $graphDest
+    foreach ($part in "prompts", "questions", "tester-bootstrap.sh") {
+        Copy-Item -LiteralPath (Join-Path $graphSource $part) -Destination $graphDest -Recurse
+    }
+}
 
 $copied = 0
 foreach ($name in $wanted) {

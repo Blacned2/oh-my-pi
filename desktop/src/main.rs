@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod graph;
 mod omp_config;
 mod rpc;
 mod runtime;
@@ -87,10 +88,12 @@ fn main() {
         .manage(StatsServer(Mutex::new(None)))
         .manage(StatsStatus(Mutex::new(None)))
         .manage(rpc::RpcState::default())
+        .manage(graph::GraphBridge::default())
         .invoke_handler(tauri::generate_handler![
             stats_status,
             updater::update_check,
             updater::update_install,
+            graph::graph_request,
             rpc::rpc_start,
             rpc::rpc_send,
             rpc::rpc_stop,
@@ -154,4 +157,5 @@ pub fn shutdown_children(handle: &tauri::AppHandle) {
         kill_tree(&mut child);
     }
     rpc::shutdown(handle);
+    graph::shutdown(handle);
 }
