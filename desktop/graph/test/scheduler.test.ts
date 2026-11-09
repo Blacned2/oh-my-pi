@@ -249,3 +249,17 @@ test("cancelling two running Coders stops both, and a restart marks both interru
 	const nodes = reopened.get(crashed)!.nodes;
 	expect([nodes["code-back"].status, nodes["code-front"].status]).toEqual(["interrupted", "interrupted"]);
 });
+
+test("a log from an interrupted attempt is rejected and never shown for the node", () => {
+	using store = new GraphRunStore(":memory:");
+	const { id } = store.create({ version: 1, nodes: [node("test", "tester")] });
+	const [stale] = store.claimReady(id, 1);
+	store.recoverInterrupted(id);
+	expect(store.recordLog(stale, "late output")).toBe(false);
+	expect(store.retry(id, "test")).toBe(true);
+	const [current] = store.claimReady(id, 1);
+	expect(store.recordLog(current, "current output")).toBe(true);
+	const run = store.get(id)!;
+	expect(store.log(run, "test")).toBe("current output");
+	expect(store.loggedNodes(run)).toEqual(["test"]);
+});

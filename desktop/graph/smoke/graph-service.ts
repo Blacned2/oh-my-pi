@@ -141,12 +141,19 @@ const server = Bun.serve({
 let stopService: (() => Promise<void>) | undefined;
 try {
 	const checks = Object.entries(edits).map(([file, text]) => `test "$(cat ${file})" = "${text.trim()}"`);
+	// Colored stdout and a stderr line reach the Desktop log only as plain text.
+	const output = ["printf '\\033[32mgraph-smoke-stdout\\033[0m\\n'", "echo graph-smoke-stderr >&2"];
 	await Bun.write(
 		path.join(data, "profile.json"),
 		JSON.stringify({
 			provider,
 			model,
-			tester: { dockerPath, imageId, timeoutMs: 30000, command: ["/bin/sh", "-c", checks.join(" && ")] },
+			tester: {
+				dockerPath,
+				imageId,
+				timeoutMs: 30000,
+				command: ["/bin/sh", "-c", [...output, ...checks].join(" && ")],
+			},
 		}),
 	);
 	await Bun.write(
@@ -192,6 +199,7 @@ try {
 		status?: string;
 		error?: string;
 		planError?: string;
+		logs?: string[];
 		draft?: { id: string; hash: string; tasks: { id: string; files: string[] }[] };
 	};
 	const settle = async () => {
@@ -219,6 +227,12 @@ try {
 	status = await settle();
 	strictEqual(status.status, "ready_to_export", JSON.stringify(status));
 	deepStrictEqual(coderStarts.sort(), ["src/backend.txt", "src/frontend.txt"]);
+	deepStrictEqual(status.logs, ["test"]);
+	const testLog = await request<string>({ op: "log", input: "test" });
+	strictEqual(testLog.includes("Exit code 0"), true, testLog);
+	strictEqual(/graph-smoke-stdout[\s\S]*graph-smoke-stderr/.test(testLog), true, testLog);
+	strictEqual(testLog.includes("\x1b"), false, "ANSI reaches the log");
+	await rejects(request({ op: "log", input: "review" }), /no log/);
 	const artifact = await request<{ patch: string; baseSha: string }>({ op: "patch" });
 	for (const text of Object.values(edits)) strictEqual(artifact.patch.includes(`+${text.trim()}`), true);
 	strictEqual(artifact.baseSha, await source.headSha());
@@ -232,6 +246,7 @@ try {
 	deepStrictEqual(await request({ op: "patch" }), artifact);
 	status = await request<Status>({ op: "status" });
 	strictEqual(status.run?.context?.planHash, draft.hash);
+	strictEqual(await request<string>({ op: "log", input: "test" }), testLog, "The log survives a restart");
 	const reviews = toolCalls.filter(name => name === "kostomp_graph_review").length;
 	await request({ op: "retry", input: "code-backend" });
 	status = await settle();
@@ -247,7 +262,7 @@ try {
 	await rejects(request({ op: "patch" }), /source changed/);
 	strictEqual((await request<{ status: string }>({ op: "status" })).status, "stale_base");
 	process.stdout.write(
-		"Graph planning, approval, parallel Coders, restart, targeted retry and stale release passed\n",
+		"Graph planning, approval, parallel Coders, test log, restart, targeted retry and stale release passed\n",
 	);
 } finally {
 	try {

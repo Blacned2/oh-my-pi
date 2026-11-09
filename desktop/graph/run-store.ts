@@ -53,6 +53,7 @@ export interface GraphRunEvent {
 
 type RecordEvent = (kind: GraphRunEvent["kind"], nodeId?: string) => void;
 const MAX_ARTIFACT_BYTES = 1024 * 1024;
+const MAX_LOG_CHARS = 256 * 1024;
 
 /** Re-derive each Coder's write scope from the approved tasks. The plan's earlier admission is not trusted. */
 function coderScopes(run: GraphRun): Map<string, WriteScopeKeys> | undefined {
@@ -74,6 +75,10 @@ export class GraphRunStore implements Disposable {
 				);
 				CREATE TABLE IF NOT EXISTS graph_artifacts (
 					run_id TEXT NOT NULL, id TEXT NOT NULL, content TEXT NOT NULL, PRIMARY KEY (run_id, id)
+				);
+				CREATE TABLE IF NOT EXISTS graph_logs (
+					run_id TEXT NOT NULL, node_id TEXT NOT NULL, attempt INTEGER NOT NULL, content TEXT NOT NULL,
+					PRIMARY KEY (run_id, node_id, attempt)
 				);
 			`);
 			return db;
@@ -157,6 +162,52 @@ export class GraphRunStore implements Disposable {
 					"SELECT content FROM graph_artifacts WHERE run_id = ? AND id = ?",
 				)
 				.get(runId, id)?.content ?? null
+		);
+	}
+
+	/** Keep a display log for a live attempt. Logs are not artifacts and never change dependency identity. */
+	recordLog(attempt: GraphAttempt, text: string): boolean {
+		return this.#db
+			.transaction(() => {
+				const run = this.get(attempt.runId);
+				if (!run || !this.#runningAttempt(run, attempt)) return false;
+				const content =
+					text.length > MAX_LOG_CHARS ? `[Earlier log output omitted]\n${text.slice(-MAX_LOG_CHARS)}` : text;
+				this.#db.run("INSERT OR REPLACE INTO graph_logs (run_id, node_id, attempt, content) VALUES (?, ?, ?, ?)", [
+					attempt.runId,
+					attempt.nodeId,
+					attempt.attempt,
+					content,
+				]);
+				return true;
+			})
+			.immediate();
+	}
+
+	/** Nodes whose latest attempt has a log, in plan order. */
+	loggedNodes(run: GraphRun): string[] {
+		const logged = new Set(
+			this.#db
+				.query<{ node_id: string; attempt: number }, [string]>(
+					"SELECT node_id, attempt FROM graph_logs WHERE run_id = ?",
+				)
+				.all(run.id)
+				.filter(row => run.nodes[row.node_id]?.attempt === row.attempt)
+				.map(row => row.node_id),
+		);
+		return run.plan.nodes.filter(node => logged.has(node.id)).map(node => node.id);
+	}
+
+	/** The log of the node's latest attempt. */
+	log(run: GraphRun, nodeId: string): string | null {
+		const attempt = run.nodes[nodeId]?.attempt;
+		if (!attempt) return null;
+		return (
+			this.#db
+				.query<{ content: string }, [string, string, number]>(
+					"SELECT content FROM graph_logs WHERE run_id = ? AND node_id = ? AND attempt = ?",
+				)
+				.get(run.id, nodeId, attempt)?.content ?? null
 		);
 	}
 

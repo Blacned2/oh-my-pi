@@ -31,7 +31,7 @@ const profileSchema = type({
 const requestSchema = type({ op: "'status' | 'cancel' | 'patch' | 'list' | 'resume' | 'discard'" })
 	.or({ op: "'plan'", input: "unknown" })
 	.or({ op: "'approve'", input: { draft: "string", hash: "string" } })
-	.or({ op: "'open' | 'retry'", input: "string" });
+	.or({ op: "'open' | 'retry' | 'log'", input: "string" });
 
 interface Job {
 	controller: AbortController;
@@ -232,6 +232,11 @@ async function handle(request: typeof requestSchema.infer) {
 		return null;
 	}
 	const run = selectedRun();
+	if (request.op === "log") {
+		const log = run && store.log(run, request.input);
+		if (log == null) throw new Error("This Graph step has no log");
+		return log;
+	}
 	if (request.op === "retry" || request.op === "resume") {
 		assertIdle();
 		if (!run?.context) throw new Error("This Graph run has no saved execution context");
@@ -284,6 +289,7 @@ async function handle(request: typeof requestSchema.infer) {
 		error: failure?.id === run.id ? failure.message : undefined,
 		retryable: run.context && idle ? store.retryableNodes(run) : [],
 		resumable: !!run.context && idle && store.readyNodes(run).length > 0,
+		logs: store.loggedNodes(run),
 		...proposal,
 	};
 }

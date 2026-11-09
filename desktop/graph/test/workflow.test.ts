@@ -242,3 +242,46 @@ test("a parallel Coder that writes outside its scope fails alone and its sibling
 	expect(nodes["code-front"].status).toBe("succeeded");
 	expect(tested).toBe(false);
 });
+
+test("test output is kept as a sanitized log, and a rerun with new output but the same exit code reuses the review", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-log-");
+	const source = await fixture(temp.join("source"));
+	const sourceRoot = source.info().repoRoot;
+	const { patch } = await changeSet(await fixture(temp.join("edited")), "x", { [backend]: "logged\n" });
+	const tasks = [{ id: "api", title: "API", brief: "Change the API", dependsOn: [], files: [backend] }];
+	const outputs = ["\x1b[31mFAIL\x1b[0m first run\r\n", "second run\n"];
+	let reviews = 0;
+	const executors: ApprovedGraphExecutors = {
+		plan: unusedPlanner,
+		code: async () => patch,
+		test: async (_workspace, candidate) => ({
+			treeId: candidate.treeId,
+			exitCode: 0,
+			elapsedMs: 7.4,
+			stdout: outputs.shift()!,
+			stderr: "warning\x07\n",
+		}),
+		async review() {
+			reviews++;
+			return "accepted";
+		},
+	};
+	using store = new GraphRunStore(":memory:");
+	await using workspace = await GraphWorkspace.pin(sourceRoot);
+	const context = { sourceRoot, baseSha: workspace.baseSha, objective: "Log", files: [backend], profileHash: "" };
+	const { id } = store.create(graphPlanForTasks({ version: 1, tasks }), { ...context, tasks });
+	const work = graphWork(store.get(id)!.context!);
+	await runApprovedGraph(store, id, workspace, work, executors);
+	const first = store.log(store.get(id)!, "test")!;
+	expect(first).toContain("Exit code 0 after 7 ms");
+	expect(first).toContain("FAIL first run");
+	expect(first).toContain("warning");
+	expect(first).not.toMatch(/[\x1b\r\x07]/);
+	expect(store.retry(id, "test")).toBe(true);
+	await runApprovedGraph(store, id, workspace, work, executors);
+	const run = store.get(id)!;
+	expect(store.loggedNodes(run)).toEqual(["test"]);
+	expect(store.log(run, "test")).toContain("second run");
+	expect(reviews).toBe(1);
+	expect(readGraphRelease(store, id)?.status).toBe("ready_to_export");
+});

@@ -19,6 +19,9 @@
   const planActions = document.getElementById("graph-plan-actions");
   const approve = document.getElementById("graph-approve");
   const discard = document.getElementById("graph-discard");
+  const logNode = document.getElementById("graph-log-node");
+  const showLog = document.getElementById("graph-show-log");
+  const log = document.getElementById("graph-log");
   const states = { ready_to_export: "Verified patch ready", needs_input: "Graph needs input", stale_base: "Source checkout changed" };
   let polling;
   let pending = Promise.resolve();
@@ -27,6 +30,9 @@
   let shownPlan = "";
   /** The proposal on screen. Approval names it so the host rejects a plan the user has not seen. */
   let shownDraft;
+  /** `run:node:attempt` of the log on screen. A newer attempt hides it. */
+  let shownLog = "";
+  let logKeys = new Map();
 
   function renderTasks(list) {
     tasks.replaceChildren(...list.map(task => {
@@ -83,6 +89,17 @@
     }
     retry.disabled = retryNode.disabled = eligible.length === 0;
     resume.hidden = !snapshot?.resumable;
+    const logged = snapshot?.logs ?? [];
+    logKeys = new Map(logged.map(id => [id, `${runId}:${id}:${snapshot.run.nodes[id].attempt}`]));
+    if (logged.join() !== [...logNode.options].map(option => option.value).join()) {
+      logNode.replaceChildren(...logged.map(id => new Option(id, id)));
+    }
+    showLog.disabled = logNode.disabled = logged.length === 0;
+    if (shownLog && ![...logKeys.values()].includes(shownLog)) {
+      shownLog = "";
+      log.value = "";
+      log.hidden = true;
+    }
     const titles = new Map((context?.tasks ?? []).map(task => [`code-${task.id}`, task.title]));
     nodes.replaceChildren(...(snapshot?.run?.plan.nodes ?? []).map(node => {
       const item = document.createElement("li");
@@ -165,6 +182,14 @@
     if (node) void action(async () => { await request("retry", node); await refresh(); });
   });
   resume.addEventListener("click", () => void action(async () => { await request("resume"); await refresh(); }));
+  showLog.addEventListener("click", () => {
+    const node = logNode.value;
+    if (node) void action(async () => {
+      log.value = await request("log", node);
+      shownLog = logKeys.get(node) ?? "";
+      log.hidden = false;
+    });
+  });
   showPatch.addEventListener("click", () => void action(async () => {
     const artifact = await request("patch");
     base.textContent = `Base ${artifact.baseSha}`;

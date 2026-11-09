@@ -57,12 +57,12 @@ Teslimat kapısı, Graph değişikliklerinin `desktop/` ile sınırlı kalması 
 | --- | --- | --- |
 | 1. RPC ve Windows izolasyon spike’ı | Tamam. Worker, Docker tester ve sidecar probları geçiyor. | `cb7dbe27c7` |
 | 2. Deterministik scheduler ve run deposu | Tamam. SQLite geçmişi, yeniden açma ve hedefli retry var. | `cb7dbe27c7`, `b70887c837` |
-| 3. Uçtan uca MVP | Kısmen. Planner ve kullanıcı onayı, Coder → Tester → Reviewer → Gate akışı ve patch gösterimi çalışıyor. | `7dda121165` |
+| 3. Uçtan uca MVP | Kısmen. Planner ve kullanıcı onayı, Coder → Tester → Reviewer → Gate akışı, Tester logu ve patch gösterimi çalışıyor. | `7dda121165`; Tester logu: `feat(desktop): show sanitized Graph test logs` |
 | 4. Paralel Coder | Tamam. Ayrık kapsamlı Coder’lar aynı anda çalışıyor. Ayrıntılar aşağıda. | `f9ab195125` |
 
 3\. adımda kalanlar:
 - Context Manager düğümü yok. Coder’lar onaylı dosyaları, sabit tabanı ve bağımlı oldukları görevlerin değişikliklerini okuyor.
-- Desktop’ta log gösterimi yok.
+- Desktop yalnızca Tester logunu gösteriyor. Log, ANSI ve kontrol karakterlerinden temizlenip deneme başına saklanıyor ve artifact kimliğine girmiyor. Coder ve Reviewer worker transcript’leri gösterilmiyor.
 - Kullanıcı planı Desktop’ta düzenleyemiyor. Yalnızca onaylayabiliyor veya atabiliyor.
 
 Paketlenmiş Desktop’ta görsel kontrol yapıldı. Sahte model ve gerçek Docker kullanıldı. Plan önerisi, onay, bağımlı iki Coder, test, review ve patch adımları görüldü. Kontrol, açık Kostomp’un yanında ayrı bir WebView2 profiliyle açılan ikinci örnekte yapıldı. Aynı uygulamada sohbet akarken Graph çalıştırma senaryosu henüz doğrulanmadı.

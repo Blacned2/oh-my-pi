@@ -1,4 +1,5 @@
 import { type } from "@oh-my-pi/omptype";
+import { sanitizeText } from "@oh-my-pi/pi-utils";
 import type { GraphTestResult } from "./docker-tester";
 import { writablePathKey } from "./repo-path";
 import type { GraphRunContext, GraphRunStore } from "./run-store";
@@ -9,6 +10,13 @@ import type { GraphCandidate, GraphCandidateEvidence, GraphChangeSet, GraphRelea
 const inputSchema = type({ source: "string > 0", objective: "0 < string <= 8192", files: "string[]" });
 export type ApprovedGraphInput = typeof inputSchema.infer;
 export type ReviewVerdict = NonNullable<GraphCandidateEvidence["review"]>["verdict"];
+
+/** Container output is untrusted display text: ANSI sequences and control characters are removed. */
+function testLog({ exitCode, elapsedMs, stdout, stderr }: GraphTestResult): string {
+	const header = `Exit code ${exitCode} after ${Math.round(elapsedMs)} ms`;
+	const sections = [header, "--- stdout ---", stdout, "--- stderr ---", stderr];
+	return sanitizeText(sections.join("\n"));
+}
 
 export function parseApprovedGraphInput(value: unknown): ApprovedGraphInput {
 	const input = inputSchema.assert(value);
@@ -142,7 +150,8 @@ export async function runApprovedGraph(
 		store,
 		runId,
 		maxCoders,
-		async ({ nodeId, inputs }, attemptSignal) => {
+		async (attempt, attemptSignal) => {
+			const { nodeId, inputs } = attempt;
 			const task = coders.get(nodeId);
 			if (task) {
 				const upstream = readCode(inputs).map(saved => saved.changes);
@@ -172,9 +181,11 @@ export async function runApprovedGraph(
 			}
 			switch (nodeId) {
 				case "test": {
-					const { treeId, exitCode } = await executors.test(workspace, candidate, attemptSignal);
-					if (treeId !== candidate.treeId) throw new Error("Graph test ran against a different candidate");
-					return JSON.stringify({ treeId, exitCode });
+					const result = await executors.test(workspace, candidate, attemptSignal);
+					if (result.treeId !== candidate.treeId) throw new Error("Graph test ran against a different candidate");
+					// The log is kept beside the artifact, so output noise never invalidates review or release.
+					store.recordLog(attempt, testLog(result));
+					return JSON.stringify({ treeId: result.treeId, exitCode: result.exitCode });
 				}
 				case "review": {
 					const test = readArtifact<GraphCandidateEvidence["test"]>(testInput);
