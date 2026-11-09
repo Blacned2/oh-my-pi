@@ -8,6 +8,7 @@ import { type GraphTaskPlan, graphPlanForTasks, parseTaskPlan, taskPlanHash } fr
 import {
 	type ApprovedGraphExecutors,
 	type ApprovedGraphInput,
+	DEFAULT_MAX_CODERS,
 	graphWork,
 	parseApprovedGraphInput,
 	proposeGraphPlan,
@@ -25,6 +26,7 @@ const profileSchema = type({
 		command: "string[]",
 		timeoutMs: "1 <= number.integer <= 300000",
 	},
+	"maxCoders?": "1 <= number.integer <= 4",
 });
 const requestSchema = type({ op: "'status' | 'cancel' | 'patch' | 'list' | 'resume' | 'discard'" })
 	.or({ op: "'plan'", input: "unknown" })
@@ -50,6 +52,12 @@ interface Draft {
 	hash: string;
 }
 
+interface LoadedProfile {
+	hash: string;
+	maxCoders: number;
+	executors: ApprovedGraphExecutors;
+}
+
 const [, , dataRoot, cliPath] = Bun.argv;
 if (!dataRoot || !cliPath || !isFullyQualifiedPath(dataRoot) || !isFullyQualifiedPath(cliPath)) {
 	throw new Error("Graph sidecar requires an absolute data directory and OMP entry path");
@@ -71,7 +79,7 @@ function assertIdle(): void {
 	if (active || planning) throw new Error("A Graph run or plan is already active");
 }
 
-async function loadProfile() {
+async function loadProfile(): Promise<LoadedProfile> {
 	const profile = profileSchema.assert(
 		await Bun.file(profilePath)
 			.json()
@@ -84,13 +92,16 @@ async function loadProfile() {
 		provider,
 		model,
 		tester: { dockerPath, imageId, command: commands, timeoutMs },
+		maxCoders,
 	} = profile;
 	const [command, ...args] = commands;
 	if (!command) throw new Error("Graph Tester profile requires a container command");
+	// An unset limit keeps the hash of runs saved before the field existed.
+	const identity: unknown[] = [provider, model, dockerPath, imageId, commands, timeoutMs];
+	if (maxCoders !== undefined) identity.push({ maxCoders });
 	return {
-		hash: new Bun.CryptoHasher("sha256")
-			.update(JSON.stringify([provider, model, dockerPath, imageId, commands, timeoutMs]))
-			.digest("hex"),
+		hash: new Bun.CryptoHasher("sha256").update(JSON.stringify(identity)).digest("hex"),
+		maxCoders: maxCoders ?? DEFAULT_MAX_CODERS,
 		executors: createApprovedGraphExecutors(
 			{
 				bunPath: process.execPath,
@@ -105,7 +116,7 @@ async function loadProfile() {
 	};
 }
 
-function launch(run: GraphRun & { context: GraphRunContext }, executors: ApprovedGraphExecutors) {
+function launch(run: GraphRun & { context: GraphRunContext }, { executors, maxCoders }: LoadedProfile) {
 	const controller = new AbortController();
 	const { context } = run;
 	selected = run.id;
@@ -118,7 +129,7 @@ function launch(run: GraphRun & { context: GraphRunContext }, executors: Approve
 			if (workspace.baseSha !== context.baseSha || workspace.sourceRoot !== context.sourceRoot) {
 				throw new Error("The source changed since the Graph run");
 			}
-			await runApprovedGraph(store, run.id, workspace, work, executors, controller.signal);
+			await runApprovedGraph(store, run.id, workspace, work, executors, { maxCoders, signal: controller.signal });
 		} catch (error) {
 			if (!controller.signal.aborted) failure = { id: run.id, message: toError(error).message.slice(0, 2048) };
 		} finally {
@@ -184,7 +195,7 @@ async function approvePlan({ draft: id, hash }: { draft: string; hash: string })
 	};
 	const run = store.create(graphPlanForTasks(plan), context);
 	draft = undefined;
-	launch({ ...run, context }, profile.executors);
+	launch({ ...run, context }, profile);
 	return { id: run.id };
 }
 
@@ -232,7 +243,7 @@ async function handle(request: typeof requestSchema.infer) {
 			throw new Error("The source changed since the Graph run");
 		const admitted = request.op === "retry" ? store.retry(run.id, request.input) : store.readyNodes(run).length > 0;
 		if (!admitted) throw new Error("This Graph run has no eligible attempt");
-		launch({ ...run, context }, profile.executors);
+		launch({ ...run, context }, profile);
 		return null;
 	}
 	if (request.op === "cancel") {

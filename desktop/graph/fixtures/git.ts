@@ -7,11 +7,11 @@ import type { GraphChangeSet } from "../workspace";
 export const original = { "src/backend.txt": "initial backend\n", "src/frontend.txt": "initial frontend\n" };
 export const author = { name: "Graph Fixture", email: "graph@example.test" };
 
-export async function fixture(root: string): Promise<VcsGitRepo> {
+export async function fixture(root: string, files: Record<string, string> = original): Promise<VcsGitRepo> {
 	await fs.mkdir(root);
 	const repo = await createScratchGit(root);
-	for (const [file, text] of Object.entries(original)) await Bun.write(path.join(root, file), text);
-	await repo.stageFiles(Object.keys(original));
+	for (const [file, text] of Object.entries(files)) await Bun.write(path.join(root, file), text);
+	await repo.stageFiles(Object.keys(files));
 	await repo.commitCreate("Graph fixture", { author });
 	return repo;
 }

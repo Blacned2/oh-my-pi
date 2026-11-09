@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { openSqliteDatabaseSync } from "@oh-my-pi/pi-utils";
 import { type GraphNode, type GraphPlan, parseGraphPlan } from "./plan";
-import type { GraphTask } from "./task-plan";
+import { coderNodeId, type GraphTask, type WriteScopeKeys, writeScopeKeys, writeScopesOverlap } from "./task-plan";
 
 type NodeStatus = "queued" | "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
 
@@ -53,6 +53,12 @@ export interface GraphRunEvent {
 
 type RecordEvent = (kind: GraphRunEvent["kind"], nodeId?: string) => void;
 const MAX_ARTIFACT_BYTES = 1024 * 1024;
+
+/** Re-derive each Coder's write scope from the approved tasks. The plan's earlier admission is not trusted. */
+function coderScopes(run: GraphRun): Map<string, WriteScopeKeys> | undefined {
+	const tasks = run.context?.tasks;
+	return tasks && new Map(tasks.map(task => [coderNodeId(task.id), writeScopeKeys(task.files)]));
+}
 
 /** Owns scheduler transitions, artifacts and the ordered event stream in one SQLite transaction. */
 export class GraphRunStore implements Disposable {
@@ -167,21 +173,26 @@ export class GraphRunStore implements Disposable {
 			const claims: GraphAttempt[] = [];
 			if (run.cancelled) return claims;
 			let slots = concurrency - Object.values(run.nodes).filter(state => state.status === "running").length;
-			let coderRunning = run.plan.nodes.some(
-				node => node.role === "coder" && run.nodes[node.id].status === "running",
-			);
+			const scopes = coderScopes(run);
+			const runningCoders = run.plan.nodes
+				.filter(node => node.role === "coder" && run.nodes[node.id].status === "running")
+				.map(node => node.id);
 			for (const [node, inputs] of this.#walk(run, record).ready) {
 				if (slots <= 0) break;
 				const { id: nodeId, role } = node;
-				const isCoder = role === "coder";
-				if (isCoder && coderRunning) continue;
+				if (role === "coder") {
+					const mine = scopes?.get(nodeId);
+					// Without approved task scopes, Coders stay serialized.
+					if (scopes ? !mine : runningCoders.length > 0) continue;
+					if (mine && runningCoders.some(other => writeScopesOverlap(scopes!.get(other)!, mine))) continue;
+					runningCoders.push(nodeId);
+				}
 				const state = run.nodes[nodeId];
 				state.status = "running";
 				state.attempt++;
 				state.usedAttempts++;
 				state.inputs = inputs;
 				slots--;
-				coderRunning ||= isCoder;
 				record("claimed", nodeId);
 				claims.push({ runId, nodeId, attempt: state.attempt, inputs });
 			}

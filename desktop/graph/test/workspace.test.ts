@@ -115,3 +115,26 @@ test("a snapshot refuses a pre-existing Git symlink instead of materializing its
 	});
 	await expect(buildTestSnapshot(repo, indexPath)).rejects.toThrow(/symlinks and submodules/);
 });
+
+test("concurrent captures and compositions writing the same objects stay reproducible", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-workspace-concurrent-");
+	const source = await fixture(temp.join("source"));
+	const file = "src/backend.txt";
+	const patches = await Promise.all(
+		["a", "b"].map(
+			async name => (await changeSet(await fixture(temp.join(name)), "code", { [file]: `${name}\n` })).patch,
+		),
+	);
+	await using workspace = await GraphWorkspace.pin(source.info().repoRoot);
+	const scopes = new Map([["code", [file]]]);
+	const trees = await Promise.all(
+		Array.from({ length: 8 }, async (_, index) => {
+			const changes = await workspace.captureChangeSet("code", [file], patches[index % 2]);
+			return (await workspace.compose(scopes, [changes])).treeId;
+		}),
+	);
+	expect(new Set(trees.filter((_, index) => index % 2 === 0)).size).toBe(1);
+	expect(new Set(trees.filter((_, index) => index % 2 === 1)).size).toBe(1);
+	expect(trees[0]).not.toBe(trees[1]);
+	expect(await source.isDirty()).toBe(false);
+});

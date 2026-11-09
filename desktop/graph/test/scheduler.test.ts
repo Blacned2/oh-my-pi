@@ -3,6 +3,7 @@ import { TempDir, untilAborted } from "@oh-my-pi/pi-utils";
 import { type GraphNode, parseGraphPlan } from "../plan";
 import { GraphRunStore } from "../run-store";
 import { driveGraphRun } from "../scheduler";
+import { graphPlanForTasks } from "../task-plan";
 
 function node(id: string, role: GraphNode["role"], dependsOn: string[] = [], maxAttempts = 2): GraphNode {
 	return { id, role, dependsOn, maxAttempts };
@@ -14,7 +15,7 @@ test("rejects a graph with a cyclic dependency before any node can be scheduled"
 	).toThrow(/cycle/);
 });
 
-test("join waits for both artifacts and independent coders are serialized", () => {
+test("join waits for both artifacts and Coders without approved scopes are serialized", () => {
 	using store = new GraphRunStore(":memory:");
 	const { id } = store.create({
 		version: 1,
@@ -144,4 +145,107 @@ test("an oversized artifact fails the attempt and is never passed to a dependent
 	expect(dispatched).toEqual(["code"]);
 	expect(store.get(id)?.nodes.code).toMatchObject({ status: "failed", error: "Graph artifact exceeds 1 MiB" });
 	expect(store.currentArtifacts(id).size).toBe(0);
+});
+
+function taskRun(store: GraphRunStore, tasks: { id: string; files: string[]; dependsOn?: string[] }[]): string {
+	const approved = tasks.map(task => ({ title: task.id, brief: task.id, dependsOn: [], ...task }));
+	// The plan is not re-validated here: the store must enforce disjoint scopes on its own at dispatch.
+	const context = {
+		sourceRoot: "C:\\repo",
+		baseSha: "0".repeat(40),
+		objective: "fixture",
+		files: [],
+		profileHash: "",
+	};
+	return store.create(graphPlanForTasks({ version: 1, tasks: approved }), { ...context, tasks: approved }).id;
+}
+
+test("dispatch admits disjoint Coders together and holds back a scope that collides on Windows", () => {
+	using store = new GraphRunStore(":memory:");
+	const id = taskRun(store, [
+		{ id: "api", files: ["src/api.txt"] },
+		{ id: "ui", files: ["web/ui.txt"] },
+		{ id: "case", files: ["SRC/Api.txt"] },
+		{ id: "dir", files: ["web"] },
+	]);
+	const first = store.claimReady(id, 4);
+	expect(first.map(attempt => attempt.nodeId)).toEqual(["code-api", "code-ui"]);
+	store.complete(first[0], "api change");
+	expect(store.claimReady(id, 4).map(attempt => attempt.nodeId)).toEqual(["code-case"]);
+	store.complete(first[1], "ui change");
+	expect(store.claimReady(id, 4).map(attempt => attempt.nodeId)).toEqual(["code-dir"]);
+});
+
+test("independent Coders overlap, a failing sibling does not stop the other and blocks the joined test", async () => {
+	using store = new GraphRunStore(":memory:");
+	const id = taskRun(store, [
+		{ id: "back", files: ["src/back.txt"] },
+		{ id: "front", files: ["src/front.txt"] },
+	]);
+	const bothRunning = Promise.withResolvers<void>();
+	let inFlight = 0;
+	const dispatched: string[] = [];
+	await driveGraphRun(store, id, 2, async ({ nodeId }) => {
+		dispatched.push(nodeId);
+		if (++inFlight === 2) bothRunning.resolve();
+		// Serialized dispatch never reaches the second Coder, so this barrier hangs and the test times out.
+		await bothRunning.promise;
+		if (nodeId === "code-back") throw new Error("backend failed");
+		return "frontend change";
+	});
+	expect(dispatched).toEqual(["code-back", "code-front"]);
+	const nodes = store.get(id)!.nodes;
+	expect([nodes["code-back"].status, nodes["code-front"].status, nodes.test.status]).toEqual([
+		"failed",
+		"succeeded",
+		"queued",
+	]);
+});
+
+test("cancelling two running Coders stops both, and a restart marks both interrupted", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-parallel-db-");
+	const db = temp.join("graph.sqlite");
+	const tasks = [
+		{ id: "back", files: ["src/back.txt"] },
+		{ id: "front", files: ["src/front.txt"] },
+	];
+	{
+		using store = new GraphRunStore(db);
+		const id = taskRun(store, tasks);
+		const controller = new AbortController();
+		const started: string[] = [];
+		const aborted: string[] = [];
+		const bothStarted = Promise.withResolvers<void>();
+		const running = driveGraphRun(
+			store,
+			id,
+			2,
+			async ({ nodeId }, signal) => {
+				started.push(nodeId);
+				if (started.length === 2) bothStarted.resolve();
+				try {
+					await untilAborted(signal, Promise.withResolvers<void>().promise);
+				} finally {
+					if (signal.aborted) aborted.push(nodeId);
+				}
+				return "unused";
+			},
+			controller.signal,
+		);
+		await Promise.race([bothStarted.promise, running]);
+		controller.abort();
+		await running;
+		expect(aborted.sort()).toEqual(["code-back", "code-front"]);
+		expect(store.get(id)!.nodes["code-front"].status).toBe("cancelled");
+	}
+	const crashed = (() => {
+		using store = new GraphRunStore(db);
+		const id = taskRun(store, tasks);
+		expect(store.claimReady(id, 2)).toHaveLength(2);
+		return id;
+	})();
+	using reopened = new GraphRunStore(db);
+	reopened.recoverInterrupted(crashed);
+	const nodes = reopened.get(crashed)!.nodes;
+	expect([nodes["code-back"].status, nodes["code-front"].status]).toEqual(["interrupted", "interrupted"]);
 });

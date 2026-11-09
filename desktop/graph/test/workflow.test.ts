@@ -163,3 +163,82 @@ test("planning stops before the Planner when an approved path collides with the 
 	);
 	expect(planned).toBe(false);
 });
+
+test("independent tasks run their Coders at the same time and the test sees both changes", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-parallel-");
+	const source = await fixture(temp.join("source"));
+	const sourceRoot = source.info().repoRoot;
+	const patches = {
+		"code-back": (await changeSet(await fixture(temp.join("back")), "code-back", { [backend]: "jwt refresh\n" }))
+			.patch,
+		"code-front": (await changeSet(await fixture(temp.join("front")), "code-front", { [frontend]: "retry on 401\n" }))
+			.patch,
+	};
+	const tasks = [
+		{ id: "back", title: "Backend", brief: "Refresh tokens", dependsOn: [], files: [backend] },
+		{ id: "front", title: "Frontend", brief: "Retry once", dependsOn: [], files: [frontend] },
+	];
+	const bothCoding = Promise.withResolvers<void>();
+	let coding = 0;
+	const executors: ApprovedGraphExecutors = {
+		plan: unusedPlanner,
+		async code(_view, task) {
+			if (++coding === 2) bothCoding.resolve();
+			// With one Coder at a time the second never starts, so this barrier hangs and the test times out.
+			await bothCoding.promise;
+			return patches[task.nodeId as keyof typeof patches];
+		},
+		async test(workspace, candidate) {
+			const read = async (file: string) => decode((await workspace.readCandidateFile(candidate, file)).data);
+			expect([await read(backend), await read(frontend)]).toEqual(["jwt refresh\n", "retry on 401\n"]);
+			return { treeId: candidate.treeId, exitCode: 0, elapsedMs: 1, stdout: "", stderr: "" };
+		},
+		review: async () => "accepted",
+	};
+	using store = new GraphRunStore(":memory:");
+	await using workspace = await GraphWorkspace.pin(sourceRoot);
+	const context = {
+		sourceRoot,
+		baseSha: workspace.baseSha,
+		objective: "Fix JWT refresh",
+		files: [backend, frontend],
+		profileHash: "fixture",
+		tasks,
+	};
+	const { id } = store.create(graphPlanForTasks({ version: 1, tasks }), context);
+	await runApprovedGraph(store, id, workspace, graphWork(context), executors, { maxCoders: 2 });
+	expect(readGraphRelease(store, id)?.status).toBe("ready_to_export");
+	expect(await source.isDirty()).toBe(false);
+});
+
+test("a parallel Coder that writes outside its scope fails alone and its sibling's change is kept", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-parallel-scope-");
+	const source = await fixture(temp.join("source"));
+	const sourceRoot = source.info().repoRoot;
+	const intruding = (await changeSet(await fixture(temp.join("back")), "x", { [frontend]: "backend wrote this\n" }))
+		.patch;
+	const own = (await changeSet(await fixture(temp.join("front")), "x", { [frontend]: "retry on 401\n" })).patch;
+	const tasks = [
+		{ id: "back", title: "Backend", brief: "Refresh tokens", dependsOn: [], files: [backend] },
+		{ id: "front", title: "Frontend", brief: "Retry once", dependsOn: [], files: [frontend] },
+	];
+	let tested = false;
+	const executors: ApprovedGraphExecutors = {
+		plan: unusedPlanner,
+		code: async (_view, task) => (task.nodeId === "code-back" ? intruding : own),
+		async test() {
+			tested = true;
+			throw new Error("test must wait for every Coder");
+		},
+		review: async () => "accepted",
+	};
+	using store = new GraphRunStore(":memory:");
+	await using workspace = await GraphWorkspace.pin(sourceRoot);
+	const context = { sourceRoot, baseSha: workspace.baseSha, objective: "Fix", files: [backend, frontend] };
+	const { id } = store.create(graphPlanForTasks({ version: 1, tasks }), { ...context, profileHash: "", tasks });
+	await runApprovedGraph(store, id, workspace, graphWork(store.get(id)!.context!), executors, { maxCoders: 2 });
+	const nodes = store.get(id)!.nodes;
+	expect(nodes["code-back"]).toMatchObject({ status: "failed", error: "Graph patch must change only approved files" });
+	expect(nodes["code-front"].status).toBe("succeeded");
+	expect(tested).toBe(false);
+});

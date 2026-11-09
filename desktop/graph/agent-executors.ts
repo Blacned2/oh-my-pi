@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { RpcClientCustomTool } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
-import { prompt, TempDir } from "@oh-my-pi/pi-utils";
+import { isEnoent, prompt, TempDir } from "@oh-my-pi/pi-utils";
 import { type DockerTestProfile, testCandidateInDocker } from "./docker-tester";
 import { type OmpWorkerOptions, runOmpWorker } from "./omp-worker";
 import coderPrompt from "./prompts/coder.md" with { type: "text" };
@@ -9,6 +10,7 @@ import reviewerPrompt from "./prompts/reviewer.md" with { type: "text" };
 import type { GraphTaskPlan } from "./task-plan";
 import type { ApprovedGraphExecutors, ReviewVerdict } from "./workflow";
 
+/** `home` is the source profile. Each attempt runs in its own copy so concurrent workers share no writable state. */
 type WorkerProfile = Pick<OmpWorkerOptions, "bunPath" | "cliPath" | "home" | "provider" | "model" | "timeoutMs">;
 
 function readTool(
@@ -47,8 +49,16 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 	) => {
 		await using tmp = await TempDir.create("@kostomp-graph-attempt-");
 		const cwd = tmp.join("worker");
+		const home = tmp.join("home");
 		await fs.mkdir(cwd);
-		await runOmpWorker({ ...worker, cwd, signal, tools, prompt: prompt.render(template, context) });
+		const agentDir = path.join(".omp", "agent");
+		try {
+			await fs.cp(path.join(worker.home, agentDir), path.join(home, agentDir), { recursive: true });
+		} catch (error) {
+			if (isEnoent(error)) throw new Error(`Graph worker profile is missing at ${path.join(worker.home, agentDir)}`);
+			throw error;
+		}
+		await runOmpWorker({ ...worker, home, cwd, signal, tools, prompt: prompt.render(template, context) });
 	};
 	return {
 		async plan(workspace, input, validate, signal) {

@@ -101,6 +101,14 @@ export function readGraphRelease(store: GraphRunStore, runId: string): GraphRele
 	return data ? (JSON.parse(data) as GraphRelease) : undefined;
 }
 
+export const DEFAULT_MAX_CODERS = 2;
+
+export interface RunGraphOptions {
+	/** Coders with disjoint write scopes that may run at once. Test, review and release wait for all Coders. */
+	maxCoders?: number;
+	signal?: AbortSignal;
+}
+
 /** Run an approved plan. Coder nodes run only for tasks recorded with the run. */
 export async function runApprovedGraph(
 	store: GraphRunStore,
@@ -108,7 +116,7 @@ export async function runApprovedGraph(
 	workspace: GraphWorkspace,
 	work: GraphWork,
 	executors: ApprovedGraphExecutors,
-	signal?: AbortSignal,
+	{ maxCoders = DEFAULT_MAX_CODERS, signal }: RunGraphOptions = {},
 ): Promise<void> {
 	const coders = new Map(work.tasks.map(task => [task.nodeId, task]));
 	const scopes = new Map(work.tasks.map(task => [task.nodeId, task.files]));
@@ -133,7 +141,7 @@ export async function runApprovedGraph(
 	await driveGraphRun(
 		store,
 		runId,
-		1,
+		maxCoders,
 		async ({ nodeId, inputs }, attemptSignal) => {
 			const task = coders.get(nodeId);
 			if (task) {

@@ -31,6 +31,29 @@ export interface GraphTaskPlan {
 
 export const coderNodeId = (taskId: string): string => `code-${taskId}`;
 
+/** Windows identities a Coder writes, plus their parent directories, for the dispatch-time overlap check. */
+export interface WriteScopeKeys {
+	files: Set<string>;
+	directories: Set<string>;
+}
+
+export function writeScopeKeys(files: readonly string[]): WriteScopeKeys {
+	const keys: WriteScopeKeys = { files: new Set(), directories: new Set() };
+	for (const file of files) {
+		const [key] = writablePathKey(file);
+		keys.files.add(key);
+		for (const [prefix] of repoPathPrefixes(file).slice(0, -1)) keys.directories.add(prefix);
+	}
+	return keys;
+}
+
+/** True when the scopes share a file identity or one writes a path the other uses as a directory. */
+export function writeScopesOverlap(a: WriteScopeKeys, b: WriteScopeKeys): boolean {
+	for (const key of a.files) if (b.files.has(key) || b.directories.has(key)) return true;
+	for (const key of b.files) if (a.directories.has(key)) return true;
+	return false;
+}
+
 /**
  * Admit a proposed task plan against the user-approved file scope. Every written path must be an approved
  * spelling, each Windows file identity has one owner, and dependencies form a DAG.
