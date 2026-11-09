@@ -5,6 +5,7 @@
 ### Added
 
 - Local collab session directory contract (`collab-directory`): the list and link messages a host serves on loopback so a web client can show the machine's live sessions without a room key leaving it
+- `actions.hold` (`TspMenuEntry[]`): what a long press on a touch screen offers, beside `actions.menu`; and `toast`'s `action` / `label` props for a button on the toast
 
 ## [18.18.0] - 2026-11-07
 
