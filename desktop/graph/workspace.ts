@@ -139,6 +139,11 @@ export class GraphWorkspace implements AsyncDisposable {
 		await this.scratch.remove();
 	}
 
+	/** Reject write scopes that overlap or collide with a differently spelled path in the pinned tree. */
+	checkScopes(scopes: ReadonlyMap<string, readonly string[]>): void {
+		checkOwnership(scopes, new Map(this.spellings));
+	}
+
 	async readBaseFile(file: string, signal?: AbortSignal): Promise<{ blobId: string; data: Uint8Array }> {
 		return this.#readFile(this.baseSha, this.spellings, file, signal);
 	}

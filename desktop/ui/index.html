@@ -185,11 +185,19 @@
     <label>Objective <textarea name="objective" rows="3" maxlength="8192" required></textarea></label>
     <label>Approved files <textarea name="files" rows="3" placeholder="One repository-relative path per line" required></textarea></label>
     <div class="graph-actions">
-      <button type="submit" id="graph-start">Run Graph</button>
-      <button type="button" id="graph-cancel" disabled>Cancel run</button>
+      <button type="submit" id="graph-start">Propose plan</button>
+      <button type="button" id="graph-cancel" disabled>Cancel</button>
       <button type="button" id="graph-patch" disabled>Show verified patch</button>
     </div>
   </form>
+  <section id="graph-plan" aria-labelledby="graph-plan-title" hidden>
+    <h3 id="graph-plan-title">Proposed plan</h3>
+    <ol id="graph-tasks"></ol>
+    <div class="graph-actions" id="graph-plan-actions">
+      <button type="button" id="graph-approve">Approve and run</button>
+      <button type="button" id="graph-discard">Discard plan</button>
+    </div>
+  </section>
   <p id="graph-status" role="status"></p>
   <ol id="graph-nodes"></ol>
   <div class="graph-actions">

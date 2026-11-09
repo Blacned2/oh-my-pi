@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { openSqliteDatabaseSync } from "@oh-my-pi/pi-utils";
 import { type GraphNode, type GraphPlan, parseGraphPlan } from "./plan";
+import type { GraphTask } from "./task-plan";
 
 type NodeStatus = "queued" | "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
 
@@ -29,6 +30,11 @@ export interface GraphRunContext {
 	objective: string;
 	files: string[];
 	profileHash: string;
+	/** The user-approved task plan. Absent on runs saved with the fixed single-Coder plan. */
+	tasks?: GraphTask[];
+	/** `taskPlanHash()` of the plan the user approved. */
+	planHash?: string;
+	approvedAt?: number;
 }
 
 export interface GraphAttempt {

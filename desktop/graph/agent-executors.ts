@@ -4,8 +4,10 @@ import { prompt, TempDir } from "@oh-my-pi/pi-utils";
 import { type DockerTestProfile, testCandidateInDocker } from "./docker-tester";
 import { type OmpWorkerOptions, runOmpWorker } from "./omp-worker";
 import coderPrompt from "./prompts/coder.md" with { type: "text" };
+import plannerPrompt from "./prompts/planner.md" with { type: "text" };
 import reviewerPrompt from "./prompts/reviewer.md" with { type: "text" };
-import type { ApprovedGraphExecutors, ApprovedGraphInput, ReviewVerdict } from "./workflow";
+import type { GraphTaskPlan } from "./task-plan";
+import type { ApprovedGraphExecutors, ReviewVerdict } from "./workflow";
 
 type WorkerProfile = Pick<OmpWorkerOptions, "bunPath" | "cliPath" | "home" | "provider" | "model" | "timeoutMs">;
 
@@ -39,29 +41,71 @@ function readTool(
 export function createApprovedGraphExecutors(worker: WorkerProfile, tester: DockerTestProfile): ApprovedGraphExecutors {
 	const run = async (
 		template: string,
-		input: ApprovedGraphInput,
+		context: Record<string, string>,
 		tools: RpcClientCustomTool[],
 		signal: AbortSignal,
 	) => {
 		await using tmp = await TempDir.create("@kostomp-graph-attempt-");
 		const cwd = tmp.join("worker");
 		await fs.mkdir(cwd);
-		await runOmpWorker({
-			...worker,
-			cwd,
-			signal,
-			tools,
-			prompt: prompt.render(template, { files: JSON.stringify(input.files), objective: input.objective }),
-		});
+		await runOmpWorker({ ...worker, cwd, signal, tools, prompt: prompt.render(template, context) });
 	};
 	return {
-		async code(workspace, input, signal) {
+		async plan(workspace, input, validate, signal) {
+			let accepted: GraphTaskPlan | undefined;
+			const task = {
+				type: "object",
+				properties: {
+					id: { type: "string", pattern: "^[a-z][a-z0-9-]{0,31}$" },
+					title: { type: "string" },
+					brief: { type: "string" },
+					dependsOn: { type: "array", items: { type: "string" } },
+					files: { type: "array", items: { type: "string" } },
+				},
+				required: ["id", "title", "brief", "dependsOn", "files"],
+				additionalProperties: false,
+			};
+			await run(
+				plannerPrompt,
+				{ files: JSON.stringify(input.files), objective: input.objective },
+				[
+					readTool(input.files, (file, _candidate, signal) => workspace.readBaseFile(file, signal)),
+					{
+						name: "kostomp_graph_submit_plan",
+						label: "Submit Graph plan",
+						description: "Submit Coder tasks, their dependencies and exclusive file ownership.",
+						loadMode: "essential",
+						parameters: {
+							type: "object",
+							properties: { tasks: { type: "array", minItems: 1, maxItems: 16, items: task } },
+							required: ["tasks"],
+							additionalProperties: false,
+						},
+						execute(params) {
+							if (accepted) throw new Error("A Graph plan was already accepted");
+							accepted = validate(params);
+							return "Plan recorded for user approval";
+						},
+					},
+				],
+				signal,
+			);
+			if (!accepted) throw new Error("Planner did not submit a valid Graph plan");
+			return accepted;
+		},
+		async code(view, task, work, signal) {
 			let patch: string | undefined;
 			await run(
 				coderPrompt,
-				input,
+				{
+					files: JSON.stringify(work.files),
+					owned: JSON.stringify(task.files),
+					objective: work.objective,
+					title: task.title,
+					brief: task.brief,
+				},
 				[
-					readTool(input.files, (file, _candidate, signal) => workspace.readBaseFile(file, signal)),
+					readTool(work.files, (file, _candidate, signal) => view.read(file, signal)),
 					{
 						name: "kostomp_graph_submit_patch",
 						label: "Submit Graph patch",
@@ -93,13 +137,17 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 			return patch;
 		},
 		test: (workspace, candidate, signal) => testCandidateInDocker(workspace, candidate, tester, signal),
-		async review(workspace, candidate, input, signal) {
+		async review(workspace, candidate, work, signal) {
 			let verdict: ReviewVerdict | undefined;
 			await run(
 				reviewerPrompt,
-				input,
+				{
+					files: JSON.stringify(work.files),
+					objective: work.objective,
+					tasks: JSON.stringify(work.tasks.map(({ title, brief, files }) => ({ title, brief, files }))),
+				},
 				[
-					readTool(input.files, (file, proposed, signal) =>
+					readTool(work.files, (file, proposed, signal) =>
 						proposed
 							? workspace.readCandidateFile(candidate, file, signal)
 							: workspace.readBaseFile(file, signal),

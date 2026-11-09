@@ -15,6 +15,13 @@ const cliPath = path.join(runtime, "node_modules/@oh-my-pi/pi-coding-agent/src/c
 const provider = "graph-smoke";
 const model = "graph-smoke-model";
 const file = "src/backend.txt";
+const plannedTask = {
+	id: "backend",
+	title: "Backend text",
+	brief: "Set the backend fixture text",
+	dependsOn: [],
+	files: [file],
+};
 
 await using temp = await TempDir.create("@kostomp-graph-service-smoke-");
 const bundle = temp.join("runtime");
@@ -43,23 +50,43 @@ const server = Bun.serve({
 			return new Response(null, { status: 404 });
 		const body = (await request.json()) as CompletionRequest;
 		const tools = body.tools?.map(tool => tool.function.name) ?? [];
-		const coder = tools.includes("kostomp_graph_submit_patch");
-		const resultTool = coder ? "kostomp_graph_submit_patch" : "kostomp_graph_review";
+		const resultTool = ["kostomp_graph_submit_plan", "kostomp_graph_submit_patch", "kostomp_graph_review"].find(
+			name => tools.includes(name),
+		)!;
 		deepStrictEqual([...tools].sort(), ["kostomp_graph_read_file", resultTool].sort());
+		const planner = resultTool === "kostomp_graph_submit_plan";
 		const responses = body.messages.filter(message => message.role === "tool");
-		if (responses.length > 1) return completion(model, { content: "Done" }, "stop");
-		if (responses.length === 1) {
-			const expected = coder ? original[file].trim() : "service fixture";
+		const steps: [string, object][] = [
+			[
+				"kostomp_graph_read_file",
+				{ path: file, version: resultTool === "kostomp_graph_review" ? "candidate" : "base" },
+			],
+		];
+		if (planner) {
+			steps.push(
+				["kostomp_graph_submit_plan", { tasks: [{ ...plannedTask, files: ["src/secret.txt"] }] }],
+				["kostomp_graph_submit_plan", { tasks: [plannedTask] }],
+			);
+		} else {
+			steps.push([
+				resultTool,
+				resultTool === "kostomp_graph_review" ? { verdict: "accepted" } : { patch: change.patch },
+			]);
+		}
+		if (responses.length >= 1) {
+			const expected = resultTool === "kostomp_graph_review" ? "service fixture" : original[file].trim();
 			if (!JSON.stringify(responses[0].content).includes(expected))
 				throw new Error("Graph did not provide the expected file version");
 		}
-		const name = responses.length === 0 ? "kostomp_graph_read_file" : resultTool;
-		const args =
-			responses.length === 0
-				? { path: file, version: coder ? "base" : "candidate" }
-				: coder
-					? { patch: change.patch }
-					: { verdict: "accepted" };
+		if (
+			planner &&
+			responses.length >= 2 &&
+			!JSON.stringify(responses[1].content).includes("outside the approved scope")
+		)
+			throw new Error("Graph did not reject the out-of-scope plan");
+		const step = steps[responses.length];
+		if (!step) return completion(model, { content: "Done" }, "stop");
+		const [name, args] = step;
 		toolCalls.push(name);
 		return completion(
 			model,
@@ -128,16 +155,41 @@ try {
 		};
 	}
 	let request = startService();
-	const { id } = await request<{ id: string }>({
-		op: "start",
+	type Status = {
+		run?: GraphRun;
+		running?: boolean;
+		planning: boolean;
+		status?: string;
+		error?: string;
+		planError?: string;
+		draft?: { id: string; hash: string; tasks: { id: string; files: string[] }[] };
+	};
+	const settle = async () => {
+		let status: Status;
+		do {
+			await Bun.sleep(200);
+			status = await request<Status>({ op: "status" });
+		} while (status.running || status.planning);
+		return status;
+	};
+	await request({
+		op: "plan",
 		input: { source: source.info().repoRoot, files: [file], objective: "Set the backend fixture text" },
 	});
-	let status: { run: GraphRun; running: boolean; status?: string; error?: string };
-	do {
-		await Bun.sleep(200);
-		status = await request({ op: "status" });
-	} while (status.running);
+	let status = await settle();
+	strictEqual(status.run, undefined, "No run exists before approval");
+	const draft = status.draft;
+	if (!draft) throw new Error(`Planner produced no draft: ${JSON.stringify(status)}`);
+	deepStrictEqual(
+		draft.tasks.map(task => [task.id, task.files]),
+		[["backend", [file]]],
+	);
+	deepStrictEqual(toolCalls, ["kostomp_graph_read_file", "kostomp_graph_submit_plan", "kostomp_graph_submit_plan"]);
+	await rejects(request({ op: "approve", input: { draft: draft.id, hash: "0".repeat(64) } }), /plan changed/);
+	const { id } = await request<{ id: string }>({ op: "approve", input: { draft: draft.id, hash: draft.hash } });
+	status = await settle();
 	strictEqual(status.status, "ready_to_export", JSON.stringify(status));
+	strictEqual(status.draft, undefined);
 	const artifact = await request<{ patch: string; baseSha: string }>({ op: "patch" });
 	strictEqual(artifact.patch.includes("+service fixture"), true);
 	strictEqual(artifact.baseSha, await source.headSha());
@@ -149,18 +201,22 @@ try {
 	strictEqual(saved[0]?.id, id);
 	await request({ op: "open", input: id });
 	deepStrictEqual(await request({ op: "patch" }), artifact);
+	status = await request<Status>({ op: "status" });
+	strictEqual(status.run?.context?.planHash, draft.hash);
+	deepStrictEqual(
+		status.run?.context?.tasks?.map(task => task.id),
+		["backend"],
+	);
 	await request({ op: "retry", input: "test" });
 	await rejects(request({ op: "patch" }), /no verified patch/);
-	do {
-		await Bun.sleep(200);
-		status = await request({ op: "status" });
-	} while (status.running);
+	status = await settle();
 	strictEqual(status.status, "ready_to_export", JSON.stringify(status));
-	strictEqual(status.run.nodes.test.attempt, 2);
-	strictEqual(status.run.nodes.code.attempt, 1);
-	strictEqual(status.run.nodes.review.attempt, 1);
-	strictEqual(status.run.nodes.release.attempt, 1);
-	deepStrictEqual(toolCalls, [
+	const nodes = status.run!.nodes;
+	deepStrictEqual(
+		["code-backend", "test", "review", "release"].map(node => nodes[node].attempt),
+		[1, 2, 1, 1],
+	);
+	deepStrictEqual(toolCalls.slice(3), [
 		"kostomp_graph_read_file",
 		"kostomp_graph_submit_patch",
 		"kostomp_graph_read_file",
@@ -169,7 +225,7 @@ try {
 	await Bun.write(temp.join("source", file), "new user edit\n");
 	await rejects(request({ op: "patch" }), /source changed/);
 	strictEqual((await request<{ status: string }>({ op: "status" })).status, "stale_base");
-	process.stdout.write("Graph workflow, restart, targeted retry and stale release passed\n");
+	process.stdout.write("Graph planning, approval, restart, targeted retry and stale release passed\n");
 } finally {
 	try {
 		await stopService?.();

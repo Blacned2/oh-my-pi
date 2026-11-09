@@ -20,3 +20,8 @@
 #graph-dialog button:disabled { opacity: 0.55; cursor: default; }
 #graph-dialog #graph-output { font-family: var(--mono); white-space: pre; }
 #graph-status, #graph-nodes { overflow-wrap: anywhere; }
+#graph-dialog h3 { margin: 0.4rem 0; font-size: 1rem; }
+#graph-tasks { padding-left: 1.2rem; }
+#graph-tasks li { margin-bottom: 0.5rem; }
+#graph-tasks .graph-task-meta { color: var(--ink-2); font-size: 0.9em; overflow-wrap: anywhere; }
+#graph-tasks .graph-task-brief { margin: 0.15rem 0 0; white-space: pre-wrap; }

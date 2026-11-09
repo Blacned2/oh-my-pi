@@ -3,12 +3,14 @@ import * as path from "node:path";
 import { type } from "@oh-my-pi/omptype";
 import { isEnoent, isFullyQualifiedPath, readLines, toError, tryAcquireFileLock } from "@oh-my-pi/pi-utils";
 import { createApprovedGraphExecutors } from "./agent-executors";
-import { type GraphRun, GraphRunStore } from "./run-store";
+import { type GraphRun, type GraphRunContext, GraphRunStore } from "./run-store";
+import { type GraphTaskPlan, graphPlanForTasks, parseTaskPlan, taskPlanHash } from "./task-plan";
 import {
 	type ApprovedGraphExecutors,
 	type ApprovedGraphInput,
-	approvedGraphPlan,
+	graphWork,
 	parseApprovedGraphInput,
+	proposeGraphPlan,
 	readGraphRelease,
 	runApprovedGraph,
 } from "./workflow";
@@ -24,14 +26,28 @@ const profileSchema = type({
 		timeoutMs: "1 <= number.integer <= 300000",
 	},
 });
-const requestSchema = type({ op: "'status' | 'cancel' | 'patch' | 'list' | 'resume'" })
-	.or({ op: "'start'", input: "unknown" })
+const requestSchema = type({ op: "'status' | 'cancel' | 'patch' | 'list' | 'resume' | 'discard'" })
+	.or({ op: "'plan'", input: "unknown" })
+	.or({ op: "'approve'", input: { draft: "string", hash: "string" } })
 	.or({ op: "'open' | 'retry'", input: "string" });
 
-interface ActiveRun {
-	id: string;
+interface Job {
 	controller: AbortController;
 	job: Promise<void>;
+}
+
+interface ActiveRun extends Job {
+	id: string;
+}
+
+/** A validated proposal awaiting the user's decision. No Coder runs before approval. */
+interface Draft {
+	id: string;
+	input: ApprovedGraphInput;
+	baseSha: string;
+	profileHash: string;
+	plan: GraphTaskPlan;
+	hash: string;
 }
 
 const [, , dataRoot, cliPath] = Bun.argv;
@@ -44,9 +60,16 @@ if (!lease) throw new Error("Another Graph sidecar owns this data directory");
 using store = new GraphRunStore(path.join(dataRoot, "runs.sqlite"));
 const profilePath = path.join(dataRoot, "profile.json");
 let active: ActiveRun | undefined;
+let planning: Job | undefined;
+let draft: Draft | undefined;
+let planError: string | undefined;
 let selected: string | undefined = store.recent()[0]?.id;
 let failure: { id: string; message: string } | undefined;
 const staleRuns = new Set<string>();
+
+function assertIdle(): void {
+	if (active || planning) throw new Error("A Graph run or plan is already active");
+}
 
 async function loadProfile() {
 	const profile = profileSchema.assert(
@@ -82,22 +105,20 @@ async function loadProfile() {
 	};
 }
 
-function launch(run: GraphRun, input: ApprovedGraphInput, executors: ApprovedGraphExecutors) {
+function launch(run: GraphRun & { context: GraphRunContext }, executors: ApprovedGraphExecutors) {
 	const controller = new AbortController();
+	const { context } = run;
 	selected = run.id;
 	failure = undefined;
 	staleRuns.delete(run.id);
 	const job = (async () => {
 		try {
-			await using workspace = await GraphWorkspace.pin(input.source, controller.signal);
-			if (
-				!run.context ||
-				workspace.baseSha !== run.context.baseSha ||
-				workspace.sourceRoot !== run.context.sourceRoot
-			) {
+			const work = graphWork(context);
+			await using workspace = await GraphWorkspace.pin(work.source, controller.signal);
+			if (workspace.baseSha !== context.baseSha || workspace.sourceRoot !== context.sourceRoot) {
 				throw new Error("The source changed since the Graph run");
 			}
-			await runApprovedGraph(store, run.id, workspace, input, executors, controller.signal);
+			await runApprovedGraph(store, run.id, workspace, work, executors, controller.signal);
 		} catch (error) {
 			if (!controller.signal.aborted) failure = { id: run.id, message: toError(error).message.slice(0, 2048) };
 		} finally {
@@ -106,6 +127,65 @@ function launch(run: GraphRun, input: ApprovedGraphInput, executors: ApprovedGra
 		}
 	})();
 	active = { id: run.id, controller, job };
+}
+
+async function proposePlan(value: unknown) {
+	const input = parseApprovedGraphInput(value);
+	if (!isFullyQualifiedPath(input.source)) throw new Error("Choose an absolute source repository directory");
+	const profile = await loadProfile();
+	const { sourceRoot, baseSha } = await inspectGraphSource(input.source);
+	const scoped = { ...input, source: sourceRoot };
+	const controller = new AbortController();
+	draft = undefined;
+	planError = undefined;
+	selected = undefined;
+	const job = (async () => {
+		try {
+			await using workspace = await GraphWorkspace.pin(sourceRoot, controller.signal);
+			if (workspace.baseSha !== baseSha) throw new Error("The source changed while planning");
+			const plan = await proposeGraphPlan(workspace, scoped, profile.executors, controller.signal);
+			draft = {
+				id: crypto.randomUUID(),
+				input: scoped,
+				baseSha,
+				profileHash: profile.hash,
+				plan,
+				hash: taskPlanHash(plan),
+			};
+		} catch (error) {
+			if (!controller.signal.aborted) planError = toError(error).message.slice(0, 2048);
+		} finally {
+			planning = undefined;
+		}
+	})();
+	planning = { controller, job };
+}
+
+/** Admit exactly the plan the user reviewed, then record it with the new run. */
+async function approvePlan({ draft: id, hash }: { draft: string; hash: string }) {
+	if (!draft || draft.id !== id || draft.hash !== hash) {
+		throw new Error("The proposed plan changed. Review it again before approving");
+	}
+	const { input, baseSha, profileHash } = draft;
+	const plan = parseTaskPlan(draft.plan, input.files);
+	if (taskPlanHash(plan) !== hash) throw new Error("The proposed plan changed. Review it again before approving");
+	const profile = await loadProfile();
+	if (profile.hash !== profileHash) throw new Error("The Graph profile changed. Plan again");
+	if (!(await graphBaseIsCurrent(input.source, baseSha))) throw new Error("The source changed. Plan again");
+	const context: GraphRunContext = {
+		sourceRoot: input.source,
+		baseSha,
+		objective: input.objective,
+		files: input.files,
+		profileHash,
+		tasks: plan.tasks,
+		planHash: hash,
+		approvedAt: Date.now(),
+	};
+	const run = store.create(graphPlanForTasks(plan), context);
+	draft = undefined;
+	launch({ ...run, context }, profile.executors);
+	return { id: run.id };
 }
 
 function selectedRun(): GraphRun | null {
@@ -125,25 +205,24 @@ async function handle(request: typeof requestSchema.infer) {
 		selected = request.input;
 		return null;
 	}
-	if (request.op === "start") {
-		if (active) throw new Error("A Graph run is already active");
-		const input = parseApprovedGraphInput(request.input);
-		if (!isFullyQualifiedPath(input.source)) throw new Error("Choose an absolute source repository directory");
-		const profile = await loadProfile();
-		const { sourceRoot, baseSha } = await inspectGraphSource(input.source);
-		const run = store.create(approvedGraphPlan, {
-			sourceRoot,
-			baseSha,
-			objective: input.objective,
-			files: input.files,
-			profileHash: profile.hash,
-		});
-		launch(run, { ...input, source: sourceRoot }, profile.executors);
-		return { id: run.id };
+	if (request.op === "plan") {
+		assertIdle();
+		await proposePlan(request.input);
+		return null;
+	}
+	if (request.op === "approve") {
+		assertIdle();
+		return approvePlan(request.input);
+	}
+	if (request.op === "discard") {
+		planning?.controller.abort();
+		draft = undefined;
+		planError = undefined;
+		return null;
 	}
 	const run = selectedRun();
 	if (request.op === "retry" || request.op === "resume") {
-		if (active) throw new Error("A Graph run is already active");
+		assertIdle();
 		if (!run?.context) throw new Error("This Graph run has no saved execution context");
 		const { context } = run;
 		const profile = await loadProfile();
@@ -153,14 +232,11 @@ async function handle(request: typeof requestSchema.infer) {
 			throw new Error("The source changed since the Graph run");
 		const admitted = request.op === "retry" ? store.retry(run.id, request.input) : store.readyNodes(run).length > 0;
 		if (!admitted) throw new Error("This Graph run has no eligible attempt");
-		launch(
-			run,
-			{ source: context.sourceRoot, objective: context.objective, files: context.files },
-			profile.executors,
-		);
+		launch({ ...run, context }, profile.executors);
 		return null;
 	}
 	if (request.op === "cancel") {
+		planning?.controller.abort();
 		if (active && active.id === run?.id) active.controller.abort();
 		return null;
 	}
@@ -176,15 +252,28 @@ async function handle(request: typeof requestSchema.infer) {
 		}
 		return release.artifact;
 	}
-	if (!run) return null;
+	const idle = !active && !planning;
+	const proposal = {
+		planning: !!planning,
+		planError,
+		draft: draft && {
+			id: draft.id,
+			hash: draft.hash,
+			objective: draft.input.objective,
+			baseSha: draft.baseSha,
+			tasks: draft.plan.tasks,
+		},
+	};
+	if (!run) return { busy: !idle, ...proposal };
 	return {
 		run,
 		running: active?.id === run.id,
-		busy: !!active,
+		busy: !idle,
 		status: staleRuns.has(run.id) ? "stale_base" : release?.status,
 		error: failure?.id === run.id ? failure.message : undefined,
-		retryable: run.context && !active ? store.retryableNodes(run) : [],
-		resumable: !!run.context && !active && store.readyNodes(run).length > 0,
+		retryable: run.context && idle ? store.retryableNodes(run) : [],
+		resumable: !!run.context && idle && store.readyNodes(run).length > 0,
+		...proposal,
 	};
 }
 
@@ -202,8 +291,9 @@ try {
 	}
 } finally {
 	active?.controller.abort();
+	planning?.controller.abort();
 	try {
-		await active?.job;
+		await Promise.all([active?.job, planning?.job]);
 	} finally {
 		lease.release();
 	}
