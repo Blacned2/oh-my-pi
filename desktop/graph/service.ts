@@ -13,6 +13,7 @@ import {
 	parseApprovedGraphInput,
 	proposeGraphPlan,
 	readGraphRelease,
+	retryGraphNode,
 	runApprovedGraph,
 } from "./workflow";
 import { graphBaseIsCurrent, GraphWorkspace, inspectGraphSource } from "./workspace";
@@ -246,7 +247,10 @@ async function handle(request: typeof requestSchema.infer) {
 			throw new Error("The Graph profile changed. Restore it or start a new run");
 		if (!(await graphBaseIsCurrent(context.sourceRoot, context.baseSha)))
 			throw new Error("The source changed since the Graph run");
-		const admitted = request.op === "retry" ? store.retry(run.id, request.input) : store.readyNodes(run).length > 0;
+		const admitted =
+			request.op === "retry"
+				? retryGraphNode(store, run.id, graphWork(context), request.input)
+				: store.readyNodes(run).length > 0;
 		if (!admitted) throw new Error("This Graph run has no eligible attempt");
 		launch({ ...run, context }, profile);
 		return null;
@@ -281,11 +285,13 @@ async function handle(request: typeof requestSchema.infer) {
 		},
 	};
 	if (!run) return { busy: !idle, ...proposal };
+	const status = staleRuns.has(run.id) ? "stale_base" : release?.status;
 	return {
 		run,
 		running: active?.id === run.id,
 		busy: !idle,
-		status: staleRuns.has(run.id) ? "stale_base" : release?.status,
+		status,
+		reason: status === "needs_input" && release?.status === "needs_input" ? release.reason : undefined,
 		error: failure?.id === run.id ? failure.message : undefined,
 		retryable: run.context && idle ? store.retryableNodes(run) : [],
 		resumable: !!run.context && idle && store.readyNodes(run).length > 0,

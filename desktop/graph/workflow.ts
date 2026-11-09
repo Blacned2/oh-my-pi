@@ -2,14 +2,21 @@ import { type } from "@oh-my-pi/omptype";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
 import type { GraphTestResult } from "./docker-tester";
 import { writablePathKey } from "./repo-path";
-import type { GraphRunContext, GraphRunStore } from "./run-store";
-import { driveGraphRun } from "./scheduler";
+import { cleanDiagnostic, type GraphReview } from "./review";
+import type { CoderRepairFeedback, GraphRunContext, GraphRunStore } from "./run-store";
+import { driveGraphRun, type GraphExecutor } from "./scheduler";
 import { coderNodeId, type GraphTaskPlan, parseTaskPlan } from "./task-plan";
-import type { GraphCandidate, GraphCandidateEvidence, GraphChangeSet, GraphRelease, GraphWorkspace } from "./workspace";
+import {
+	graphBaseIsCurrent,
+	type GraphCandidate,
+	type GraphCandidateEvidence,
+	type GraphChangeSet,
+	type GraphRelease,
+	type GraphWorkspace,
+} from "./workspace";
 
 const inputSchema = type({ source: "string > 0", objective: "0 < string <= 8192", files: "string[]" });
 export type ApprovedGraphInput = typeof inputSchema.infer;
-export type ReviewVerdict = NonNullable<GraphCandidateEvidence["review"]>["verdict"];
 
 /** Container output is untrusted display text: ANSI sequences and control characters are removed. */
 function testLog({ exitCode, elapsedMs, stdout, stderr }: GraphTestResult): string {
@@ -68,6 +75,11 @@ export interface GraphFileView {
 /** Receives an attempt's display log. Text is sanitized and stored only while the attempt is live. */
 export type GraphLog = (text: string) => void;
 
+interface RepairBrief {
+	feedback: CoderRepairFeedback;
+	previousPatch: string;
+}
+
 export interface ApprovedGraphExecutors {
 	/** Return the raw proposal. `validate` lets the Planner correct a rejected proposal. */
 	plan(
@@ -76,7 +88,14 @@ export interface ApprovedGraphExecutors {
 		validate: (proposal: unknown) => GraphTaskPlan,
 		signal: AbortSignal,
 	): Promise<unknown>;
-	code(view: GraphFileView, task: CoderBrief, work: GraphWork, signal: AbortSignal, log: GraphLog): Promise<string>;
+	code(
+		view: GraphFileView,
+		task: CoderBrief,
+		work: GraphWork,
+		signal: AbortSignal,
+		log: GraphLog,
+		repair?: RepairBrief,
+	): Promise<string>;
 	test(workspace: GraphWorkspace, candidate: GraphCandidate, signal: AbortSignal): Promise<GraphTestResult>;
 	review(
 		workspace: GraphWorkspace,
@@ -84,7 +103,7 @@ export interface ApprovedGraphExecutors {
 		work: GraphWork,
 		signal: AbortSignal,
 		log: GraphLog,
-	): Promise<ReviewVerdict>;
+	): Promise<GraphReview>;
 }
 
 /** Ask the Planner for tasks and admit only a plan that fits the approved scope and the pinned tree. */
@@ -105,6 +124,48 @@ export async function proposeGraphPlan(
 
 interface CodeArtifact extends GraphCandidate {
 	changes: GraphChangeSet;
+}
+
+// Old saved reviews contain a verdict but no findings.
+type ReviewArtifact = NonNullable<GraphCandidateEvidence["review"]> & Partial<Pick<GraphReview, "findings">>;
+
+export function retryGraphNode(store: GraphRunStore, runId: string, work: GraphWork, nodeId?: string): boolean {
+	const automatic = nodeId === undefined;
+	const run = store.get(runId);
+	if (!run) return false;
+	const release = readGraphRelease(store, runId);
+	if (release?.status === "needs_input") {
+		const current = store.currentArtifacts(runId);
+		const read = <T>(node: string): T | null => {
+			const id = current.get(node);
+			const data = id && store.artifact(runId, id);
+			return data ? (JSON.parse(data) as T) : null;
+		};
+		const test = read<GraphCandidateEvidence["test"]>("test");
+		const review = read<ReviewArtifact>("review");
+		if (test?.exitCode != null && test.exitCode !== 0) {
+			const task =
+				automatic && work.tasks.length === 1 ? work.tasks[0] : work.tasks.find(task => task.nodeId === nodeId);
+			if (task) {
+				const log = cleanDiagnostic(store.log(run, "test") ?? "").slice(-4_000);
+				return store.retry(runId, task.nodeId, {
+					feedback: { testExitCode: test.exitCode, log },
+					automatic,
+				});
+			}
+		}
+		if (review?.verdict === "changes_requested" && review.findings?.length) {
+			const findings = review.findings;
+			const task = automatic
+				? work.tasks.find(task => findings.every(finding => task.files.includes(finding.file)))
+				: work.tasks.find(task => task.nodeId === nodeId);
+			const owned = task && findings.filter(finding => task.files.includes(finding.file));
+			if (task && owned?.length) {
+				return store.retry(runId, task.nodeId, { feedback: { findings: owned }, automatic });
+			}
+		}
+	}
+	return nodeId !== undefined && store.retry(runId, nodeId);
 }
 
 export function readGraphRelease(store: GraphRunStore, runId: string): GraphRelease | undefined {
@@ -150,69 +211,82 @@ export async function runApprovedGraph(
 			if (saved.baseSha !== workspace.baseSha) throw new Error("Graph candidate base changed");
 			return saved;
 		});
-	await driveGraphRun(
-		store,
-		runId,
-		maxCoders,
-		async (attempt, attemptSignal) => {
-			const { nodeId, inputs } = attempt;
-			// Worker output is untrusted model and tool text; a late call from a stale attempt is ignored.
-			const log: GraphLog = text => store.recordLog(attempt, sanitizeText(text));
-			const task = coders.get(nodeId);
-			if (task) {
-				const upstream = readCode(inputs).map(saved => saved.changes);
-				const view = upstream.length > 0 ? await workspace.compose(scopes, upstream, attemptSignal) : undefined;
-				const files: GraphFileView = {
-					read: (file, readSignal) =>
-						view ? workspace.readCandidateFile(view, file, readSignal) : workspace.readBaseFile(file, readSignal),
+	const execute: GraphExecutor = async (attempt, attemptSignal) => {
+		const { nodeId, inputs } = attempt;
+		// Worker output is untrusted model and tool text; a late call from a stale attempt is ignored.
+		const log: GraphLog = text => store.recordLog(attempt, sanitizeText(text));
+		const task = coders.get(nodeId);
+		if (task) {
+			const upstream = readCode(inputs).map(saved => saved.changes);
+			const view = upstream.length > 0 ? await workspace.compose(scopes, upstream, attemptSignal) : undefined;
+			const files: GraphFileView = {
+				read: (file, readSignal) =>
+					view ? workspace.readCandidateFile(view, file, readSignal) : workspace.readBaseFile(file, readSignal),
+			};
+			const repair = attempt.repair && {
+				feedback: attempt.repair.feedback,
+				previousPatch: cleanDiagnostic(
+					readArtifact<CodeArtifact>(attempt.repair.previousArtifact).changes.patch,
+				).slice(0, 12_000),
+			};
+			const patch = await executors.code(files, task, work, attemptSignal, log, repair);
+			const changes = await workspace.captureChangeSet(nodeId, task.files, patch, attemptSignal);
+			const proposed = await workspace.compose(scopes, [...upstream, changes], attemptSignal);
+			return JSON.stringify({ ...proposed, changes } satisfies CodeArtifact);
+		}
+		const codeInputs = inputs.slice(0, coders.size);
+		const [testInput, reviewInput] = inputs.slice(coders.size);
+		if (!candidate || candidateInputs !== codeInputs.join()) {
+			const saved = readCode(codeInputs);
+			candidate = await workspace.compose(
+				scopes,
+				saved.map(code => code.changes),
+				attemptSignal,
+			);
+			if (saved.length === 1 && candidate.treeId !== saved[0].treeId) {
+				throw new Error("Graph candidate could not be reproduced");
+			}
+			candidateInputs = codeInputs.join();
+		}
+		switch (nodeId) {
+			case "test": {
+				const result = await executors.test(workspace, candidate, attemptSignal);
+				if (result.treeId !== candidate.treeId) throw new Error("Graph test ran against a different candidate");
+				// The log is kept beside the artifact, so output noise never invalidates review or release.
+				store.recordLog(attempt, testLog(result));
+				return JSON.stringify({ treeId: result.treeId, exitCode: result.exitCode });
+			}
+			case "review": {
+				const test = readArtifact<GraphCandidateEvidence["test"]>(testInput);
+				if (test?.treeId !== candidate.treeId || test.exitCode !== 0) return "null";
+				const review = {
+					treeId: candidate.treeId,
+					...(await executors.review(workspace, candidate, work, attemptSignal, log)),
 				};
-				const patch = await executors.code(files, task, work, attemptSignal, log);
-				const changes = await workspace.captureChangeSet(nodeId, task.files, patch, attemptSignal);
-				const proposed = await workspace.compose(scopes, [...upstream, changes], attemptSignal);
-				return JSON.stringify({ ...proposed, changes } satisfies CodeArtifact);
+				return JSON.stringify(review);
 			}
-			const codeInputs = inputs.slice(0, coders.size);
-			const [testInput, reviewInput] = inputs.slice(coders.size);
-			if (!candidate || candidateInputs !== codeInputs.join()) {
-				const saved = readCode(codeInputs);
-				candidate = await workspace.compose(
-					scopes,
-					saved.map(code => code.changes),
-					attemptSignal,
-				);
-				if (saved.length === 1 && candidate.treeId !== saved[0].treeId) {
-					throw new Error("Graph candidate could not be reproduced");
+			case "release": {
+				const test = readArtifact<GraphCandidateEvidence["test"]>(testInput);
+				const review = readArtifact<ReviewArtifact | null>(reviewInput);
+				const release = await workspace.release(candidate, { test, review: review ?? undefined }, attemptSignal);
+				if (release.status === "needs_input") {
+					release.reason =
+						test?.exitCode !== 0
+							? `Tests failed (exit code ${test?.exitCode ?? "unknown"}).`
+							: "Review requested changes.";
 				}
-				candidateInputs = codeInputs.join();
+				return JSON.stringify(release);
 			}
-			switch (nodeId) {
-				case "test": {
-					const result = await executors.test(workspace, candidate, attemptSignal);
-					if (result.treeId !== candidate.treeId) throw new Error("Graph test ran against a different candidate");
-					// The log is kept beside the artifact, so output noise never invalidates review or release.
-					store.recordLog(attempt, testLog(result));
-					return JSON.stringify({ treeId: result.treeId, exitCode: result.exitCode });
-				}
-				case "review": {
-					const test = readArtifact<GraphCandidateEvidence["test"]>(testInput);
-					if (test?.treeId !== candidate.treeId || test.exitCode !== 0) return "null";
-					const review = {
-						treeId: candidate.treeId,
-						verdict: await executors.review(workspace, candidate, work, attemptSignal, log),
-					};
-					return JSON.stringify(review);
-				}
-				case "release": {
-					const test = readArtifact<GraphCandidateEvidence["test"]>(testInput);
-					const review = readArtifact<GraphCandidateEvidence["review"] | null>(reviewInput);
-					return JSON.stringify(
-						await workspace.release(candidate, { test, review: review ?? undefined }, attemptSignal),
-					);
-				}
-				default:
-					throw new Error("Unsupported Graph node");
-			}
-		},
-		signal,
+			default:
+				throw new Error("Unsupported Graph node");
+		}
+	};
+	do {
+		await driveGraphRun(store, runId, maxCoders, execute, signal);
+	} while (
+		!signal?.aborted &&
+		readGraphRelease(store, runId)?.status === "needs_input" &&
+		(await graphBaseIsCurrent(workspace.sourceRoot, workspace.baseSha, signal)) &&
+		retryGraphNode(store, runId, work)
 	);
 }

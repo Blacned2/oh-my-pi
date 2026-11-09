@@ -2,13 +2,14 @@ import { expect, test } from "bun:test";
 import * as path from "node:path";
 import { TempDir } from "@oh-my-pi/pi-utils";
 import { changeSet, fixture } from "../fixtures/git";
-import { GraphRunStore } from "../run-store";
+import { type CoderRepairFeedback, GraphRunStore } from "../run-store";
 import { graphPlanForTasks } from "../task-plan";
 import {
 	type ApprovedGraphExecutors,
 	graphWork,
 	proposeGraphPlan,
 	readGraphRelease,
+	retryGraphNode,
 	runApprovedGraph,
 } from "../workflow";
 import { GraphWorkspace } from "../workspace";
@@ -31,7 +32,7 @@ const savedSingleCoderPlan = {
 	],
 };
 
-test("a saved single-Coder run reopens, retries its test and withdraws the prior release", async () => {
+test("a reopened run withdraws its prior release and stops after bounded repairs of a failing test", async () => {
 	await using temp = await TempDir.create("@kostomp-graph-retry-");
 	const source = await fixture(temp.join("source"));
 	const edited = await fixture(temp.join("edited"));
@@ -48,20 +49,28 @@ test("a saved single-Coder run reopens, retries its test and withdraws the prior
 	let exitCode = 0;
 	let codeCalls = 0;
 	let reviewCalls = 0;
+	const feedback: CoderRepairFeedback[] = [];
 	const executors: ApprovedGraphExecutors = {
 		plan: unusedPlanner,
-		async code() {
+		async code(_view, _task, _work, _signal, _log, repair) {
 			codeCalls++;
+			if (repair) feedback.push(repair.feedback);
 			return patch;
 		},
 		async test(workspace, candidate) {
 			const { data } = await workspace.readCandidateFile(candidate, backend);
 			expect(decode(data)).toBe("retry fixture\n");
-			return { treeId: candidate.treeId, exitCode, elapsedMs: 1, stdout: "", stderr: "" };
+			return {
+				treeId: candidate.treeId,
+				exitCode,
+				elapsedMs: 1,
+				stdout: "",
+				stderr: "\u001b[31mJWT fixture failed\u001b[0m",
+			};
 		},
 		async review() {
 			reviewCalls++;
-			return "accepted";
+			return { verdict: "accepted", findings: [] };
 		},
 	};
 	let id: string;
@@ -78,8 +87,15 @@ test("a saved single-Coder run reopens, retries its test and withdraws the prior
 	expect(readGraphRelease(store, id)).toBeUndefined();
 	exitCode = 23;
 	await runApprovedGraph(store, id, workspace, graphWork(store.get(id)!.context!), executors);
-	expect(readGraphRelease(store, id)?.status).toBe("needs_input");
-	expect(codeCalls).toBe(1);
+	expect(readGraphRelease(store, id)).toEqual({ status: "needs_input", reason: "Tests failed (exit code 23)." });
+	expect(codeCalls).toBe(3);
+	expect(feedback).toHaveLength(2);
+	for (const input of feedback) {
+		expect(input).toMatchObject({ testExitCode: 23 });
+		const log = "log" in input ? input.log : "";
+		expect(log).toContain("JWT fixture failed");
+		expect(log).not.toContain("\u001b");
+	}
 	expect(reviewCalls).toBe(1);
 	expect(await source.isDirty()).toBe(false);
 });
@@ -123,7 +139,7 @@ test("an approved plan runs dependent Coders on upstream results and a same-resu
 		async review(_workspace, _candidate, work) {
 			calls.push("review");
 			expect(work.tasks.map(task => task.files)).toEqual([[backend], [frontend]]);
-			return "accepted";
+			return { verdict: "accepted", findings: [] };
 		},
 	};
 	using store = new GraphRunStore(":memory:");
@@ -164,7 +180,7 @@ test("planning stops before the Planner when an approved path collides with the 
 	expect(planned).toBe(false);
 });
 
-test("independent tasks run their Coders at the same time and the test sees both changes", async () => {
+test("parallel Coders reach one candidate, and an unattributed test failure waits for the user to pick a Coder", async () => {
 	await using temp = await TempDir.create("@kostomp-graph-parallel-");
 	const source = await fixture(temp.join("source"));
 	const sourceRoot = source.info().repoRoot;
@@ -180,10 +196,15 @@ test("independent tasks run their Coders at the same time and the test sees both
 	];
 	const bothCoding = Promise.withResolvers<void>();
 	let coding = 0;
+	let exitCode = 0;
+	const repairs: string[] = [];
 	const executors: ApprovedGraphExecutors = {
 		plan: unusedPlanner,
-		async code(_view, task) {
+		async code(_view, task, _work, _signal, _log, repair) {
 			if (++coding === 2) bothCoding.resolve();
+			if (repair && "log" in repair.feedback && repair.feedback.log.includes("401 fixture failed")) {
+				repairs.push(task.nodeId);
+			}
 			// With one Coder at a time the second never starts, so this barrier hangs and the test times out.
 			await bothCoding.promise;
 			return patches[task.nodeId as keyof typeof patches];
@@ -191,9 +212,9 @@ test("independent tasks run their Coders at the same time and the test sees both
 		async test(workspace, candidate) {
 			const read = async (file: string) => decode((await workspace.readCandidateFile(candidate, file)).data);
 			expect([await read(backend), await read(frontend)]).toEqual(["jwt refresh\n", "retry on 401\n"]);
-			return { treeId: candidate.treeId, exitCode: 0, elapsedMs: 1, stdout: "", stderr: "" };
+			return { treeId: candidate.treeId, exitCode, elapsedMs: 1, stdout: "", stderr: "401 fixture failed" };
 		},
-		review: async () => "accepted",
+		review: async () => ({ verdict: "accepted", findings: [] }),
 	};
 	using store = new GraphRunStore(":memory:");
 	await using workspace = await GraphWorkspace.pin(sourceRoot);
@@ -208,6 +229,72 @@ test("independent tasks run their Coders at the same time and the test sees both
 	const { id } = store.create(graphPlanForTasks({ version: 1, tasks }), context);
 	await runApprovedGraph(store, id, workspace, graphWork(context), executors, { maxCoders: 2 });
 	expect(readGraphRelease(store, id)?.status).toBe("ready_to_export");
+	expect(store.retry(id, "test")).toBe(true);
+	exitCode = 1;
+	const work = graphWork(context);
+	await runApprovedGraph(store, id, workspace, work, executors);
+	expect(readGraphRelease(store, id)?.status).toBe("needs_input");
+	expect(coding).toBe(2);
+	expect(retryGraphNode(store, id, work, "code-front")).toBe(true);
+	await runApprovedGraph(store, id, workspace, work, executors);
+	expect(repairs).toEqual(["code-front"]);
+	expect(await source.isDirty()).toBe(false);
+});
+
+test("a file-specific review finding repairs only its owning Coder and verifies the new candidate", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-review-repair-");
+	const source = await fixture(temp.join("source"));
+	const sourceRoot = source.info().repoRoot;
+	const before = await changeSet(await fixture(temp.join("back")), "code-back", { [backend]: "log token\n" });
+	const after = await changeSet(await fixture(temp.join("repaired")), "code-back", { [backend]: "rotate token\n" });
+	const client = await changeSet(await fixture(temp.join("front")), "code-front", { [frontend]: "retry on 401\n" });
+	const tasks = [
+		{ id: "back", title: "Backend", brief: "Refresh tokens", dependsOn: [], files: [backend] },
+		{ id: "front", title: "Frontend", brief: "Retry once", dependsOn: [], files: [frontend] },
+	];
+	const finding = { file: backend, issue: "Token is logged", expectedChange: "Rotate without logging it" };
+	const tested: string[] = [];
+	let frontendCalls = 0;
+	const executors: ApprovedGraphExecutors = {
+		plan: unusedPlanner,
+		async code(_view, task, _work, _signal, _log, repair) {
+			if (task.nodeId === "code-front") {
+				frontendCalls++;
+				return client.patch;
+			}
+			if (!repair) return before.patch;
+			expect(repair.feedback).toEqual({ findings: [finding] });
+			expect(repair.previousPatch).toContain("+log token");
+			return after.patch;
+		},
+		async test(workspace, candidate) {
+			tested.push(decode((await workspace.readCandidateFile(candidate, backend)).data));
+			expect(decode((await workspace.readCandidateFile(candidate, frontend)).data)).toBe("retry on 401\n");
+			return { treeId: candidate.treeId, exitCode: 0, elapsedMs: 1, stdout: "", stderr: "" };
+		},
+		async review(workspace, candidate) {
+			const text = decode((await workspace.readCandidateFile(candidate, backend)).data);
+			return text === "rotate token\n"
+				? { verdict: "accepted", findings: [] }
+				: { verdict: "changes_requested", findings: [finding] };
+		},
+	};
+	using store = new GraphRunStore(":memory:");
+	await using workspace = await GraphWorkspace.pin(sourceRoot);
+	const context = {
+		sourceRoot,
+		baseSha: workspace.baseSha,
+		objective: "Fix JWT refresh",
+		files: [backend, frontend],
+		profileHash: "",
+		tasks,
+	};
+	const { id } = store.create(graphPlanForTasks({ version: 1, tasks }), context);
+	await runApprovedGraph(store, id, workspace, graphWork(context), executors);
+	expect(tested).toEqual(["log token\n", "rotate token\n"]);
+	expect(frontendCalls).toBe(1);
+	const release = readGraphRelease(store, id);
+	expect(release?.status === "ready_to_export" && release.artifact.patch).toContain("+rotate token");
 	expect(await source.isDirty()).toBe(false);
 });
 
@@ -230,7 +317,7 @@ test("a parallel Coder that writes outside its scope fails alone and its sibling
 			tested = true;
 			throw new Error("test must wait for every Coder");
 		},
-		review: async () => "accepted",
+		review: async () => ({ verdict: "accepted", findings: [] }),
 	};
 	using store = new GraphRunStore(":memory:");
 	await using workspace = await GraphWorkspace.pin(sourceRoot);
@@ -263,7 +350,7 @@ test("test output is kept as a sanitized log, and a rerun with new output but th
 		}),
 		async review() {
 			reviews++;
-			return "accepted";
+			return { verdict: "accepted", findings: [] };
 		},
 	};
 	using store = new GraphRunStore(":memory:");
@@ -300,7 +387,7 @@ test("a failed Coder keeps its sanitized worker log with the attempt", async () 
 		test: async () => {
 			throw new Error("unreachable");
 		},
-		review: async () => "accepted",
+		review: async () => ({ verdict: "accepted", findings: [] }),
 	};
 	using store = new GraphRunStore(":memory:");
 	await using workspace = await GraphWorkspace.pin(sourceRoot);

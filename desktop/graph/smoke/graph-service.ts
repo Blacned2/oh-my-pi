@@ -22,6 +22,13 @@ const edits: Record<string, string> = {
 	"src/backend.txt": "refresh endpoint\n",
 	"src/frontend.txt": "retry on 401\n",
 };
+const backend = "src/backend.txt";
+const initialBackend = "unrestricted refresh endpoint";
+const finding = {
+	file: backend,
+	issue: "The refresh endpoint has no guard",
+	expectedChange: "Require authenticated refresh",
+};
 const tasks = [
 	{
 		id: "contract",
@@ -65,9 +72,16 @@ const patches: Record<string, string> = {};
 for (const [index, [file, text]] of Object.entries(edits).entries()) {
 	patches[file] = (await changeSet(await fixture(temp.join(`edit-${index}`), files), "code", { [file]: text })).patch;
 }
+const initialBackendPatch = (
+	await changeSet(await fixture(temp.join("initial-backend"), files), "code", {
+		[backend]: `${initialBackend}\n`,
+	})
+).patch;
 const data = temp.join("data");
 const toolCalls: string[] = [];
 const coderStarts: string[] = [];
+let repairedBackend = false;
+let blockReview = false;
 // Backend and frontend Coders each wait here for the other's first request, which proves they overlap.
 const parallel = Promise.withResolvers<void>();
 const server = Bun.serve({
@@ -98,11 +112,19 @@ const server = Bun.serve({
 				throw new Error("Graph did not reject the out-of-scope plan");
 		} else if (resultTool === "kostomp_graph_submit_patch") {
 			const owned = Object.keys(edits).find(file => prompt.includes(`Owned files:\\n[\\"${file}`))!;
+			if (prompt.includes(finding.expectedChange)) {
+				strictEqual(owned, backend, "The review finding must reach only the file owner");
+				strictEqual(prompt.includes(initialBackend), true, "The previous patch must reach the Coder");
+				repairedBackend = true;
+			}
 			// Dependent Coders read the contract from their prerequisite's candidate.
 			expectedRead = owned === "src/api.txt" ? "token v1" : "token v2 with refresh";
 			steps = [
 				["kostomp_graph_read_file", { path: "src/api.txt" }],
-				["kostomp_graph_submit_patch", { patch: patches[owned] }],
+				[
+					"kostomp_graph_submit_patch",
+					{ patch: owned === backend && !repairedBackend ? initialBackendPatch : patches[owned] },
+				],
 			];
 			if (responses.length === 0 && owned !== "src/api.txt") {
 				coderStarts.push(owned);
@@ -113,8 +135,38 @@ const server = Bun.serve({
 			expectedRead = "retry on 401";
 			steps = [
 				["kostomp_graph_read_file", { path: "src/frontend.txt", version: "candidate" }],
-				["kostomp_graph_review", { verdict: "accepted" }],
+				["kostomp_graph_read_file", { path: backend, version: "candidate" }],
 			];
+			const proposedBackend = JSON.stringify(responses[1]?.content) ?? "";
+			if (proposedBackend.includes(initialBackend)) {
+				steps.push(
+					[
+						"kostomp_graph_review",
+						{ verdict: "changes_requested", findings: [{ ...finding, file: "src/secret.txt" }] },
+					],
+					["kostomp_graph_review", { verdict: "changes_requested", findings: [finding] }],
+				);
+				if (responses.length >= 3) {
+					strictEqual(JSON.stringify(responses[2].content).includes("outside the owned files"), true);
+				}
+			} else if (blockReview) {
+				steps.push([
+					"kostomp_graph_review",
+					{
+						verdict: "changes_requested",
+						findings: [
+							finding,
+							{
+								file: "src/frontend.txt",
+								issue: "The client retries indefinitely",
+								expectedChange: "Limit retries to one",
+							},
+						],
+					},
+				]);
+			} else {
+				steps.push(["kostomp_graph_review", { verdict: "accepted", findings: [] }]);
+			}
 		}
 		if (responses.length >= 1 && !JSON.stringify(responses[0].content).includes(expectedRead))
 			throw new Error(`Graph did not provide ${expectedRead}`);
@@ -140,7 +192,10 @@ const server = Bun.serve({
 });
 let stopService: (() => Promise<void>) | undefined;
 try {
-	const checks = Object.entries(edits).map(([file, text]) => `test "$(cat ${file})" = "${text.trim()}"`);
+	const checks = Object.entries(edits).map(([file, text]) => {
+		const check = `test "$(cat ${file})" = "${text.trim()}"`;
+		return file === backend ? `(${check} || test "$(cat ${backend})" = "${initialBackend}")` : check;
+	});
 	// Colored stdout and a stderr line reach the Desktop log only as plain text.
 	const output = ["printf '\\033[32mgraph-smoke-stdout\\033[0m\\n'", "echo graph-smoke-stderr >&2"];
 	await Bun.write(
@@ -197,6 +252,7 @@ try {
 		running?: boolean;
 		planning: boolean;
 		status?: string;
+		reason?: string;
 		error?: string;
 		planError?: string;
 		logs?: string[];
@@ -226,7 +282,7 @@ try {
 	await rejects(request({ op: "plan", input }), /already active/);
 	status = await settle();
 	strictEqual(status.status, "ready_to_export", JSON.stringify(status));
-	deepStrictEqual(coderStarts.sort(), ["src/backend.txt", "src/frontend.txt"]);
+	deepStrictEqual(coderStarts.sort(), [backend, backend, "src/frontend.txt"]);
 	deepStrictEqual(status.logs, ["code-contract", "code-backend", "code-frontend", "test", "review"]);
 	const coderLog = await request<string>({ op: "log", input: "code-backend" });
 	strictEqual(/→ kostomp_graph_read_file[\s\S]*← kostomp_graph_submit_patch/.test(coderLog), true, coderLog);
@@ -258,15 +314,26 @@ try {
 	const nodes = status.run!.nodes;
 	deepStrictEqual(
 		["code-contract", "code-backend", "code-frontend", "test", "review", "release"].map(node => nodes[node].attempt),
-		[1, 2, 1, 1, 1, 1],
+		[1, 3, 1, 2, 2, 2],
 		"The same backend result reruns nothing downstream",
 	);
 	strictEqual(toolCalls.filter(name => name === "kostomp_graph_review").length, reviews);
-	await Bun.write(temp.join("source", "src/backend.txt"), "new user edit\n");
+	blockReview = true;
+	await request({ op: "retry", input: "review" });
+	status = await settle();
+	strictEqual(status.run?.nodes["code-backend"].attempt, 3);
+	strictEqual(status.run?.nodes["code-frontend"].attempt, 1);
+	strictEqual(status.status, "needs_input", JSON.stringify(status));
+	strictEqual(status.reason, "Review requested changes.");
+	await rejects(request({ op: "patch" }), /no verified patch/);
+	blockReview = false;
+	await request({ op: "retry", input: "review" });
+	strictEqual((await settle()).status, "ready_to_export");
+	await Bun.write(temp.join("source", backend), "new user edit\n");
 	await rejects(request({ op: "patch" }), /source changed/);
 	strictEqual((await request<{ status: string }>({ op: "status" })).status, "stale_base");
 	process.stdout.write(
-		"Graph planning, approval, parallel Coders, test log, restart, targeted retry and stale release passed\n",
+		"Graph planning, approval, parallel Coders, scoped repair, logs, restart, targeted retry and release gates passed\n",
 	);
 } finally {
 	try {

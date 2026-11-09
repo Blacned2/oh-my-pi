@@ -7,8 +7,9 @@ import { type OmpWorkerOptions, runOmpWorker } from "./omp-worker";
 import coderPrompt from "./prompts/coder.md" with { type: "text" };
 import plannerPrompt from "./prompts/planner.md" with { type: "text" };
 import reviewerPrompt from "./prompts/reviewer.md" with { type: "text" };
+import { type GraphReview, parseGraphReview } from "./review";
 import type { GraphTaskPlan } from "./task-plan";
-import type { ApprovedGraphExecutors, GraphLog, ReviewVerdict } from "./workflow";
+import type { ApprovedGraphExecutors, GraphLog } from "./workflow";
 
 /** `home` is the source profile. Each attempt runs in its own copy so concurrent workers share no writable state. */
 type WorkerProfile = Pick<OmpWorkerOptions, "bunPath" | "cliPath" | "home" | "provider" | "model" | "timeoutMs">;
@@ -117,7 +118,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 			if (!accepted) throw new Error("Planner did not submit a valid Graph plan");
 			return accepted;
 		},
-		async code(view, task, work, signal, log) {
+		async code(view, task, work, signal, log, repair) {
 			let patch: string | undefined;
 			await run(
 				coderPrompt,
@@ -127,6 +128,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 					objective: work.objective,
 					title: task.title,
 					brief: task.brief,
+					repair: repair ? JSON.stringify(repair) : "",
 				},
 				[
 					readTool(work.files, (file, _candidate, signal) => view.read(file, signal)),
@@ -163,7 +165,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 		},
 		test: (workspace, candidate, signal) => testCandidateInDocker(workspace, candidate, tester, signal),
 		async review(workspace, candidate, work, signal, log) {
-			let verdict: ReviewVerdict | undefined;
+			let review: GraphReview | undefined;
 			await run(
 				reviewerPrompt,
 				{
@@ -180,18 +182,36 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 					{
 						name: "kostomp_graph_review",
 						label: "Review Graph candidate",
-						description: "Submit a review verdict.",
+						description: "Submit a review verdict and file findings when changes are required.",
 						loadMode: "essential",
 						parameters: {
 							type: "object",
-							properties: { verdict: { enum: ["accepted", "changes_requested"] } },
-							required: ["verdict"],
+							properties: {
+								verdict: { enum: ["accepted", "changes_requested"] },
+								findings: {
+									type: "array",
+									maxItems: 8,
+									items: {
+										type: "object",
+										properties: {
+											file: { type: "string" },
+											issue: { type: "string" },
+											expectedChange: { type: "string" },
+										},
+										required: ["file", "issue", "expectedChange"],
+										additionalProperties: false,
+									},
+								},
+							},
+							required: ["verdict", "findings"],
 							additionalProperties: false,
 						},
 						execute(params) {
-							if (verdict || (params.verdict !== "accepted" && params.verdict !== "changes_requested"))
-								throw new Error("Submit one valid Graph verdict");
-							verdict = params.verdict;
+							if (review) throw new Error("Submit one valid Graph review");
+							review = parseGraphReview(
+								params,
+								work.tasks.flatMap(task => task.files),
+							);
 							return "Review recorded";
 						},
 					},
@@ -199,8 +219,8 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 				signal,
 				log,
 			);
-			if (!verdict) throw new Error("Reviewer did not submit a verdict");
-			return verdict;
+			if (!review) throw new Error("Reviewer did not submit a review");
+			return review;
 		},
 	};
 }

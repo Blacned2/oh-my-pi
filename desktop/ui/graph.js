@@ -117,6 +117,7 @@
       snapshot?.planError ||
       (snapshot?.planning ? "Planning…" : "") ||
       (draft && !snapshot?.running ? "Review the plan. Coders start only after approval." : "") ||
+      snapshot?.reason ||
       states[snapshot?.status] ||
       (snapshot?.running ? "Graph running" : snapshot?.run?.cancelled ? "Run cancelled" : snapshot?.run ? "Run finished" : "");
     if (status.textContent !== label) status.textContent = label;

@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { openSqliteDatabaseSync } from "@oh-my-pi/pi-utils";
 import { type GraphNode, type GraphPlan, parseGraphPlan } from "./plan";
+import type { GraphReview } from "./review";
 import { coderNodeId, type GraphTask, type WriteScopeKeys, writeScopeKeys, writeScopesOverlap } from "./task-plan";
 
 type NodeStatus = "queued" | "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
@@ -13,6 +14,7 @@ interface NodeState {
 	inputs?: string[];
 	artifact?: string;
 	error?: string;
+	repair?: CoderRepair;
 }
 
 export interface GraphRun {
@@ -22,6 +24,14 @@ export interface GraphRun {
 	cancelled: boolean;
 	nodes: Record<string, NodeState>;
 	context?: GraphRunContext;
+	automaticRepairs?: number;
+}
+
+export type CoderRepairFeedback = { testExitCode: number; log: string } | { findings: GraphReview["findings"] };
+
+interface CoderRepair {
+	feedback: CoderRepairFeedback;
+	previousArtifact: string;
 }
 
 export interface GraphRunContext {
@@ -42,6 +52,7 @@ export interface GraphAttempt {
 	nodeId: string;
 	attempt: number;
 	inputs: string[];
+	repair?: CoderRepair;
 }
 
 export interface GraphRunEvent {
@@ -54,6 +65,7 @@ export interface GraphRunEvent {
 type RecordEvent = (kind: GraphRunEvent["kind"], nodeId?: string) => void;
 const MAX_ARTIFACT_BYTES = 1024 * 1024;
 const MAX_LOG_CHARS = 256 * 1024;
+const MAX_AUTOMATIC_REPAIRS = 2;
 
 /** Re-derive each Coder's write scope from the approved tasks. The plan's earlier admission is not trusted. */
 function coderScopes(run: GraphRun): Map<string, WriteScopeKeys> | undefined {
@@ -245,7 +257,13 @@ export class GraphRunStore implements Disposable {
 				state.inputs = inputs;
 				slots--;
 				record("claimed", nodeId);
-				claims.push({ runId, nodeId, attempt: state.attempt, inputs });
+				claims.push({
+					runId,
+					nodeId,
+					attempt: state.attempt,
+					inputs,
+					...(state.repair && { repair: state.repair }),
+				});
 			}
 			return claims;
 		});
@@ -270,6 +288,7 @@ export class GraphRunStore implements Disposable {
 			]);
 			state.status = "succeeded";
 			state.artifact = id;
+			delete state.repair;
 			record("succeeded", attempt.nodeId);
 			this.#walk(run, record);
 			return true;
@@ -287,11 +306,21 @@ export class GraphRunStore implements Disposable {
 		});
 	}
 
-	/** An explicit retry at quiescence. Retry budget is per set of upstream artifacts. */
-	retry(runId: string, nodeId: string): boolean {
+	/** Retry at quiescence. The node's attempt budget applies per set of upstream artifacts. */
+	retry(runId: string, nodeId: string, repair?: { feedback: CoderRepairFeedback; automatic: boolean }): boolean {
 		return this.#update(runId, (run, record) => {
 			if (!this.retryableNodes(run).includes(nodeId)) return false;
 			const state = run.nodes[nodeId];
+			if (repair) {
+				const previousArtifact = state.artifact ?? state.repair?.previousArtifact;
+				if (!previousArtifact || run.plan.nodes.find(node => node.id === nodeId)?.role !== "coder") return false;
+				if (repair.automatic) {
+					const used = run.automaticRepairs ?? 0;
+					if (used >= MAX_AUTOMATIC_REPAIRS) return false;
+					run.automaticRepairs = used + 1;
+				}
+				state.repair = { feedback: repair.feedback, previousArtifact };
+			}
 			state.status = "queued";
 			delete state.artifact;
 			delete state.error;
@@ -336,6 +365,7 @@ export class GraphRunStore implements Disposable {
 				delete state.inputs;
 				delete state.artifact;
 				delete state.error;
+				delete state.repair;
 				record("invalidated", node.id);
 			}
 			if (state.status === "succeeded" && state.artifact) current.set(node.id, state.artifact);

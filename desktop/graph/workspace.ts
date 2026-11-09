@@ -39,7 +39,8 @@ export interface GraphCandidateEvidence {
 
 export type GraphRelease =
 	| { status: "ready_to_export"; artifact: GraphCandidate & { patch: string } }
-	| { status: "needs_input" | "stale_base" };
+	| { status: "needs_input"; reason?: string }
+	| { status: "stale_base" };
 
 export async function graphBaseIsCurrent(sourceRoot: string, baseSha: string, signal?: AbortSignal): Promise<boolean> {
 	const source = vcs.git(sourceRoot);

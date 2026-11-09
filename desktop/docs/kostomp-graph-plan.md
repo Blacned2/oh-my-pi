@@ -21,12 +21,12 @@ Dayanaklar: [Desktop RPC köprüsü](../src/rpc.rs), [runtime seçimi](../src/ru
 | Context Manager | Sabit repo snapshot’ı ve düğüm brief’i → ilgili dosya ve sembol referansları, gerekli upstream artifact’ler ve boyutu sınırlı bağlam | Yok. Coder’lar onaylı dosyaları doğrudan okur. |
 | Coder | Kendi brief’i ve bağımlılık çıktıları → çalışma kopyasından host tarafından çıkarılan değişiklik seti | Var. Ayrık kapsamlar paralel çalışır. |
 | Tester | Birleştirilmiş aday snapshot → komut, exit code, süre, log referansı ve test edilen tree kimliği | Var. Log artifact’ten ayrı saklanır. |
-| Reviewer | Aynı aday snapshot ve kabul kriterleri → ayrı OMP oturumundan yapılandırılmış bulgular ve karar | Kısmen. Yalnızca `accepted` veya `changes_requested` kararı döner; bulgular worker logunda kalır. |
-| Decision Gate | Adayın tree kimliği, test ve review kanıtları → `ready_to_export`, `retry`, `needs_input` veya `failed` | Kısmen. `ready_to_export`, `needs_input` ve `stale_base` üretir; `retry` ve `failed` yoktur. |
+| Reviewer | Aynı aday snapshot ve kabul kriterleri → ayrı OMP oturumundan yapılandırılmış bulgular ve karar | Var. `changes_requested` kararı, sahipliği doğrulanan dosya, sorun ve beklenen değişikliği içerir. |
+| Decision Gate | Adayın tree kimliği, test ve review kanıtları → doğrulanmış patch, düzeltme veya durma | `ready_to_export`, gerekçeli `needs_input` ve `stale_base` üretir. Uygun bir Coder varsa scheduler sınırlı yeni deneme açar. Altyapı hataları ilgili düğümde `failed` olarak görünür. |
 
 Planner yalnızca öneri üretir. Scheduler şemayı, benzersiz düğüm kimliklerini, bağımlılıkları, döngüleri ve kaynak sınırlarını doğrular. MVP’de kullanıcı doğrulanmış planı başlatır. Düğümler upstream transcript’leri yerine tipli artifact referansları alır. Bir denemenin kimliği `runId/nodeId/attempt` olur. Graph döngüsüz kalır. Düzeltme gerektiğinde scheduler ilgili Coder için sınırlı yeni deneme açar, değişen çıktıya bağımlı sonuçları geçersiz kılar ve birleşik aday için test ile review’u tekrar üretir. Başarısızlık belirli bir düğüme bağlanamıyorsa run `needs_input` durumuna geçer.
 
-Bugün otomatik düzeltme döngüsü yoktur. Test başarısız olursa veya review değişiklik isterse run `needs_input` olur. Kullanıcı bir Coder’ı elle yeniden deneyebilir, ancak Coder aynı brief’i alır; test logu veya review ona iletilmez. Değişen çıktıya bağımlı sonuçların geçersiz kılınması çalışır.
+Test başarısız olduğunda yalnızca tek Coder’lı run otomatik düzeltmeye adaydır. Review değişiklik isterse otomatik deneme, tüm bulgular aynı Coder’ın dosyalarına ait olduğunda açılır. Run başına en fazla iki otomatik düzeltme vardır. Coder önceki patch’i ve boyutu sınırlı, temizlenmiş test logunu veya kendi bulgularını alır. Onaylanmış yazma kapsamı ve taban değişmez. Birden fazla olası hedef varsa veya bütçe bittiyse dialog testin çıkış kodunu ya da review’un değişiklik istediğini gösterir. Kullanıcı bir Coder seçerek ilgili kanıtla elle yeniden deneyebilir.
 
 ## Jev ile hata yönlendirme
 
@@ -70,14 +70,11 @@ Paketlenmiş Desktop’ta görsel kontroller yapıldı. Sahte model ve gerçek D
 
 Öncelik sırasıyla:
 
-1. **Düzeltme döngüsü.** Test başarısız olduğunda veya review değişiklik istediğinde ilgili Coder’a temizlenmiş test logu ve review gerekçesi verilerek sınırlı yeni deneme açılmalı. Bugün Coder retry’ı aynı brief’le çalışıyor.
-2. **Reviewer bulguları.** Review kararı yapılandırılmış bulgularla (dosya, sorun, beklenen değişiklik) dönmeli. Bu, düzeltme döngüsünün girdisi olur.
-3. **`needs_input` gerekçesi.** Dialog run’ın neden durduğunu (test hatası, review reddi) yazmalı.
-4. **Taslak kalıcılığı.** Onaylanmamış plan sidecar yeniden başlarsa kayboluyor.
-5. **Plan düzenleme.** Plan yalnızca onaylanabiliyor veya atılabiliyor; düzenlenen plan da host doğrulamasından geçmeli.
-6. **Context Manager.** Daha büyük kapsamlar veya gerçek kullanımda bağlam sorunu görüldüğünde.
-7. **Jev.** Sidecar’a gözlem modunda bağlanmalı ve sonuç denemeyle birlikte kaydedilmeli.
-8. **Planner logu.** Planlama run kaydından önce çalıştığı için tutulmuyor.
+1. **Taslak kalıcılığı.** Onaylanmamış plan sidecar yeniden başlarsa kayboluyor.
+2. **Plan düzenleme.** Plan yalnızca onaylanabiliyor veya atılabiliyor; düzenlenen plan da host doğrulamasından geçmeli.
+3. **Context Manager.** Daha büyük kapsamlar veya gerçek kullanımda bağlam sorunu görüldüğünde.
+4. **Jev.** Sidecar’a gözlem modunda bağlanmalı ve sonuç denemeyle birlikte kaydedilmeli.
+5. **Planner logu.** Planlama run kaydından önce çalıştığı için tutulmuyor.
 
 Kapsam dışı bırakılanlar: eşzamanlı run’lar ve birden fazla Tester komutu.
 
@@ -117,3 +114,7 @@ Faz tamamlandı. Aşağıdaki hazırlık ve kararlar uygulandı.
 - Sınır `profile.json` içindeki isteğe bağlı `maxCoders` alanından ayarlanır. Desktop dialogunda bu ayar için bir alan olmaz.
 - Her worker denemesi profilin kendine ait geçici bir kopyasını kullanır.
 - Sidecar aynı anda tek run veya tek planlama işi çalıştırır. Eşzamanlı run’lar ayrı bir fazdır.
+
+## Faz 5: Hedefli düzeltme
+
+Reviewer bulgularını dosya sahipliğine bağladık. Scheduler, hedefi tek bir Coder’a indirebildiğinde run başına iki otomatik düzeltme açabiliyor. Her denemede önceki patch ve ilgili kanıt iletiliyor. Değişen adayın test ve review sonuçları yeniden üretiliyor; bağımsız Coder çıktıları korunuyor. Hedef belirsizse veya deneme sınırı dolduysa dialog durma nedenini gösteriyor. OMP çekirdeği değişmedi.
