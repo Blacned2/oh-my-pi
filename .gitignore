@@ -99,3 +99,7 @@ packages/coding-agent/bench/boot-baseline.json
 /.bazelrc.user
 
 .parity/
+
+# Windows reserved device name; created by cmd-style `> NUL` redirects in bash
+NUL
+nul

@@ -94,14 +94,14 @@ From the repository root, run:
 bun test desktop/graph/test
 bun check --no-script -p desktop/graph/tsconfig.json
 bun x oxlint desktop/graph
-bun build --no-bundle desktop/ui/graph.js
+bun build --no-bundle desktop/ui/graph.js --outfile target/graph-syntax-check.js
 bun x oxfmt --check "desktop/graph/**/*.ts"
 cargo check --manifest-path desktop/Cargo.toml
 bun desktop/graph/smoke/omp-worker.ts
 bun desktop/graph/smoke/graph-service.ts sha256:<local-image-id>
 ```
 
-The repository lint configuration skips `.js` files, so the `bun build --no-bundle` line is the syntax check for the dialog script.
+The repository lint configuration skips `.js` files, so the `bun build --no-bundle` line is the syntax check for the dialog script. It writes the transpiled script to `--outfile`; without it the script goes to stdout, and silencing that with `> NUL` in a bash shell creates a file named `NUL` that Windows cannot delete. To discard output, use `/dev/null` in bash or `$null` in PowerShell.
 
 Both smoke probes default to `desktop/target/release/runtime`. The worker probe takes another staged runtime directory as the first argument and optionally a different CLI entry point as the second. The mock provider listens on `127.0.0.1` and uses a fixture credential. The worker probe checks a completed host call, a denied target, the exact tools on the wire and cancellation of a launcher with an OMP child. It needs local loopback permission.
 
