@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Kostomp</title>
+<script src="material.js"></script>
 <!-- Apply the stored theme before first paint so the window never flashes the wrong palette. -->
 <script>
   (() => {
@@ -10,10 +11,10 @@
     const pref = p === "light" || p === "dark" ? p : "system";
     const dark = pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.dataset.theme = dark ? "dark" : "light";
-    // Window material (glass|opaque), injected by the Rust side before any page script runs.
+    // Window material, injected by the Rust side before any page script runs.
     const m = window.__KOSTOMP_MATERIAL__;
-    document.documentElement.dataset.material = m && m.glass ? "glass" : "opaque";
-    if (m) document.documentElement.style.setProperty("--glass-a", String(m.settings.tint / 100));
+    if (m) window.kostompMaterial.paint(m.settings, m.glass);
+    else document.documentElement.dataset.material = "opaque";
   })();
 </script>
 <link rel="stylesheet" href="app.css">
@@ -30,9 +31,6 @@
     </button>
     <button type="button" role="tab" id="tab-stats" data-view="stats" aria-controls="stats" aria-selected="false" aria-label="Stats" title="Stats">
       <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
-    </button>
-    <button type="button" role="tab" id="tab-graph" data-view="graph" aria-controls="graph" aria-selected="false" aria-label="Graph" title="Graph">
-      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.8 7.2 6.3 15.8m6.9-8.6 4.5 8.6"/></svg>
     </button>
   </nav>
   <div class="spacer"></div>
@@ -68,10 +66,18 @@
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
           <span class="new-chat-label">New chat</span>
         </button>
+        <button type="button" id="graph-new" class="new-chat sessions-open graph-new-run" title="Plan a change with Graph" aria-label="New graph">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.8 7.2 6.3 15.8m6.9-8.6 4.5 8.6"/></svg>
+          <span id="graph-new-label" class="new-chat-label">New graph</span>
+        </button>
         <button type="button" id="sessions-open" class="new-chat sessions-open" title="Open the sessions list as a tab" aria-label="Open the sessions list">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
           <span class="new-chat-label">Sessions list</span>
         </button>
+      </div>
+      <div id="side-graphs" class="side-graphs" role="group" aria-label="Graph runs" hidden>
+        <div class="side-accounts-title">Graphs</div>
+        <ul id="graph-history" class="graph-run-list" aria-label="Recent graph runs"></ul>
       </div>
       <div id="side-accounts" class="side-accounts" role="group" aria-label="Claude accounts" hidden>
         <div class="side-accounts-title">Claude accounts</div>
@@ -79,61 +85,28 @@
       </div>
     </aside>
     <div id="workspace" class="workspace"></div>
-    <!-- The sessions list: mounted by the layout as a tab (sid "sessions"), never in the sidebar. -->
-    <section id="saved" class="saved" aria-label="Saved sessions" hidden>
-      <div class="saved-head">
-        <input type="search" id="saved-search" class="saved-search" placeholder="Search sessions" aria-label="Search saved sessions" spellcheck="false">
-        <button type="button" id="saved-refresh" class="layout-act" title="Refresh saved sessions" aria-label="Refresh saved sessions">↻</button>
-      </div>
-      <div id="saved-list" class="saved-list" role="list"></div>
-    </section>
-  </section>
-  <section id="graph" class="view" role="tabpanel" aria-labelledby="tab-graph" hidden>
-    <aside class="sidebar graph-sidebar" aria-label="Graph runs">
-      <div class="side-head"><span class="side-title">Runs</span></div>
-      <button type="button" id="graph-new" class="new-chat graph-new-run">
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-        <span id="graph-new-label">New run</span>
-      </button>
-      <p id="graph-history-empty" class="graph-history-empty" hidden>No runs yet.</p>
-      <ul id="graph-history" class="graph-run-list" aria-label="Recent runs"></ul>
-    </aside>
-    <div class="graph-workspace">
+    <div id="graph" class="graph-workspace" role="region" aria-label="Graph" hidden>
       <div class="graph-page">
         <header class="graph-heading">
-          <span class="graph-eyebrow">Graph workspace</span>
+          <span id="graph-eyebrow" class="graph-eyebrow">Graph workspace</span>
           <h1 id="graph-title">Plan a change</h1>
-          <p id="graph-intro">Choose a repository and scope, then review the plan before running it.</p>
+          <p id="graph-intro">Choose a project, describe the change, then review the plan before running it. Graph works on the whole repository.</p>
           <p id="graph-run-repo" class="graph-run-repo" hidden></p>
         </header>
         <form id="graph-form" class="graph-composer">
           <div class="graph-field">
-            <span class="graph-field-label" id="graph-repo-label">Repository</span>
-            <button type="button" id="graph-repository" class="graph-repository" aria-haspopup="dialog" aria-labelledby="graph-repo-label graph-repository-value">
-              <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
-              <span class="graph-repository-text"><strong id="graph-repository-value">Choose a repository</strong><span id="graph-repository-path" hidden></span></span>
-              <span class="graph-repository-browse">Browse…</span>
-            </button>
+            <label class="graph-field-label" for="graph-project">Project</label>
+            <div class="graph-project-row">
+              <select id="graph-project" class="graph-project"></select>
+              <button type="button" id="graph-browse" class="graph-button">Browse…</button>
+            </div>
+            <span id="graph-repository-path" class="graph-field-hint" hidden></span>
           </div>
           <div class="graph-field">
             <label class="graph-field-label" for="graph-objective">Objective</label>
             <div class="graph-objective-box">
               <textarea id="graph-objective" name="objective" rows="3" maxlength="8192" placeholder="What should change? Describe how you’ll know it works." required></textarea>
             </div>
-          </div>
-          <div class="graph-field">
-            <div class="graph-field-head">
-              <label class="graph-field-label" for="graph-files-input">Approved files</label>
-              <span id="graph-files-count" class="graph-files-count">0 / 32</span>
-            </div>
-            <div class="graph-scope-box">
-              <ul id="graph-files" class="graph-file-list" aria-label="Approved file paths" hidden></ul>
-              <div class="graph-file-entry">
-                <textarea id="graph-files-input" rows="2" aria-describedby="graph-files-hint" placeholder="src/example.ts"></textarea>
-                <button type="button" id="graph-add-files" class="graph-button" disabled>Add files</button>
-              </div>
-            </div>
-            <p class="graph-field-hint" id="graph-files-hint">Enter or paste repository-relative paths, one per line.</p>
           </div>
           <div class="graph-actions graph-composer-actions">
             <button type="submit" id="graph-start" class="graph-button graph-primary" disabled>Propose plan</button>
@@ -143,9 +116,41 @@
           <p id="graph-status" role="status" hidden></p>
           <div class="graph-actions" id="graph-activity-actions" hidden>
             <button type="button" id="graph-cancel" hidden>Cancel</button>
+            <button type="button" id="graph-resume" hidden>Continue queued work</button>
             <button type="button" id="graph-patch" hidden>Show verified patch</button>
           </div>
         </div>
+        <section class="graph-flow" id="graph-flow" aria-labelledby="graph-flow-title" hidden>
+          <header class="graph-flow-header">
+            <h2 id="graph-flow-title">Dependency map</h2>
+            <span id="graph-flow-count"></span>
+          </header>
+          <div class="graph-flow-layout">
+            <div class="graph-flow-scroll" role="region" aria-label="Run steps" tabindex="0">
+              <div class="graph-flow-canvas">
+                <svg class="graph-flow-wires" aria-hidden="true">
+                  <defs>
+                    <marker id="graph-flow-arrow" viewBox="0 0 8 8" markerWidth="7" markerHeight="7" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                      <path d="M1 1l5 3-5 3" />
+                    </marker>
+                    <marker id="graph-flow-arrow-selected" viewBox="0 0 8 8" markerWidth="7" markerHeight="7" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                      <path d="M1 1l5 3-5 3" />
+                    </marker>
+                  </defs>
+                  <g></g>
+                </svg>
+                <div class="graph-flow-stages"></div>
+              </div>
+            </div>
+            <aside class="graph-flow-inspector" aria-labelledby="graph-step-title">
+              <div id="graph-step-details" aria-live="polite"></div>
+              <div class="graph-actions">
+                <button type="button" id="graph-step-log" hidden>Show log</button>
+                <button type="button" id="graph-step-retry" hidden>Retry node</button>
+              </div>
+            </aside>
+          </div>
+        </section>
         <section id="graph-plan" aria-labelledby="graph-plan-title" hidden>
           <h3 id="graph-plan-title">Proposed plan</h3>
           <p id="graph-plan-summary" hidden></p>
@@ -156,7 +161,6 @@
             <button type="button" id="graph-discard">Discard plan</button>
           </div>
           <form id="graph-plan-editor" hidden>
-            <p id="graph-approved-scope"></p>
             <p id="graph-edit-error" role="alert" hidden></p>
             <fieldset id="graph-editor-fields">
               <div id="graph-edit-tasks"></div>
@@ -168,12 +172,6 @@
             </fieldset>
           </form>
         </section>
-        <ol id="graph-nodes" aria-label="Run steps"></ol>
-        <div class="graph-actions" id="graph-run-actions" hidden>
-          <select id="graph-retry-node" aria-label="Node to retry" disabled></select>
-          <button type="button" id="graph-retry" disabled>Retry node</button>
-          <button type="button" id="graph-resume" hidden>Continue queued work</button>
-        </div>
         <details id="graph-logs" hidden>
           <summary>Logs</summary>
           <p id="graph-failure-observation" hidden></p>
@@ -190,6 +188,14 @@
         </details>
       </div>
     </div>
+    <!-- The sessions list: mounted by the layout as a tab (sid "sessions"), never in the sidebar. -->
+    <section id="saved" class="saved" aria-label="Saved sessions" hidden>
+      <div class="saved-head">
+        <input type="search" id="saved-search" class="saved-search" placeholder="Search sessions" aria-label="Search saved sessions" spellcheck="false">
+        <button type="button" id="saved-refresh" class="layout-act" title="Refresh saved sessions" aria-label="Refresh saved sessions">↻</button>
+      </div>
+      <div id="saved-list" class="saved-list" role="list"></div>
+    </section>
   </section>
   <section id="stats" class="view" role="tabpanel" aria-labelledby="tab-stats" hidden>
     <div id="stats-wait" class="center"><div class="spin"></div><div>Starting stats dashboard…</div></div>
@@ -288,6 +294,7 @@
 <script src="app.js"></script>
 <script src="settings.js"></script>
 <script src="updater.js"></script>
+<script src="graph-map.js"></script>
 <script src="graph.js"></script>
 </body>
 </html>

@@ -8,9 +8,10 @@
   let layout = null; // set up below; showView() runs before that
   const sessions = new Map(); // sid -> { sid, api, tab, cwd, status: { text, kind } }
   const focusChat = () => sessions.get(layout?.focused)?.api.focus();
-  // ---- tabs: Chat | Stats | Graph | Settings (settings.js fills the last) --------
+  // ---- tabs: Chat | Stats | Settings (settings.js fills the last). Graph lives inside Chat: its pane and
+  // runs share the chat sidebar (graph.js). --------
   const VIEW_KEY = "kostomp-view";
-  const VIEWS = ["chat", "stats", "graph", "settings"];
+  const VIEWS = ["chat", "stats", "settings"];
   const tabs = [...document.querySelectorAll(".tabs [role=tab]")];
   const gear = $("gear");
   function showView(name) {
@@ -167,6 +168,7 @@
   layout = createLayout($("workspace"), {
     sessionEl: (sid) => (sid === LIST_SID ? savedEl : sessions.get(sid)?.api.el),
     onFocus: () => {
+      document.dispatchEvent(new CustomEvent("kostomp-chat-shown"));
       if (sessions.has(layout.focused)) lastChatSid = layout.focused;
       paintTabs();
       paintTopStatus();
@@ -238,11 +240,12 @@
     statusBox.textContent = s ? s.status.text : "";
     statusBox.className = "status" + (s?.status.kind ? " " + s.status.kind : "");
   }
-  /** Sidebar badge: amber while working, green for a finished turn not yet visited, red on error, none otherwise. */
+  /** Sidebar badge: coral while a question waits for an answer, amber while working, green for a finished turn not yet visited, red on error, none otherwise. */
   function paintDot(s) {
     const kind = s.status.kind;
-    const state = kind === "busy" ? "busy" : kind === "bad" ? "bad" : s.unseen ? "ok" : "idle";
+    const state = s.asking !== null ? "ask" : kind === "busy" ? "busy" : kind === "bad" ? "bad" : s.unseen ? "ok" : "idle";
     s.dot.className = "dot " + state;
+    s.tab.classList.toggle("asking", s.asking !== null);
   }
   function paintTabs() {
     const shown = new Set(layout.visible());
@@ -279,7 +282,7 @@
     avatar.style.setProperty("--c", AVATAR_COLORS[avatarSeq++ % AVATAR_COLORS.length]);
     avatar.setAttribute("aria-hidden", "true");
     tab.append(avatar, label, dot, close);
-    const entry = { sid, tab, label, avatar, dot, cwd: null, title: "session", name: opts.name ?? null, autoTitle: null, sessionFile: opts.sessionFile ?? null, status: { text: "starting…" }, unseen: false, api: null };
+    const entry = { sid, tab, label, avatar, dot, cwd: null, title: "session", name: opts.name ?? null, autoTitle: null, sessionFile: opts.sessionFile ?? null, status: { text: "starting…" }, unseen: false, asking: null, api: null };
     sessions.set(sid, entry);
     strip.insertBefore(tab, $("session-add"));
     entry.api = createSession(sid, {
@@ -294,8 +297,16 @@
         if (layout.focused === sid) paintTopStatus();
         if (wasBusy && kind !== "busy") {
           markAttention(sid);
+          if (kind === "ok") notifyReply(entry);
           refreshSavedSoon();
         }
+      },
+      /** A dialog/ask is waiting (`text` = what it asks) or was closed (`null`). */
+      asking(text) {
+        const was = entry.asking !== null;
+        entry.asking = text;
+        paintDot(entry);
+        if (text !== null && !was) notifyQuestion(entry, text);
       },
       cwd(cwd) {
         entry.cwd = cwd;
@@ -491,6 +502,36 @@
     paintLayoutMenu();
     save();
   }
+  /** True while `entry` is the chat in front of a visible window: nothing to announce then. */
+  function isOpen(entry) {
+    return !document.hidden && !$("chat").hidden && layout.focused === entry.sid;
+  }
+  /** A turn finished in a chat that is not open: raise a toast; clicking it opens this session. */
+  function notifyReply(entry) {
+    if (isOpen(entry)) return;
+    const text = entry.api.lastAnswer().replace(/[`*_#>~|]/g, "").replace(/\s+/g, " ").trim();
+    const body = text.length > 220 ? text.slice(0, 219) + "…" : text || "Yanıt hazır";
+    invoke("notify_reply", { sid: entry.sid, title: entry.title, body }).catch(() => {});
+  }
+  /** A question waits in `entry`: toast unless that chat is open. */
+  function notifyQuestion(entry, text) {
+    if (isOpen(entry)) return;
+    const body = text.replace(/[`*_#>~|]/g, "").replace(/\s+/g, " ").trim().slice(0, 220) || "Bir soru soruldu";
+    invoke("notify_reply", { sid: entry.sid, title: entry.title, body }).catch(() => {});
+  }
+  function openSession(entry) {
+    if (!layout.has(entry.sid)) {
+      const owner = layouts.find((l) => l.id !== activeLayout && stateHas(l.state, entry.sid));
+      if (owner) switchLayout(owner.id);
+    }
+    showView("chat");
+    layout.show(entry.sid);
+    entry.api.focus();
+  }
+  listen("notify-activate", (e) => {
+    const entry = sessions.get(e.payload);
+    if (entry) openSession(entry);
+  });
   /** A turn finished in a session the current layout doesn't show: flag the layouts that do. */
   function markAttention(sid) {
     if (restoring || layout.has(sid)) return;

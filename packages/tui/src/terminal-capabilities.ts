@@ -185,8 +185,17 @@ export class TerminalInfo {
 			sequence: this.notifyProtocol === NotifyProtocol.Bell ? null : formatted,
 			write: writeTerminalSequence,
 		});
-		if (routed) return;
+		// Focus reporting (DEC 1004) says the terminal lost focus: a toast alone
+		// is easy to miss, so add an audible bell, including for out-of-band
+		// multiplexer notifiers (cmux, Herdr) that never ring one. Protocols that
+		// already ring BEL are skipped; terminals that never report focus stay "focused".
+		const ringBell = !terminalFocused && this.notifyProtocol !== NotifyProtocol.Bell;
+		if (routed) {
+			if (ringBell) writeTerminalSequence("\x07");
+			return;
+		}
 		writeTerminalSequence(formatted);
+		if (ringBell) writeTerminalSequence("\x07");
 		// VTE-family terminals (Ptyxis, GNOME Terminal, Tilix, …) plus Alacritty
 		// and bare xterm-on-Wayland have no in-band escape that surfaces an
 		// arbitrary desktop toast (#3685). When the chosen `notifyProtocol` is
@@ -205,6 +214,18 @@ export class TerminalInfo {
  */
 export function isSshSession(env: NodeJS.ProcessEnv = Bun.env): boolean {
 	return Boolean(env.SSH_CONNECTION || env.SSH_TTY || env.SSH_CLIENT);
+}
+
+let terminalFocused = true;
+
+/** Record the terminal's reported focus state (DEC 1004 `CSI I` / `CSI O`). */
+export function setTerminalFocused(focused: boolean): void {
+	terminalFocused = focused;
+}
+
+/** False only after the terminal reported losing focus. */
+export function isTerminalFocused(): boolean {
+	return terminalFocused;
 }
 
 export function isNotificationSuppressed(): boolean {

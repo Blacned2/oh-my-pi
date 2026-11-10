@@ -11148,16 +11148,22 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		return this.queuedMessageCount > 0 || this.agent.peekUndeliveredQueuedMessages().some(isDisplayableQueuedMessage);
 	}
 
-	/** Chip texts for the queue display. Steering live steering took for the streaming response
-	 *  stays listed until the transcript records it, when the model actually switches to it. */
+	/** Chip texts for the queue display. Messages already dequeued for delivery (live steering a
+	 *  provider took, or a batch committed for the next model call) stay listed until the
+	 *  transcript records them, so a message never sits in neither the chips nor the chat. */
 	getQueuedMessages(): { steering: readonly string[]; followUp: readonly string[]; liveSteered: number } {
-		const liveSteered = this.agent.peekLiveSteeredMessages().filter(isUserAuthoredQueuedMessage).length;
+		const delivering = this.agent.peekUndeliveredQueuedMessages("steering").filter(isUserAuthoredQueuedMessage);
+		const deliveringFollowUp = this.agent
+			.peekUndeliveredQueuedMessages("followUp")
+			.filter(isUserAuthoredQueuedMessage);
 		return {
-			steering: [...this.agent.peekLiveSteeredMessages(), ...this.agent.peekSteeringQueue()]
-				.filter(isUserAuthoredQueuedMessage)
-				.map(queueChipText),
-			followUp: this.agent.peekFollowUpQueue().filter(isUserAuthoredQueuedMessage).map(queueChipText),
-			liveSteered,
+			steering: [...delivering, ...this.agent.peekSteeringQueue().filter(isUserAuthoredQueuedMessage)].map(
+				queueChipText,
+			),
+			followUp: [...deliveringFollowUp, ...this.agent.peekFollowUpQueue().filter(isUserAuthoredQueuedMessage)].map(
+				queueChipText,
+			),
+			liveSteered: delivering.length,
 		};
 	}
 

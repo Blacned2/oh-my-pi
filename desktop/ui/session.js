@@ -866,6 +866,7 @@
   function setStatus(text, kind) {
     hooks.status?.(text, kind);
   }
+  let lastAnswer = ""; // final text of the newest assistant message in the current turn, for notifications
   function setBusy(value) {
     busy = value;
     el.stop.hidden = !value && bashRunning === 0;
@@ -1013,19 +1014,23 @@
     }
     node.replaceChildren();
     if (message.role === "user") {
+      // The card holds the text only; thumbnails and the copy/branch/fork bar sit below it.
+      node.classList.add("split");
       const images = Array.isArray(message.content) ? message.content.filter((b) => b.type === "image" && b.data) : [];
       let text = textOf(message.content);
+      let row = null;
       if (images.length) {
         const nums = numbersFor(id, text, images.length);
         text = text.replace(LABELS_TAIL, ""); // the badges on the thumbnails carry the numbers
-        node.append(text);
-        const row = document.createElement("div");
+        row = document.createElement("div");
         row.className = "msg-images";
         images.forEach((img, i) => row.append(thumb(imageSrc(img), nums[i])));
-        node.append(row);
-      } else {
-        node.textContent = text;
       }
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = text;
+      node.append(bubble);
+      if (row) node.append(row);
       userText.set(node, textOf(message.content));
       node.append(userActions(node));
     } else {
@@ -1053,6 +1058,7 @@
         .filter((b) => isObj(b) && b.type === "text" && typeof b.text === "string" && b.text)
         .map((b) => b.text)
         .join("\n\n");
+      if (answer && !live) lastAnswer = answer;
       if (answer && !live) {
         const bar = document.createElement("div");
         bar.className = "msg-acts";
@@ -1120,7 +1126,11 @@
     const sub = sessionStats ? Math.max(0, sessionStats.cost - own.cost) : 0;
     const box = el.total;
     box.replaceChildren();
-    if (own.cacheRead > 0) box.append(splitBar("bar", own), span("num", hitRate(own).toFixed(2) + "%"), span("", "hit"));
+    if (own.cacheRead > 0) {
+      const hit = span("hit", hitRate(own).toFixed(0) + "% hit");
+      hit.title = `cache read ${fmtTok(own.cacheRead)} · write ${fmtTok(own.cacheWrite)} · uncached input ${fmtTok(own.input)} tokens (${hitRate(own).toFixed(2)}%)`;
+      box.append(hit);
+    }
     if (own.cost > 0) box.append(span("num tick", fmtCost(own.cost)));
     if (sub >= 0.005) {
       const s = span("", "+ " + fmtCost(sub) + " sub");
@@ -1254,6 +1264,7 @@
     dialogId = null;
     el.dialog.hidden = true;
     el.dialog.replaceChildren();
+    hooks.asking?.(null);
   }
   /**
    * `timeout` (ms) on a request: count down in the heading, then answer `{cancelled, timedOut}`
@@ -1280,7 +1291,9 @@
     dropLocal();
     clearInterval(dialogTimer);
     dialogId = req.id;
+    hooks.asking?.(String(questions[0].question ?? "") || req.title || "Question");
     el.dialog.replaceChildren();
+    el.dialog.classList.remove("ask-card");
     const h = document.createElement("h4");
     h.textContent = req.title || (questions.length > 1 ? `${questions.length} questions` : "Question");
     el.dialog.append(h);
@@ -1404,9 +1417,24 @@
     dropLocal();
     clearInterval(dialogTimer);
     dialogId = req.id;
+    hooks.asking?.(req.message || req.title || "omp");
     el.dialog.replaceChildren();
+    // The ask tool's field-by-field prompts lead with "(2/3) ": show it as a progress header instead.
+    const step = /^\((\d+)\/(\d+)\) ([\s\S]*)$/.exec(req.title || "");
+    el.dialog.classList.toggle("ask-card", !!step);
+    if (step) {
+      const at = Number(step[1]);
+      const total = Number(step[2]);
+      const bar = document.createElement("div");
+      bar.className = "ask-progress";
+      bar.append(span("ask-count", `Question ${at} of ${total}`));
+      const dots = span("ask-dots");
+      for (let i = 1; i <= total; i++) dots.append(span(i < at ? "done" : i === at ? "cur" : ""));
+      bar.append(dots);
+      el.dialog.append(bar);
+    }
     const h = document.createElement("h4");
-    h.textContent = req.title || "omp";
+    h.textContent = step ? step[3] : req.title || "omp";
     el.dialog.append(h);
     if (req.message) {
       const p = document.createElement("p");
@@ -1416,13 +1444,14 @@
     const row = document.createElement("div");
     row.className = "row";
     const cancel = btn("Cancel", () => respond(req.id, { cancelled: true }));
+    cancel.classList.add("cancel");
     if (req.method === "confirm") {
       row.append(btn("Yes", () => respond(req.id, { confirmed: true })), btn("No", () => respond(req.id, { confirmed: false })));
     } else if (req.method === "select") {
       (req.options || []).forEach((opt, i) => {
         const b = btn(opt, () => respond(req.id, { value: opt }));
         const d = req.optionDetails && req.optionDetails[i] && req.optionDetails[i].description;
-        if (d) b.title = d;
+        if (d) { b.title = d; b.append(span("desc", d)); }
         row.append(b);
       });
       row.append(cancel);
@@ -2841,6 +2870,7 @@
         break;
       case "agent_start":
         clearRecapHint();
+        lastAnswer = "";
         setBusy(true);
         break;
       case "message_start":
@@ -3823,7 +3853,9 @@
     send({ id: "hist", type: "get_messages" });
     if (!el.tree.hidden) loadTree();
   }
+  let starting = false; // rpc_start in flight: a second folder switch must not overlap it
   async function start(dir, resume) {
+    starting = true;
     attached = [];
     clearTranscript();
     clearExtUi();
@@ -3844,6 +3876,8 @@
     } catch (e) {
       setStatus("failed to start", "bad");
       note(String(e), true);
+    } finally {
+      starting = false;
     }
   }
   // ---- session changes inside the running process ------------------------
@@ -3916,8 +3950,13 @@
   function onFolderKey(e) {
     if (e.key === "Escape") closeFolderMenu();
   }
-  function openFolder(dir) {
+  async function openFolder(dir) {
     closeFolderMenu();
+    if (starting) return;
+    if (busy) {
+      const pick = await askLocal("Turn in progress", "Switching folders stops the running turn. Continue?", ["Switch folder", "Cancel"]);
+      if (pick !== 0 || starting) return;
+    }
     saveRecent(dir);
     start(dir, false); // a project switch opens a fresh chat; `--continue` would reopen that folder's latest session
   }
@@ -4000,6 +4039,7 @@
     /** Re-read the scoped model list into the model picker. */
     refreshModels: () => send({ id: "models", type: "get_available_models" }),
     focus: () => el.input.focus(),
+    lastAnswer: () => lastAnswer,
     restart: () => start(cwd, false),
     /** `new_session` in the running process (starts the process again when it has exited). */
     newSession,

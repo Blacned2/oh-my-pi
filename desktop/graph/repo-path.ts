@@ -24,7 +24,7 @@ export function repoPathPrefixes(file: string): [key: string, spelling: string][
 			deviceName.test(part) ||
 			/^\.git$/i.test(part)
 		) {
-			throw new Error("Graph path must be a portable, repository-relative file path");
+			throw new Error("Graph path must be a portable, repository-relative file path. Check " + JSON.stringify(file));
 		}
 		spelling = spelling ? `${spelling}/${part}` : part;
 		prefixes.push([spelling.normalize("NFC").toUpperCase(), spelling]);

@@ -1,24 +1,20 @@
 (() => {
   const { invoke } = window.__TAURI__.core;
-  const { browseFolder, folderName, saveRecent } = window.KostompFolders;
+  const { browseFolder, folderName, loadRecent, saveRecent } = window.KostompFolders;
+  const chat = document.getElementById("chat");
   const panel = document.getElementById("graph");
-  const workspace = panel.querySelector(".graph-workspace");
+  const eyebrow = document.getElementById("graph-eyebrow");
   const title = document.getElementById("graph-title");
   const intro = document.getElementById("graph-intro");
   const runRepo = document.getElementById("graph-run-repo");
   const form = document.getElementById("graph-form");
-  const repoButton = document.getElementById("graph-repository");
-  const repoValue = document.getElementById("graph-repository-value");
+  const project = document.getElementById("graph-project");
+  const browse = document.getElementById("graph-browse");
   const repoPath = document.getElementById("graph-repository-path");
   const objective = document.getElementById("graph-objective");
-  const fileInput = document.getElementById("graph-files-input");
-  const fileList = document.getElementById("graph-files");
-  const fileCount = document.getElementById("graph-files-count");
-  const addFilesButton = document.getElementById("graph-add-files");
   const start = document.getElementById("graph-start");
   const cancel = document.getElementById("graph-cancel");
   const showPatch = document.getElementById("graph-patch");
-  const nodes = document.getElementById("graph-nodes");
   const status = document.getElementById("graph-status");
   const output = document.getElementById("graph-output");
   const base = document.getElementById("graph-base");
@@ -26,13 +22,10 @@
   const logs = document.getElementById("graph-logs");
   const failureObservation = document.getElementById("graph-failure-observation");
   const history = document.getElementById("graph-history");
-  const historyEmpty = document.getElementById("graph-history-empty");
+  const sideGraphs = document.getElementById("side-graphs");
   const newRun = document.getElementById("graph-new");
   const newLabel = document.getElementById("graph-new-label");
   const activityActions = document.getElementById("graph-activity-actions");
-  const runActions = document.getElementById("graph-run-actions");
-  const retryNode = document.getElementById("graph-retry-node");
-  const retry = document.getElementById("graph-retry");
   const resume = document.getElementById("graph-resume");
   const planPanel = document.getElementById("graph-plan");
   const planTitle = document.getElementById("graph-plan-title");
@@ -43,7 +36,6 @@
   const editor = document.getElementById("graph-plan-editor");
   const editorFields = document.getElementById("graph-editor-fields");
   const editTasks = document.getElementById("graph-edit-tasks");
-  const approvedScope = document.getElementById("graph-approved-scope");
   const editError = document.getElementById("graph-edit-error");
   const save = document.getElementById("graph-save-plan");
   const approve = document.getElementById("graph-approve");
@@ -52,8 +44,7 @@
   const showLog = document.getElementById("graph-show-log");
   const log = document.getElementById("graph-log");
   const states = { ready_to_export: "Verified patch ready", needs_input: "Graph needs input", stale_base: "Source checkout changed" };
-  const maxFiles = 32;
-  const approvedFiles = new Set();
+  let graphMode = false;
   let repository = "";
   let formBusy = false;
   let submittingPlan = false;
@@ -71,57 +62,40 @@
   /** `run:node:attempt` of the log on screen. A newer attempt hides it. */
   let shownLog = "";
   let logKeys = new Map();
+  const flow = window.KostompGraphMap(document.getElementById("graph-flow"), {
+    showLog: openStepLog,
+    retry: retryStep,
+  });
+
+  const sameFolder = (a, b) => a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();
+
+  /** The projects chats have opened (recent folders) plus the one selected now. */
+  function renderProjects() {
+    const folders = loadRecent();
+    if (repository && !folders.some(folder => sameFolder(folder, repository))) folders.unshift(repository);
+    const names = folders.map(folderName);
+    project.replaceChildren(
+      new Option(folders.length ? "Choose a project…" : "No projects yet. Use Browse…", ""),
+      ...folders.map((folder, index) => {
+        const unique = names.filter(name => name === names[index]).length === 1;
+        const option = new Option(unique ? names[index] : folder, folder);
+        option.title = folder;
+        return option;
+      }),
+    );
+    project.value = folders.find(folder => repository && sameFolder(folder, repository)) ?? "";
+  }
 
   function setRepository(path) {
     repository = path;
-    repoValue.textContent = folderName(path) || "Choose a repository";
     repoPath.textContent = path;
     repoPath.hidden = !path;
-    repoButton.title = path;
-  }
-
-  function pathsFromInput() {
-    return fileInput.value.split(/\r?\n/).map(line => line.trim().replaceAll("\\", "/")).filter(Boolean);
-  }
-
-  function updateComposer() {
-    const pendingPaths = pathsFromInput();
-    const count = new Set([...approvedFiles, ...pendingPaths]).size;
-    fileCount.textContent = `${count} / ${maxFiles}`;
-    fileCount.classList.toggle("over-limit", count > maxFiles);
-    fileInput.setCustomValidity(count > maxFiles ? `Use at most ${maxFiles} approved files.` : "");
-    addFilesButton.disabled = !pendingPaths.length;
-    start.disabled = formBusy || submittingPlan || !repository || !objective.value.trim() || !count || count > maxFiles;
-  }
-
-  function renderFiles() {
-    fileList.replaceChildren(...[...approvedFiles].map(path => {
-      const item = document.createElement("li");
-      const label = document.createElement("span");
-      label.textContent = path;
-      label.title = path;
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.setAttribute("aria-label", `Remove ${path}`);
-      remove.textContent = "×";
-      remove.addEventListener("click", () => {
-        approvedFiles.delete(path);
-        renderFiles();
-        fileInput.focus();
-      });
-      item.append(label, remove);
-      return item;
-    }));
-    fileList.hidden = !approvedFiles.size;
+    renderProjects();
     updateComposer();
   }
 
-  function addFiles(focusInput = true) {
-    if (!fileInput.reportValidity()) return;
-    for (const path of pathsFromInput()) approvedFiles.add(path);
-    fileInput.value = "";
-    renderFiles();
-    if (focusInput) fileInput.focus();
+  function updateComposer() {
+    start.disabled = formBusy || submittingPlan || !repository || !objective.value.trim();
   }
 
   function showStatus(label, kind = "") {
@@ -201,6 +175,16 @@
     return response.data;
   }
 
+  /** Highlight the open run, or New graph, in the sidebar while the Graph pane is on screen. */
+  function markCurrent() {
+    for (const button of history.querySelectorAll("button")) {
+      if (graphMode && button.dataset.run === currentRun) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    }
+    if (graphMode && !currentRun) newRun.setAttribute("aria-current", "page");
+    else newRun.removeAttribute("aria-current");
+  }
+
   async function refresh() {
     const snapshot = await request("status");
     const runId = snapshot?.run?.id;
@@ -210,23 +194,20 @@
     formBusy = !!snapshot?.busy;
     updateComposer();
     cancel.hidden = !snapshot?.running && !planning;
+    resume.hidden = !snapshot?.resumable;
     showPatch.hidden = snapshot?.status !== "ready_to_export";
-    activityActions.hidden = cancel.hidden && showPatch.hidden;
+    activityActions.hidden = cancel.hidden && resume.hidden && showPatch.hidden;
     if (showPatch.hidden || currentRun !== runId) {
       output.value = "";
       patchView.hidden = true;
       patchView.open = false;
     }
     currentRun = runId;
-    for (const button of history.querySelectorAll("button")) {
-      if (button.dataset.run === runId) button.setAttribute("aria-current", "page");
-      else button.removeAttribute("aria-current");
-    }
-    if (composing) newRun.setAttribute("aria-current", "page");
-    else newRun.removeAttribute("aria-current");
-    newLabel.textContent = snapshot?.draft ? "Plan draft" : "New run";
+    markCurrent();
+    newLabel.textContent = snapshot?.draft ? "Graph draft" : "New graph";
     const draft = composing ? snapshot?.draft : undefined;
     const context = snapshot?.run?.context;
+    eyebrow.textContent = composing ? "Graph workspace" : `Graph run · ${runId.slice(0, 8)}`;
     title.textContent = composing ? "Plan a change" : context?.objective.trim().replace(/\s+/g, " ").slice(0, 200) || "Saved run";
     intro.hidden = !composing;
     runRepo.hidden = !context?.sourceRoot;
@@ -237,11 +218,10 @@
       shownPlan = planKey;
       shownDraft = draft;
       if (editingDraft) closeEditor();
-      if (draft && !repository && !objective.value && !approvedFiles.size && !fileInput.value) {
+      if (draft && !objective.value) {
         setRepository(draft.source);
         objective.value = draft.objective;
-        for (const path of draft.files) approvedFiles.add(path);
-        renderFiles();
+        updateComposer();
       }
       planSummary.hidden = !draft;
       planSummary.textContent = draft ? `${draft.objective} · ${draft.source}` : "";
@@ -251,14 +231,6 @@
     planTitle.textContent = draft ? "Proposed plan" : "Approved plan";
     planActions.hidden = !draft || !!editingDraft;
     approve.disabled = edit.disabled = save.disabled = !!snapshot?.busy;
-    const eligible = snapshot?.retryable ?? [];
-    if (eligible.join() !== [...retryNode.options].map(option => option.value).join()) {
-      retryNode.replaceChildren(...eligible.map(id => new Option(id, id)));
-    }
-    retry.disabled = retryNode.disabled = eligible.length === 0;
-    resume.hidden = !snapshot?.resumable;
-    runActions.hidden = retry.disabled && resume.hidden;
-    retryNode.hidden = retry.hidden = retry.disabled;
     const logged = snapshot?.logs ?? [];
     logKeys = new Map(logged.map(id => [id, `${runId ?? snapshot.plannerLogId}:${id}:${snapshot.run?.nodes[id]?.attempt ?? 0}`]));
     if (logged.join() !== [...logNode.options].map(option => option.value).join()) {
@@ -276,26 +248,18 @@
       log.value = "";
       log.hidden = true;
     }
-    const titles = new Map((context?.tasks ?? []).map(task => [`code-${task.id}`, task.title]));
-    nodes.replaceChildren(...(snapshot?.run?.plan.nodes ?? []).map(node => {
-      const item = document.createElement("li");
-      const state = snapshot.run.nodes[node.id];
-      const phase = state.status === "succeeded" ? "completed" : state.status;
-      const role = titles.has(node.id) ? `coder · ${titles.get(node.id)}` : node.role;
-      item.textContent = `${role} · ${phase}${state.error ? ` · ${state.error}` : ""}`;
-      return item;
-    }));
+    flow.render(snapshot);
     const error = interactionError || snapshot?.error || (composing && snapshot?.planError);
     const label = error ||
       (planning ? "Planning…" : "") ||
       (draft && !snapshot?.run ? "Review the plan. Coders start only after approval." : "") ||
-      snapshot?.reason ||
       states[snapshot?.status] ||
+      snapshot?.reason ||
       (snapshot?.running ? "Graph running" : snapshot?.run?.cancelled ? "Run cancelled" : snapshot?.run ? "Run finished" : "");
     showStatus(label, error ? "error" : snapshot?.status ?? "");
   }
 
-  async function refreshHistory() {
+  async function renderHistory() {
     const runs = await request("list");
     history.replaceChildren(...runs.map(run => {
       const item = document.createElement("li");
@@ -314,7 +278,12 @@
       item.append(button);
       return item;
     }));
-    historyEmpty.hidden = runs.length > 0;
+    sideGraphs.hidden = runs.length === 0;
+    markCurrent();
+  }
+
+  async function refreshHistory() {
+    await renderHistory();
     historyLoaded = true;
     await refresh();
   }
@@ -331,10 +300,35 @@
     return pending;
   }
 
+  function retryStep(runId, node) {
+    void action(async () => {
+      if (currentRun !== runId) return;
+      await request("retry", node);
+      await refresh();
+    });
+  }
+
+  function openStepLog(node) {
+    const key = logKeys.get(node);
+    if (!key) return;
+    void action(async () => {
+      if (logKeys.get(node) !== key) return;
+      log.value = await request("log", node);
+      shownLog = key;
+      logNode.value = node;
+      log.hidden = false;
+      logs.open = true;
+      log.focus();
+    });
+  }
+
+  /** Poll only while the Graph pane is on screen. */
+  const visible = () => graphMode && !chat.hidden;
+
   function tick(current) {
-    if (panel.hidden || current !== generation) return;
+    if (!visible() || current !== generation) return;
     void action(historyLoaded ? refresh : refreshHistory, true).finally(() => {
-      if (!panel.hidden && current === generation) {
+      if (visible() && current === generation) {
         polling = setTimeout(() => tick(current), status.dataset.kind === "error" ? 2500 : 800);
       }
     });
@@ -343,28 +337,52 @@
   function onView() {
     clearTimeout(polling);
     const current = ++generation;
-    if (panel.hidden) return;
+    if (!visible()) return;
     historyLoaded = false;
     tick(current);
   }
 
+  /** Graph shares the chat sidebar: its pane replaces the chat workspace until a chat is picked. */
+  function setMode(on) {
+    if (graphMode === on) return;
+    graphMode = on;
+    chat.classList.toggle("graph-mode", on);
+    panel.hidden = !on;
+    if (on) {
+      if (!repository) setRepository(loadRecent()[0] ?? "");
+      else renderProjects();
+    }
+    markCurrent();
+    onView();
+  }
+
   document.addEventListener("kostomp-view", onView);
-  onView();
-  newRun.addEventListener("click", () => void action(async () => {
-    await request("compose");
-    await refresh();
-    workspace.scrollTop = 0;
-    repoButton.focus();
-  }));
-  repoButton.addEventListener("click", async () => {
+  // A chat coming to the front, from the sidebar or anywhere else, leaves the Graph pane.
+  document.addEventListener("kostomp-chat-shown", () => setMode(false));
+  const chatControls = document.getElementById("session-tabs");
+  const leaveForChat = event => { if (!event.target.closest("#graph-new")) setMode(false); };
+  chatControls.addEventListener("click", leaveForChat, true);
+  chatControls.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") leaveForChat(event); }, true);
+  renderProjects();
+  void action(renderHistory, true);
+  newRun.addEventListener("click", () => {
+    setMode(true);
+    void action(async () => {
+      await request("compose");
+      await refresh();
+      panel.scrollTop = 0;
+      project.focus();
+    });
+  });
+  project.addEventListener("change", () => setRepository(project.value));
+  browse.addEventListener("click", async () => {
     if (browsing) return;
     browsing = true;
     try {
       const picked = await browseFolder(repository, { allowCreate: false });
       if (picked) {
-        setRepository(picked);
         saveRecent(picked);
-        updateComposer();
+        setRepository(picked);
       }
     } catch (error) {
       showStatus(error?.message || String(error), "error");
@@ -373,23 +391,10 @@
     }
   });
   objective.addEventListener("input", updateComposer);
-  fileInput.addEventListener("input", updateComposer);
-  addFilesButton.addEventListener("click", addFiles);
-  fileInput.addEventListener("keydown", event => {
-    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-      event.preventDefault();
-      addFiles();
-    }
-  });
   form.addEventListener("submit", event => {
     event.preventDefault();
     if (start.disabled) return;
-    const input = {
-      source: repository,
-      objective: objective.value.trim(),
-      files: [...new Set([...approvedFiles, ...pathsFromInput()])],
-    };
-    addFiles(false);
+    const input = { source: repository, objective: objective.value.trim() };
     submittingPlan = true;
     updateComposer();
     void action(async () => {
@@ -409,7 +414,6 @@
   edit.addEventListener("click", () => {
     if (!shownDraft) return;
     editingDraft = { draft: shownDraft.id, hash: shownDraft.hash };
-    approvedScope.textContent = `Approved files: ${shownDraft.files.join(", ")}`;
     for (const task of shownDraft.tasks) addEditTask(task);
     tasks.hidden = planActions.hidden = true;
     editor.hidden = false;
@@ -449,26 +453,16 @@
   }));
   history.addEventListener("click", event => {
     const id = event.target.closest("button[data-run]")?.dataset.run;
-    if (id) void action(async () => {
+    if (!id) return;
+    setMode(true);
+    void action(async () => {
       await request("open", id);
       await refresh();
-      workspace.scrollTop = 0;
+      panel.scrollTop = 0;
     });
-  });
-  retry.addEventListener("click", () => {
-    const node = retryNode.value;
-    if (node) void action(async () => { await request("retry", node); await refresh(); });
   });
   resume.addEventListener("click", () => void action(async () => { await request("resume"); await refresh(); }));
-  showLog.addEventListener("click", () => {
-    const node = logNode.value;
-    if (node) void action(async () => {
-      log.value = await request("log", node);
-      shownLog = logKeys.get(node) ?? "";
-      log.hidden = false;
-      logs.open = true;
-    });
-  });
+  showLog.addEventListener("click", () => openStepLog(logNode.value));
   showPatch.addEventListener("click", () => void action(async () => {
     const artifact = await request("patch");
     base.textContent = `Base ${artifact.baseSha}`;

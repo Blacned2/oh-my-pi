@@ -26,6 +26,7 @@ import {
 	setCellDimensions,
 	setOsc99Supported,
 	setTerminalBackgroundColor,
+	setTerminalFocused,
 	setTerminalGlyphProtocol,
 	TERMINAL,
 } from "./terminal-capabilities";
@@ -479,6 +480,7 @@ export function emergencyTerminalRestore(): void {
 					"\x1b[?7h" + // Restore autowrap
 					"\x1b[?1l\x1b>" + // Restore normal cursor-key + keypad mode (rmkx, #6374)
 					"\x1b[?2004l" + // Disable bracketed paste
+					"\x1b[?1004l" + // Disable focus reporting
 					"\x1b[?2031l" + // Disable Mode 2031 appearance notifications
 					"\x1b[?2048l" + // Disable in-band resize notifications
 					"\x1b[?5522l" + // Disable enhanced paste notifications
@@ -1231,6 +1233,8 @@ export class ProcessTerminal implements Terminal {
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		this.#safeWrite("\x1b[?2004h");
+		// Focus reporting: lets completion notifications ring only while unfocused.
+		this.#safeWrite("\x1b[?1004h");
 		this.#rearmBracketedPaste =
 			terminalMultiplexerSessions($env).some(multiplexer => multiplexer.gatesBracketedPaste) ||
 			classifyTerminalMultiplexerModule($env)?.gatesBracketedPaste === true;
@@ -1759,6 +1763,12 @@ export class ProcessTerminal implements Terminal {
 					this.#handleGlyphProtocolReply(reply);
 					return;
 				}
+			}
+
+			// Focus reporting (DEC 1004): CSI I = focus in, CSI O = focus out.
+			if (sequence === "\x1b[I" || sequence === "\x1b[O") {
+				setTerminalFocused(sequence === "\x1b[I");
+				return;
 			}
 
 			// Mode 2031 change notification: re-query OSC 11 with 100ms debounce
@@ -2430,6 +2440,10 @@ export class ProcessTerminal implements Terminal {
 		// no-ops otherwise). Covers crash paths that reach stop() without the
 		// TUI's own overlay teardown running.
 		this.#safeWrite("\x1b[?1006l\x1b[?1003l\x1b[?1000l");
+
+		// Disable focus reporting and reset to focused
+		this.#safeWrite("\x1b[?1004l");
+		setTerminalFocused(true);
 
 		// Disable Mode 2031 appearance change notifications
 		this.#safeWrite("\x1b[?2031l");

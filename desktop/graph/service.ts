@@ -9,9 +9,10 @@ import { type GraphRun, type GraphRunContext, GraphRunStore } from "./run-store"
 import { graphPlanForTasks, parseTaskPlan, taskPlanHash } from "./task-plan";
 import {
 	type ApprovedGraphExecutors,
+	type ApprovedGraphInput,
+	approvedGraphInputSchema,
 	DEFAULT_MAX_CODERS,
 	graphWork,
-	parseApprovedGraphInput,
 	proposeGraphPlan,
 	readGraphRelease,
 	retryGraphNode,
@@ -39,7 +40,7 @@ const profileSchema = type({
 });
 const draftSelection = type({ draft: "string", hash: "string" });
 const requestSchema = type({ op: "'status' | 'cancel' | 'patch' | 'list' | 'resume' | 'discard' | 'compose'" })
-	.or({ op: "'plan'", input: "unknown" })
+	.or({ op: "'plan'", input: approvedGraphInputSchema })
 	.or({ op: "'approve'", input: draftSelection })
 	.or({ op: "'edit'", input: draftSelection.and({ plan: "unknown" }) })
 	.or({ op: "'open' | 'retry' | 'log'", input: "string" });
@@ -151,12 +152,12 @@ function launch(run: GraphRun & { context: GraphRunContext }, { executors, maxCo
 	active = { id: run.id, controller, job };
 }
 
-async function proposePlan(value: unknown) {
-	const input = parseApprovedGraphInput(value);
+async function proposePlan(input: ApprovedGraphInput) {
 	if (!isFullyQualifiedPath(input.source)) throw new Error("Choose an absolute source repository directory");
-	const profile = await loadProfile();
 	const { sourceRoot, baseSha } = await inspectGraphSource(input.source);
+	if (!input.objective.trim()) throw new Error("Graph requires an objective");
 	const scoped = { ...input, source: sourceRoot };
+	const profile = await loadProfile();
 	const controller = new AbortController();
 	const id = crypto.randomUUID();
 	planError = undefined;
@@ -210,7 +211,7 @@ async function editPlan(selection: typeof draftSelection.infer, proposal: unknow
 	if (workspace.baseSha !== draft.baseSha || workspace.sourceRoot !== draft.input.source) {
 		throw new Error("The source changed. Plan again");
 	}
-	const plan = validateGraphTaskPlan(workspace, proposal, draft.input.files);
+	const plan = validateGraphTaskPlan(workspace, proposal);
 	store.saveDraft({ ...draft, plan, hash: taskPlanHash(plan) });
 	planError = undefined;
 }
@@ -220,7 +221,7 @@ async function approvePlan(selection: typeof draftSelection.infer) {
 	const draft = selectedDraft(selection);
 	const { id, hash } = draft;
 	const { input, baseSha, profileHash } = draft;
-	const plan = parseTaskPlan(draft.plan, input.files);
+	const plan = parseTaskPlan(draft.plan);
 	if (taskPlanHash(plan) !== hash) throw new Error("The proposed plan changed. Review it again before approving");
 	const profile = await loadProfile();
 	if (profile.hash !== profileHash) throw new Error("The Graph profile changed. Plan again");
@@ -229,7 +230,7 @@ async function approvePlan(selection: typeof draftSelection.infer) {
 		sourceRoot: input.source,
 		baseSha,
 		objective: input.objective,
-		files: input.files,
+		files: [],
 		profileHash,
 		tasks: plan.tasks,
 		planHash: hash,
@@ -335,7 +336,6 @@ async function handle(request: typeof requestSchema.infer) {
 			hash: draft.hash,
 			source: draft.input.source,
 			objective: draft.input.objective,
-			files: draft.input.files,
 			baseSha: draft.baseSha,
 			tasks: draft.plan.tasks,
 		},

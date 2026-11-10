@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `ask` prompts show their position (`(2/3)`) when a form has several questions; the desktop UI renders it as a "Question 2 of 3" header with progress dots and stacked option cards
+
+### Fixed
+
+- A steered message now stays in the queue list until it appears in the transcript, instead of vanishing while the next model request is prepared
+
 ## [18.18.4] - 2026-11-09
 
 ### Added

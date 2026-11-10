@@ -22,7 +22,9 @@
   }
 
   // ---- window material --------------------------------------------------
-  // State: { settings: { material, blur, tint, opaqueWhenUnfocused, followSystem }, glass, systemTransparency }.
+  // State: { settings: { material, glassType, blur, tint, tintColor, sheen, rim, grain, paneBlur,
+  // saturation, glow, accent, opaqueWhenUnfocused, followSystem }, glass, systemTransparency }.
+  const { TYPES, paint } = window.kostompMaterial;
   let material = window.__KOSTOMP_MATERIAL__ || null;
   let wanted = material ? { ...material.settings } : null; // last settings sent, ahead of the echo
   const statsFrame = $("stats-frame");
@@ -41,7 +43,7 @@
     material = state;
     if (!wanted) wanted = { ...state.settings };
     root.dataset.material = state.glass ? "glass" : "opaque";
-    root.style.setProperty("--glass-a", String(state.settings.tint / 100));
+    paint(state.settings);
     postStatsMaterial();
     syncWindowPage();
   }
@@ -222,7 +224,19 @@
         h("div", { class: "pv-line accent", style: "width:30%" })));
   }
 
-  const BLUR_LABELS = ["Off", "Light", "Frosted"];
+  // Sliders of the glass: [setting key, name, description, min, max, label].
+  const BACKDROPS = ["Off", "Mica", "Acrylic", "Mica Alt"];
+  const PARAMS = [
+    ["blur", "Backdrop", "System material behind the window. Off keeps it fully clear.", 0, 3, (v) => BACKDROPS[v]],
+    ["tint", "Tint", "How much colour covers the glass. Higher keeps text easier to read.", 0, 100, (v) => v + "%"],
+    ["sheen", "Top light", "Soft highlight washing down from the top edge.", 0, 100, (v) => v + "%"],
+    ["rim", "Edge light", "Bright hairline around the window edge.", 0, 100, (v) => v + "%"],
+    ["grain", "Grain", "Fine frosted texture over the glass.", 0, 100, (v) => v + "%"],
+    ["paneBlur", "Pane blur", "Blur behind floating panes such as the command palette.", 0, 40, (v) => v + "px"],
+    ["saturation", "Pane saturation", "Colour of what shows through floating panes.", 50, 250, (v) => v + "%"],
+    ["glow", "Ambient glow", "Colour glow drifting behind the glass.", 0, 100, (v) => v + "%"],
+  ];
+  const DEFAULT_TYPE = TYPES[0];
 
   function renderWindowPage() {
     const tile = (value, name, desc) => h("button", {
@@ -233,17 +247,61 @@
 
     const glassTile = tile("glass", "Transparent", "Frosted glass, the desktop shows through blurred.");
     const opaqueTile = tile("opaque", "Opaque", "Solid dark background, best for long reading.");
-    const blurVal = h("span", { class: "val" });
-    const blur = slider(0, 2, 1, (v) => { blurVal.textContent = BLUR_LABELS[v]; }, (v) => saveWindow({ blur: v }));
-    const tintVal = h("span", { class: "val" });
-    const tint = slider(0, 100, 1, (v) => {
-      tintVal.textContent = v + "%";
-      if (material?.glass) root.style.setProperty("--glass-a", String(v / 100)); // live, before the save
-    }, (v) => saveWindow({ tint: v }));
+
+    // One tile per glass type, painted with that type's own numbers.
+    const typeTiles = new Map();
+    const typeTile = (t) => {
+      const pv = preview("glass");
+      const v = t.v;
+      pv.style.cssText = `--pv-a:${v.tint / 100};--pv-sat:${v.saturation / 100};` +
+        `--pv-blur:${[0, 6, 14, 9][v.blur] + v.paneBlur / 4}px;` +
+        `--pv-sheen:rgb(255 255 255 / ${Math.min(1, v.sheen / 100 * 2.2)});` +
+        (v.tintColor ? `--pv-rgb:${window.kostompMaterial.rgbOf(v.tintColor)};` : "");
+      const b = h("button", {
+        type: "button", role: "radio", class: "tile", "aria-checked": "false",
+        onclick: () => saveWindow({ glassType: t.id, ...v }),
+      }, pv, h("div", { class: "tile-foot" }, h("span", { class: "radio" }),
+        h("span", {}, h("div", { class: "tile-name", text: t.name }), h("div", { class: "tile-desc", text: t.desc }))));
+      typeTiles.set(t.id, b);
+      return b;
+    };
+    const typeGrid = h("div", { class: "tiles types", role: "radiogroup", "aria-label": "Glass type" },
+      TYPES.map(typeTile));
+
+    // Sliders: live paint while dragging, one save on release. Any edit makes the type "custom".
+    const sliders = new Map();
+    const paramRows = PARAMS.map(([key, name, desc, min, max, fmt]) => {
+      const val = h("span", { class: "val" });
+      const input = slider(min, max, 1, (v) => {
+        val.textContent = fmt(v);
+        if (wanted) paint({ ...wanted, [key]: v });
+      }, (v) => saveWindow({ [key]: v, glassType: "custom" }));
+      const r = row(name, desc, input, val);
+      sliders.set(key, { input, val, fmt, row: r });
+      return r;
+    });
+
+    // Colours: "" follows the theme; the picker shows the theme colour until one is chosen.
+    const colors = new Map();
+    const colorRow = (key, name, desc, themeHex, extra) => {
+      const input = h("input", { type: "color", class: "color", "aria-label": name });
+      input.addEventListener("input", () => { if (wanted) paint({ ...wanted, [key]: input.value }); });
+      input.addEventListener("change", () => saveWindow({ [key]: input.value, ...extra }));
+      const reset = h("button", { type: "button", class: "btn", text: "Theme", style: "margin:0",
+        onclick: () => saveWindow({ [key]: "", ...extra }) });
+      const r = row(name, desc, input, reset);
+      colors.set(key, { input, reset, themeHex, row: r });
+      return r;
+    };
+    const tintColorRow = colorRow("tintColor", "Tint colour", "Colour of the glass tint. Theme uses the dark or light palette.",
+      () => (root.dataset.theme === "light" ? "#f5f1ff" : "#120e26"), { glassType: "custom" });
+    const accentRow = colorRow("accent", "Accent colour", "Buttons, focus rings and highlights, in both materials.",
+      () => (root.dataset.theme === "light" ? "#6d4aff" : "#a99bff"), {});
+
     const unfocused = toggle("Turn opaque when the window is not focused", (on) => saveWindow({ opaqueWhenUnfocused: on }));
     const follow = toggle("Follow Windows transparency effects", (on) => saveWindow({ followSystem: on }));
-    const blurRow = row("Blur strength", "How much the desktop behind the window is blurred.", blur, blurVal);
-    const tintRow = row("Tint", "Darkness of the glass. Higher keeps text easier to read.", tint, tintVal);
+    const resetBtn = h("button", { type: "button", class: "btn", text: "Reset glass and colours",
+      onclick: () => saveWindow({ glassType: DEFAULT_TYPE.id, ...DEFAULT_TYPE.v, accent: "" }) });
     const note = h("div", { class: "set-note", hidden: true });
     const error = h("div", { class: "row-err", hidden: true });
 
@@ -253,11 +311,16 @@
       h("div", { class: "set-body" },
         h("div", { class: "tiles", role: "radiogroup", "aria-label": "Window material" }, glassTile, opaqueTile),
         note, error,
-        blurRow, tintRow,
+        h("div", { class: "set-h", text: "Glass type" }), typeGrid,
+        h("div", { class: "set-h", text: "Fine tuning" }),
+        paramRows, tintColorRow,
+        h("div", { class: "set-h", text: "Theme" }), accentRow,
+        h("div", { class: "set-h", text: "Behaviour" }),
         row("Turn opaque when the window is not focused", "Saves GPU work while you are in another app.", unfocused),
-        row("Follow Windows transparency effects", "Use Opaque when transparency is off in Windows settings.", follow)));
+        row("Follow Windows transparency effects", "Use Opaque when transparency is off in Windows settings.", follow),
+        resetBtn));
 
-    win = { glassTile, opaqueTile, blur, blurVal, tint, tintVal, unfocused, follow, blurRow, tintRow, note, error };
+    win = { glassTile, opaqueTile, typeGrid, typeTiles, sliders, colors, unfocused, follow, note, error };
     syncWindowPage();
   }
 
@@ -266,13 +329,23 @@
     const s = wanted;
     win.glassTile.setAttribute("aria-checked", String(s.material === "glass"));
     win.opaqueTile.setAttribute("aria-checked", String(s.material === "opaque"));
-    if (document.activeElement !== win.blur) { win.blur.value = s.blur; fill(win.blur); win.blurVal.textContent = BLUR_LABELS[s.blur]; }
-    if (document.activeElement !== win.tint) { win.tint.value = s.tint; fill(win.tint); win.tintVal.textContent = s.tint + "%"; }
+    for (const [id, b] of win.typeTiles) b.setAttribute("aria-checked", String(s.material === "glass" && s.glassType === id));
+    for (const [key, c] of win.sliders) {
+      if (document.activeElement !== c.input) { c.input.value = s[key]; fill(c.input); c.val.textContent = c.fmt(s[key]); }
+    }
+    for (const [key, c] of win.colors) {
+      c.input.value = s[key] || c.themeHex();
+      c.reset.disabled = !s[key];
+    }
     win.unfocused.setAttribute("aria-checked", String(s.opaqueWhenUnfocused));
     win.follow.setAttribute("aria-checked", String(s.followSystem));
     const off = s.material !== "glass";
-    for (const r of [win.blurRow, win.tintRow]) r.classList.toggle("off", off);
-    win.blur.disabled = win.tint.disabled = off;
+    win.typeGrid.classList.toggle("off", off);
+    for (const c of win.sliders.values()) { c.row.classList.toggle("off", off); c.input.disabled = off; }
+    const tc = win.colors.get("tintColor");
+    tc.row.classList.toggle("off", off);
+    tc.input.disabled = off;
+    if (off) tc.reset.disabled = true;
     const blocked = s.material === "glass" && s.followSystem && material && !material.systemTransparency;
     win.note.hidden = !blocked;
     win.note.textContent = blocked

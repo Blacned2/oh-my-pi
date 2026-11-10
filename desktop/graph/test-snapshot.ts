@@ -1,8 +1,9 @@
 import type { VcsGitRepo } from "@oh-my-pi/pi-natives";
 import { repoPathPrefixes } from "./repo-path";
 
-const maxFiles = 8192;
-const maxBytes = 64 * 1024 * 1024;
+const maxFiles = 16_384;
+const maxMiB = 256;
+const maxBytes = maxMiB * 1024 * 1024;
 const indexHeaderBytes = 12;
 const indexEntryPrefixBytes = 62;
 const sha1Bytes = 20;
@@ -20,7 +21,7 @@ function snapshotEntries(index: Buffer): IndexFile[] {
 		throw new Error("Unsupported Graph snapshot index");
 	}
 	const count = index.readUInt32BE(8);
-	if (count > maxFiles) throw new Error("Graph snapshot exceeds 8192 tracked files");
+	if (count > maxFiles) throw new Error(`Graph snapshot exceeds ${maxFiles} tracked files`);
 	const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 	const entries: IndexFile[] = [];
 	let offset = indexHeaderBytes;
@@ -54,8 +55,9 @@ function snapshotEntries(index: Buffer): IndexFile[] {
 export async function buildTestSnapshot(
 	repo: VcsGitRepo,
 	indexPath: string,
+	archivePath: string,
 	signal?: AbortSignal,
-): Promise<Bun.Archive> {
+): Promise<Bun.BunFile> {
 	const index = Buffer.from(await Bun.file(indexPath).arrayBuffer());
 	const files: [string, Buffer | string][] = [];
 	const executable: string[] = [];
@@ -64,10 +66,12 @@ export async function buildTestSnapshot(
 		signal?.throwIfAborted();
 		const { data, truncated } = await repo.showBlob(entry.blobId, remaining + 1, signal);
 		remaining -= data.byteLength;
-		if (truncated || remaining < 0) throw new Error("Graph snapshot exceeds 64 MiB");
+		if (truncated || remaining < 0) throw new Error(`Graph snapshot exceeds ${maxMiB} MiB`);
 		files.push([`project/${entry.path}`, data]);
 		if (entry.executable) executable.push(`./${entry.path}\0`);
 	}
 	files.push(["graph-executables", executable.join("")]);
-	return new Bun.Archive(Object.fromEntries(files));
+	await Bun.Archive.write(archivePath, Object.fromEntries(files));
+	signal?.throwIfAborted();
+	return Bun.file(archivePath);
 }

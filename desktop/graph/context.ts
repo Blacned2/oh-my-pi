@@ -6,6 +6,8 @@ import type { GraphWorkspace } from "./workspace";
 const maxFileBytes = 64 * 1024;
 const maxReferences = 4;
 const maxExcerptChars = 240;
+/** Non-owned files read for hints: the best path matches for the objective and tasks. */
+const maxHintFiles = 24;
 
 export interface GraphContextReference {
 	file: string;
@@ -39,8 +41,18 @@ export async function buildGraphContext(
 	signal: AbortSignal,
 ): Promise<GraphContextManifest> {
 	const owners = new Map(work.tasks.flatMap(task => task.files.map(file => [file, task.nodeId] as const)));
+	const allTerms = words(`${work.objective} ${work.tasks.map(task => `${task.title} ${task.brief}`).join(" ")}`);
+	const pathScore = (file: string) => [...words(file)].filter(word => allTerms.has(word)).length;
+	const hints = workspace
+		.files()
+		.filter(file => !owners.has(file))
+		.map(file => ({ file, score: pathScore(file) }))
+		.filter(({ score }) => score > 0)
+		.sort((a, b) => b.score - a.score || (a.file < b.file ? -1 : 1))
+		.slice(0, maxHintFiles)
+		.map(({ file }) => file);
 	const sources = new Map<string, string[]>();
-	for (const file of work.files) {
+	for (const file of [...owners.keys(), ...hints]) {
 		signal.throwIfAborted();
 		try {
 			const { data } = await workspace.readBaseFile(file, signal);

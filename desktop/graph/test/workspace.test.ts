@@ -20,7 +20,8 @@ test("combines two disjoint changes privately and releases only with matching ev
 	]);
 	const scopes = new Map(sets.map(set => [set.nodeId, set.changes.map(change => change.path)]));
 	const candidate = await workspace.compose(scopes, sets);
-	const snapshot = await (await workspace.testSnapshot(candidate)).files();
+	const archive = await workspace.testSnapshot(candidate, temp.join("candidate.tar"));
+	const snapshot = await new Bun.Archive(await archive.bytes()).files();
 	expect(await snapshot.get("project/src/backend.txt")?.text()).toBe("new backend\n");
 	expect(await snapshot.get("project/src/frontend.txt")?.text()).toBe("new frontend\n");
 	expect([...snapshot.keys()].sort()).toEqual([
@@ -113,7 +114,9 @@ test("a snapshot refuses a pre-existing Git symlink instead of materializing its
 		cached: true,
 		indexPath,
 	});
-	await expect(buildTestSnapshot(repo, indexPath)).rejects.toThrow(/symlinks and submodules/);
+	await expect(buildTestSnapshot(repo, indexPath, temp.join("snapshot.tar"))).rejects.toThrow(
+		/symlinks and submodules/,
+	);
 });
 
 test("concurrent captures and compositions writing the same objects stay reproducible", async () => {

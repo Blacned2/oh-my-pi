@@ -3,7 +3,6 @@ import { sanitizeText } from "@oh-my-pi/pi-utils";
 import { buildGraphContext, type GraphCoderContext, type GraphContextManifest } from "./context";
 import type { GraphTestResult } from "./docker-tester";
 import type { TestFailureObserver } from "./failure-judge";
-import { writablePathKey } from "./repo-path";
 import { cleanDiagnostic, type GraphReview } from "./review";
 import type { CoderRepairFeedback, GraphRunContext, GraphRunStore } from "./run-store";
 import { driveGraphRun, type GraphExecutor } from "./scheduler";
@@ -17,30 +16,17 @@ import {
 	type GraphWorkspace,
 } from "./workspace";
 
-const inputSchema = type({ source: "string > 0", objective: "0 < string <= 8192", files: "string[]" });
-export type ApprovedGraphInput = typeof inputSchema.infer;
+export const approvedGraphInputSchema = type({
+	source: "string > 0",
+	objective: "0 < string <= 8192",
+});
+export type ApprovedGraphInput = typeof approvedGraphInputSchema.infer;
 
 /** Container output is untrusted display text: ANSI sequences and control characters are removed. */
 function testLog({ exitCode, elapsedMs, stdout, stderr }: GraphTestResult): string {
 	const header = `Exit code ${exitCode} after ${Math.round(elapsedMs)} ms`;
 	const sections = [header, "--- stdout ---", stdout, "--- stderr ---", stderr];
 	return sanitizeText(sections.join("\n"));
-}
-
-export function parseApprovedGraphInput(value: unknown): ApprovedGraphInput {
-	const input = inputSchema.assert(value);
-	if (!input.objective.trim() || input.files.length < 1 || input.files.length > 32) {
-		throw new Error("Graph requires an objective and 1–32 approved file paths");
-	}
-	const paths = input.files.map(file => writablePathKey(file)[0]);
-	if (
-		paths.some((file, index) =>
-			paths.some((other, i) => i !== index && (other === file || other.startsWith(`${file}/`))),
-		)
-	) {
-		throw new Error("Approved Graph file paths overlap");
-	}
-	return { ...input, files: [...input.files] };
 }
 
 /** One Coder node's assignment. `files` is its exclusive write scope. */
@@ -51,18 +37,17 @@ export interface CoderBrief {
 	files: readonly string[];
 }
 
-/** The approved input of a run. All approved files stay readable by every agent. */
+/** The input of a run. Every agent may read the whole pinned repository. */
 export interface GraphWork extends ApprovedGraphInput {
 	tasks: readonly CoderBrief[];
 }
 
-/** Runs saved before planning have one `code` node that owns the whole approved scope. */
+/** Runs saved before planning have one `code` node that owns the scope saved with the run. */
 export function graphWork(context: GraphRunContext): GraphWork {
 	const { sourceRoot: source, objective, files, tasks } = context;
 	return {
 		source,
 		objective,
-		files,
 		tasks: tasks
 			? tasks.map(({ id, title, brief, files }) => ({ nodeId: coderNodeId(id), title, brief, files }))
 			: [{ nodeId: "code", title: objective, brief: objective, files }],
@@ -72,6 +57,7 @@ export function graphWork(context: GraphRunContext): GraphWork {
 /** A Coder reads the pinned base, or the composed candidate of its prerequisites. */
 export interface GraphFileView {
 	read(file: string, signal: AbortSignal): Promise<{ data: Uint8Array }>;
+	list(directory: string): string[];
 }
 
 /** Receives an attempt's display log. Text is sanitized and stored only while the attempt is live. */
@@ -111,17 +97,13 @@ export interface ApprovedGraphExecutors {
 }
 
 /** Use the same admission checks for Planner output and user edits. */
-export function validateGraphTaskPlan(
-	workspace: GraphWorkspace,
-	proposal: unknown,
-	files: readonly string[],
-): GraphTaskPlan {
-	const plan = parseTaskPlan(proposal, files);
+export function validateGraphTaskPlan(workspace: GraphWorkspace, proposal: unknown): GraphTaskPlan {
+	const plan = parseTaskPlan(proposal);
 	workspace.checkScopes(new Map(plan.tasks.map(task => [task.id, task.files])));
 	return plan;
 }
 
-/** Ask the Planner for tasks and admit only a plan that fits the approved scope and the pinned tree. */
+/** Ask the Planner for tasks and admit only a plan that fits the pinned tree. */
 export async function proposeGraphPlan(
 	workspace: GraphWorkspace,
 	input: ApprovedGraphInput,
@@ -129,8 +111,7 @@ export async function proposeGraphPlan(
 	signal: AbortSignal,
 	log?: GraphLog,
 ): Promise<GraphTaskPlan> {
-	workspace.checkScopes(new Map([["approved", input.files]]));
-	const validate = (proposal: unknown) => validateGraphTaskPlan(workspace, proposal, input.files);
+	const validate = (proposal: unknown) => validateGraphTaskPlan(workspace, proposal);
 	return validate(await executors.plan(workspace, input, validate, signal, log));
 }
 
@@ -245,6 +226,7 @@ export async function runApprovedGraph(
 			const files: GraphFileView = {
 				read: (file, readSignal) =>
 					view ? workspace.readCandidateFile(view, file, readSignal) : workspace.readBaseFile(file, readSignal),
+				list: directory => workspace.list(directory, view),
 			};
 			const repair = attempt.repair && {
 				feedback: attempt.repair.feedback,

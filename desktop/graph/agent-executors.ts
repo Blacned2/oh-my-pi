@@ -14,14 +14,17 @@ import type { ApprovedGraphExecutors, GraphLog } from "./workflow";
 /** `home` is the source profile. Each attempt runs in its own copy so concurrent workers share no writable state. */
 type WorkerProfile = Pick<OmpWorkerOptions, "bunPath" | "cliPath" | "home" | "provider" | "model" | "timeoutMs">;
 
+const maxListedEntries = 500;
+
 function readTool(
-	files: readonly string[],
 	read: (file: string, candidate: boolean, signal: AbortSignal) => Promise<{ data: Uint8Array }>,
+	list: (directory: string, candidate: boolean) => string[],
 ): RpcClientCustomTool {
 	return {
 		name: "kostomp_graph_read_file",
 		label: "Read Graph file",
-		description: "Read an approved file from the pinned Graph snapshot.",
+		description:
+			"Read a file from the pinned Graph repository snapshot. An empty path or a path ending in / lists that directory instead.",
 		loadMode: "essential",
 		parameters: {
 			type: "object",
@@ -31,8 +34,13 @@ function readTool(
 		},
 		async execute(params, { signal }) {
 			const { path, version } = params;
-			if (typeof path !== "string" || !files.includes(path))
-				throw new Error("Graph path is outside the approved scope");
+			if (typeof path !== "string") throw new Error("Graph path must be a repository-relative string");
+			if (path === "" || path.endsWith("/")) {
+				const entries = list(path, version === "candidate");
+				return entries.length > maxListedEntries
+					? [...entries.slice(0, maxListedEntries), `… ${entries.length - maxListedEntries} more`].join("\n")
+					: entries.join("\n");
+			}
 			const { data } = await read(path, version === "candidate", signal);
 			if (data.byteLength > 64 * 1024 || data.includes(0))
 				throw new Error("Graph worker accepts UTF-8 files up to 64 KiB");
@@ -92,9 +100,12 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 			};
 			await run(
 				plannerPrompt,
-				{ files: JSON.stringify(input.files), objective: input.objective },
+				{ objective: input.objective },
 				[
-					readTool(input.files, (file, _candidate, signal) => workspace.readBaseFile(file, signal)),
+					readTool(
+						(file, _candidate, signal) => workspace.readBaseFile(file, signal),
+						directory => workspace.list(directory),
+					),
 					{
 						name: "kostomp_graph_submit_plan",
 						label: "Submit Graph plan",
@@ -124,7 +135,6 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 			await run(
 				coderPrompt,
 				{
-					files: JSON.stringify(work.files),
 					owned: JSON.stringify(task.files),
 					objective: work.objective,
 					title: task.title,
@@ -133,7 +143,10 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 					repair: repair ? JSON.stringify(repair) : "",
 				},
 				[
-					readTool(work.files, (file, _candidate, signal) => view.read(file, signal)),
+					readTool(
+						(file, _candidate, signal) => view.read(file, signal),
+						directory => view.list(directory),
+					),
 					{
 						name: "kostomp_graph_submit_patch",
 						label: "Submit Graph patch",
@@ -171,15 +184,16 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 			await run(
 				reviewerPrompt,
 				{
-					files: JSON.stringify(work.files),
 					objective: work.objective,
 					tasks: JSON.stringify(work.tasks.map(({ title, brief, files }) => ({ title, brief, files }))),
 				},
 				[
-					readTool(work.files, (file, proposed, signal) =>
-						proposed
-							? workspace.readCandidateFile(candidate, file, signal)
-							: workspace.readBaseFile(file, signal),
+					readTool(
+						(file, proposed, signal) =>
+							proposed
+								? workspace.readCandidateFile(candidate, file, signal)
+								: workspace.readBaseFile(file, signal),
+						(directory, proposed) => workspace.list(directory, proposed ? candidate : undefined),
 					),
 					{
 						name: "kostomp_graph_review",

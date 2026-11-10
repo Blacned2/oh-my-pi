@@ -76,6 +76,16 @@ function registerSpelling(spellings: Map<string, string>, prefixes: [string, str
 	}
 }
 
+/** Keys of the spellings map that name a directory because another key lies beneath them. */
+function pathDirectories(spellings: ReadonlyMap<string, string>): Set<string> {
+	const directories = new Set<string>();
+	for (const key of spellings.keys()) {
+		const slash = key.lastIndexOf("/");
+		if (slash > 0) directories.add(key.slice(0, slash));
+	}
+	return directories;
+}
+
 function checkOwnership(
 	scopes: ReadonlyMap<string, readonly string[]>,
 	spellings: Map<string, string>,
@@ -145,6 +155,31 @@ export class GraphWorkspace implements AsyncDisposable {
 		checkOwnership(scopes, new Map(this.spellings));
 	}
 
+	/** Immediate children of a directory (`""` is the root) in the pinned base or a composed candidate. Directories end with `/`. */
+	list(directory: string, candidate?: GraphCandidate): string[] {
+		const spellings = candidate ? this.#candidates.get(candidate)?.spellings : this.spellings;
+		if (!spellings) throw new Error("Unknown Graph candidate");
+		const trimmed = directory.replace(/\/+$/, "");
+		const root = trimmed === "";
+		const parent = root ? "" : repoPathPrefixes(trimmed).at(-1)![0];
+		if (!root && !spellings.has(parent)) throw new Error(`Graph directory ${trimmed} does not exist`);
+		const prefix = root ? "" : `${parent}/`;
+		const directories = pathDirectories(spellings);
+		const children: string[] = [];
+		for (const [key, spelling] of spellings) {
+			if (!key.startsWith(prefix) || key.includes("/", prefix.length)) continue;
+			const name = spelling.slice(spelling.lastIndexOf("/") + 1);
+			children.push(directories.has(key) ? `${name}/` : name);
+		}
+		return children.sort();
+	}
+
+	/** Every tracked file in the pinned base. */
+	files(): string[] {
+		const directories = pathDirectories(this.spellings);
+		return [...this.spellings].filter(([key]) => !directories.has(key)).map(([, spelling]) => spelling);
+	}
+
 	async readBaseFile(file: string, signal?: AbortSignal): Promise<{ blobId: string; data: Uint8Array }> {
 		return this.#readFile(this.baseSha, this.spellings, file, signal);
 	}
@@ -159,12 +194,12 @@ export class GraphWorkspace implements AsyncDisposable {
 		return this.#readFile(candidate.treeId, data.spellings, file, signal);
 	}
 
-	async testSnapshot(candidate: GraphCandidate, signal?: AbortSignal): Promise<Bun.Archive> {
+	async testSnapshot(candidate: GraphCandidate, archivePath: string, signal?: AbortSignal): Promise<Bun.BunFile> {
 		if (!this.#candidates.has(candidate)) throw new Error("Unknown Graph candidate");
 		await using index = await TempDir.create(this.scratch.join("test-"));
 		const indexPath = index.join("index");
 		await this.repo.readTree(candidate.treeId, indexPath, signal);
-		return buildTestSnapshot(this.repo, indexPath, signal);
+		return await buildTestSnapshot(this.repo, indexPath, archivePath, signal);
 	}
 
 	async #readFile(tree: string, spellings: ReadonlyMap<string, string>, file: string, signal?: AbortSignal) {

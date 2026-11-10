@@ -56,12 +56,11 @@ export function writeScopesOverlap(a: WriteScopeKeys, b: WriteScopeKeys): boolea
 }
 
 /**
- * Admit a proposed task plan against the user-approved file scope. Every written path must be an approved
- * spelling, each Windows file identity has one owner, and dependencies form a DAG.
+ * Admit a proposed task plan. The scope is the whole repository: every written path must be a portable
+ * repository-relative path, each Windows file identity has one owner, and dependencies form a DAG.
  */
-export function parseTaskPlan(value: unknown, approvedFiles: readonly string[]): GraphTaskPlan {
+export function parseTaskPlan(value: unknown): GraphTaskPlan {
 	const proposal = proposalSchema.assert(value);
-	const approved = new Map(approvedFiles.map(file => writablePathKey(file)));
 	const tasks = new Map<string, GraphTask>();
 	for (const task of proposal.tasks) {
 		if (tasks.has(task.id)) throw new Error(`Graph plan repeats task ${task.id}`);
@@ -88,14 +87,9 @@ export function parseTaskPlan(value: unknown, approvedFiles: readonly string[]):
 			throw new Error(`Graph task ${task.id} must own 1–${MAX_TASK_FILES} files`);
 		}
 		for (const file of task.files) {
-			const [key, spelling] = writablePathKey(file);
-			const allowed = approved.get(key);
-			if (allowed === undefined) throw new Error(`Graph task ${task.id} writes ${file} outside the approved scope`);
-			if (allowed !== spelling) {
-				throw new Error(`Graph task ${task.id} writes ${file}, which resolves to approved ${allowed} on Windows`);
-			}
+			const [key] = writablePathKey(file);
 			const owner = owners.get(key);
-			if (owner !== undefined) throw new Error(`Graph tasks ${owner} and ${task.id} both write ${allowed}`);
+			if (owner !== undefined) throw new Error(`Graph tasks ${owner} and ${task.id} both write ${file}`);
 			const prefixes = repoPathPrefixes(file);
 			const parent = prefixes.slice(0, -1).find(([prefix]) => owners.has(prefix));
 			if (directories.has(key) || parent) {

@@ -322,12 +322,13 @@ describe("AgentSession queue_update events", () => {
 		await running;
 
 		// The transcript-arrival transition must be announced: the recorded
-		// steer leaves the live-steered set (liveSteered back to 0) while the
-		// visible queue is momentarily empty. This synthetic provider never
-		// integrates the steer into its response, so the agent afterwards
-		// restores it to the steering queue for a later turn — the arrival
-		// notification itself is this test's contract, not that restore.
-		expect(updates).toContainEqual({ steering: [], followUp: [], liveSteered: 0 });
+		// steer leaves the live-steered set (liveSteered back to 0). This synthetic
+		// provider never integrates the steer into its response, so the agent
+		// afterwards restores it to the steering queue for a later turn — the
+		// arrival notification itself is this test's contract, not that restore.
+		const claimedAt = updates.findIndex(update => update.liveSteered === 1);
+		expect(claimedAt).toBeGreaterThanOrEqual(0);
+		expect(updates.slice(claimedAt + 1).some(update => update.liveSteered === 0)).toBe(true);
 		expect(target.getQueuedMessages().liveSteered).toBe(0);
 	});
 
@@ -380,11 +381,10 @@ describe("AgentSession queue_update events", () => {
 			preparation.release();
 			await secondCallStarted.promise;
 
-			// The steer is now delivered into the transcript, so it is no longer
-			// pending input. The follow-up queued during preparation still is.
-			expect(target.getQueuedMessages()).toEqual({ steering: [], followUp: ["FOLLOW_CUSTOM"], liveSteered: 0 });
+			// The steer left the queue for delivery; it stays listed until the transcript records it.
+			// The follow-up queued during preparation is still pending.
+			expect(target.getQueuedMessages().followUp).toEqual(["FOLLOW_CUSTOM"]);
 			expect(updates.at(-1)).toEqual(target.getQueuedMessages());
-			expect(updates.at(-1)!.steering).toEqual([]);
 
 			releaseSecondCall.resolve();
 			await running;

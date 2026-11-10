@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod graph;
+mod notify;
 mod omp_config;
 mod rpc;
 mod runtime;
+mod tray;
 mod updater;
 mod window_style;
 
@@ -14,7 +16,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const DEFAULT_PORT: u16 = 3847;
@@ -84,11 +86,22 @@ fn main() {
         .unwrap_or(DEFAULT_PORT);
 
     let app = tauri::Builder::default()
+        // Must be registered first: a second launch brings the running (possibly tray-hidden) window back.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| notify::restore_main(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(StatsServer(Mutex::new(None)))
         .manage(StatsStatus(Mutex::new(None)))
         .manage(rpc::RpcState::default())
         .manage(graph::GraphBridge::default())
+        .on_window_event(|window, event| {
+            // Closing the main window hides it to the tray; "Exit" in the tray menu quits.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             stats_status,
             updater::update_check,
@@ -96,6 +109,9 @@ fn main() {
             graph::graph_request,
             rpc::rpc_start,
             rpc::rpc_send,
+            notify::notify_reply,
+            notify::toast_activate,
+            notify::toast_close,
             rpc::rpc_stop,
             rpc::pick_folder,
             rpc::list_places,
@@ -114,6 +130,7 @@ fn main() {
             if let Ok(dir) = app.path().resource_dir() {
                 runtime::init(&dir.join("runtime"));
             }
+            tray::init(app.handle())?;
             let style = window_style::init(app.handle());
             let material_script = window_style::init_script(&style);
             app.manage(style);

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Transcript shows a left-edge prompt rail: one tick per user prompt, hover previews the prompt, click jumps to it (including prompts above the mounted window)
+
 ## [18.18.3] - 2026-11-09
 
 ### Changed

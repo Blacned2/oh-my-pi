@@ -211,6 +211,7 @@ export class UserMessageComponent extends Container implements ReactionTarget, T
 		this.#nativeHour12 = hour12;
 		this.#nativeLinked = linked;
 		const children: NativeChild[] = [];
+		let toolsRow: NativeNode | undefined;
 		if (!this.#synthetic && hasTranscriptActions()) {
 			const tools: NativeChild[] = [
 				// `copy-message`, not Tern's local `copy` (that would copy the icon's empty label).
@@ -249,7 +250,7 @@ export class UserMessageComponent extends Container implements ReactionTarget, T
 					}),
 				);
 			}
-			children.push(node("row", { gap: "xs", align: "center", role: "omp.user.tools" }, tools, "tools"));
+			toolsRow = node("row", { gap: "xs", align: "center", justify: "end", role: "omp.user.tools" }, tools, "tools");
 		}
 		// Videos keep their chip only: the native image node decodes stills.
 		const thumbs: NativeNode[] = [];
@@ -298,8 +299,9 @@ export class UserMessageComponent extends Container implements ReactionTarget, T
 			},
 			children,
 		);
-		// Thumbnails sit under the bubble, outside its fill.
-		this.#native = imageRow ? col([bubble, imageRow], { gap: "xs" }) : bubble;
+		// The hover toolbar and thumbnails sit under the bubble, outside its fill.
+		const below = [toolsRow, imageRow].filter((child): child is NativeNode => child !== undefined);
+		this.#native = below.length > 0 ? col([bubble, ...below], { gap: "xs" }) : bubble;
 		return this.#native;
 	}
 

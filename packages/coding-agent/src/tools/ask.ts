@@ -160,6 +160,7 @@ async function askChoice(
 	question: string,
 	timeout: number | undefined,
 	signal: AbortSignal,
+	progress = "",
 ): Promise<PromptOutcome<ChoiceAnswer>> {
 	// The options the user can pick, by index, with one-line labels.
 	const options = field.options.flatMap((option, index) =>
@@ -181,7 +182,7 @@ async function askChoice(
 		);
 		while (true) {
 			const outcome = await promptWithTimeout(ui, timeout, signal, dialogOptions =>
-				ui.select(question, choiceRows, {
+				ui.select(`${progress}${question}`, choiceRows, {
 					...dialogOptions,
 					initialIndex,
 					outline: true,
@@ -191,7 +192,7 @@ async function askChoice(
 			);
 			if (otherRow !== undefined && outcome.value === otherRow) {
 				const typed = await promptWithTimeout(ui, timeout, signal, dialogOptions =>
-					ui.input(question, undefined, dialogOptions),
+					ui.input(`${progress}${question}`, undefined, dialogOptions),
 				);
 				if (typed.timedOut) return { value: undefined, timedOut: true };
 				initialIndex = labels.length;
@@ -219,7 +220,7 @@ async function askChoice(
 		if (other !== undefined) checkedIndices.push(labels.length);
 		const prefix = answered > 0 ? `(${answered} selected) ` : "";
 		const outcome = await promptWithTimeout(ui, timeout, signal, dialogOptions =>
-			ui.select(`${prefix}${question}`, rows, {
+			ui.select(`${progress}${prefix}${question}`, rows, {
 				...dialogOptions,
 				initialIndex: cursor,
 				outline: true,
@@ -240,7 +241,7 @@ async function askChoice(
 				continue;
 			}
 			const typed = await promptWithTimeout(ui, timeout, signal, dialogOptions =>
-				ui.input(question, undefined, dialogOptions),
+				ui.input(`${progress}${question}`, undefined, dialogOptions),
 			);
 			if (typed.timedOut) return { value: { checked }, timedOut: true };
 			// A blank or cancelled answer leaves Other unchecked.
@@ -268,12 +269,13 @@ async function askText(
 	question: string,
 	timeout: number | undefined,
 	signal: AbortSignal,
+	progress = "",
 ): Promise<PromptOutcome<string>> {
 	const useEditor = field.multiline || field.value !== "";
 	let error: string | undefined;
 	let current = field.value;
 	while (true) {
-		const title = error ? `${question} (${error})` : question;
+		const title = `${progress}${error ? `${question} (${error})` : question}`;
 		let outcome: PromptOutcome<string>;
 		if (useEditor) {
 			// The editor has no countdown: typing a long answer must not race a deadline.
@@ -306,24 +308,27 @@ async function askFieldByField(
 ): Promise<{ data: HtmlFormData; timedOut: boolean } | undefined> {
 	const data = defaultFormData(form);
 	const questions = fieldQuestions(form);
-	for (const field of form.fields) {
-		if (!field.name) continue;
-		const question = questions.get(field) ?? field.name;
+	const named = form.fields.filter(field => field.name);
+	let position = 0;
+	for (const field of named) {
+		position++;
+		const progress = named.length > 1 ? `(${position}/${named.length}) ` : "";
+		const question = questions.get(field) ?? field.name!;
 		if (field.kind === "choice") {
-			const outcome = await askChoice(ui, field, question, timeout, signal);
+			const outcome = await askChoice(ui, field, question, timeout, signal, progress);
 			if (outcome.value !== undefined) {
 				const value = choiceValue(field, outcome.value.checked, outcome.value.other);
-				if (value === undefined) delete data[field.name];
-				else data[field.name] = value;
+				if (value === undefined) delete data[field.name!];
+				else data[field.name!] = value;
 			}
 			if (outcome.timedOut) return { data, timedOut: true };
 			if (outcome.value === undefined) return undefined;
 			continue;
 		}
-		const outcome = await askText(ui, field, question, timeout, signal);
+		const outcome = await askText(ui, field, question, timeout, signal, progress);
 		if (outcome.timedOut) return { data, timedOut: true };
 		if (outcome.value === undefined) return undefined;
-		data[field.name] = textValue(field, outcome.value);
+		data[field.name!] = textValue(field, outcome.value);
 	}
 	return { data, timedOut: false };
 }

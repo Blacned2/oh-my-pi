@@ -1455,6 +1455,9 @@ export class Agent {
 		for (const delivery of this.#queuedMessageDeliveries) {
 			if (delivery.messages[delivery.next] !== m) continue;
 			if (++delivery.next === delivery.messages.length) this.#queuedMessageDeliveries.delete(delivery);
+			// A delivered message stops counting as pending input (see
+			// peekUndeliveredQueuedMessages); listeners must hear the transition.
+			this.#emitQueueChanged();
 			break;
 		}
 	}
@@ -1566,12 +1569,15 @@ export class Agent {
 	}
 
 	/** Dequeued messages not yet in the transcript, e.g. steering a provider
-	 *  took into its in-flight response via live steering. Aborting the run
-	 *  requeues them, so the session's empty-submit interrupt counts them as
-	 *  pending input even though {@link peekSteeringQueue} no longer does. */
-	peekUndeliveredQueuedMessages(): AgentMessage[] {
-		const messages = this.peekLiveSteeredMessages();
+	 *  took into its in-flight response via live steering, or a batch committed
+	 *  for the next model call whose `message_start` has not fired yet. Aborting
+	 *  the run requeues them, so the session's empty-submit interrupt counts them
+	 *  as pending input even though {@link peekSteeringQueue} no longer does.
+	 *  `queue` limits the view to one queue; live steering belongs to `steering`. */
+	peekUndeliveredQueuedMessages(queue?: QueuedMessageQueue): AgentMessage[] {
+		const messages = queue === "followUp" ? [] : this.peekLiveSteeredMessages();
 		for (const delivery of this.#queuedMessageDeliveries) {
+			if (queue !== undefined && delivery.queue !== queue) continue;
 			for (let i = delivery.next; i < delivery.messages.length; i++) messages.push(delivery.messages[i]);
 		}
 		return messages;

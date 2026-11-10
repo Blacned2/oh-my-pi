@@ -856,7 +856,8 @@ describe("AgentSession queued steer delivery", () => {
 				]);
 				expect(removed).toBe(true);
 				expect(remaining).toEqual(queued.slice(2));
-				expect(pendingAtFirstRecord).toEqual([]);
+				// Already dequeued for delivery, so unremovable, yet listed until its own record lands.
+				expect(pendingAtFirstRecord).toEqual([chip("keep B")]);
 				expect(removedAfterClaim).toBe(false);
 				const notices = session.messages.filter(
 					(message): message is CustomMessage =>

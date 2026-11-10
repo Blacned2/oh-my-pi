@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Completion and error notifications also ring the terminal bell when the terminal reports it lost focus (DEC 1004 focus reporting), so a finished turn is audible while the window is in the background
+
 ## [18.18.4] - 2026-11-09
 
 ### Added

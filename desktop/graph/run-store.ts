@@ -46,6 +46,7 @@ export interface GraphRunContext {
 	sourceRoot: string;
 	baseSha: string;
 	objective: string;
+	/** Write scope of a run saved with the fixed single-Coder plan. Empty on planned runs, which cover the repository. */
 	files: string[];
 	profileHash: string;
 	/** The user-approved task plan. Absent on runs saved with the fixed single-Coder plan. */
@@ -58,7 +59,7 @@ export interface GraphRunContext {
 /** The sidecar's single validated proposal awaiting explicit approval. */
 export interface GraphDraft {
 	id: string;
-	input: Pick<GraphRunContext, "objective" | "files"> & { source: string };
+	input: Pick<GraphRunContext, "objective"> & { source: string };
 	baseSha: string;
 	profileHash: string;
 	plan: GraphTaskPlan;

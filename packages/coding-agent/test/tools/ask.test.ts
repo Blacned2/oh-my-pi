@@ -305,7 +305,7 @@ describe("AskTool without a form surface", () => {
 		const selects: { title: string; options: (string | undefined)[]; initialIndex?: number }[] = [];
 		const select: Select = async (title, options, dialogOptions) => {
 			selects.push({ title, options: options.map(label), initialIndex: dialogOptions?.initialIndex });
-			if (title === "Session store") return "Redis";
+			if (title === "(1/4) Session store") return "Redis";
 			// Checkbox loop: tick Metrics, untick Logs, then finish.
 			const ticks = selects.filter(call => call.title.endsWith("Telemetry")).length;
 			if (ticks === 1) return "Metrics";
@@ -339,12 +339,12 @@ describe("AskTool without a form surface", () => {
 		);
 
 		expect(selects[0]).toEqual({
-			title: "Session store",
+			title: "(1/4) Session store",
 			options: ["SQLite", "Redis", "Other (type your own)"],
 			initialIndex: 1,
 		});
-		expect(input.mock.calls[0]?.slice(0, 2)).toEqual(["Lifetime (days)", "30"]);
-		expect(editor.mock.calls[0]?.slice(0, 2)).toEqual(["Notes", "draft"]);
+		expect(input.mock.calls[0]?.slice(0, 2)).toEqual(["(3/4) Lifetime (days)", "30"]);
+		expect(editor.mock.calls[0]?.slice(0, 2)).toEqual(["(4/4) Notes", "draft"]);
 		expect(JSON.parse(text(result)?.replace("User answers:\n", "") ?? "")).toEqual({
 			version: "2",
 			store: "redis",
@@ -383,7 +383,7 @@ describe("AskTool without a form surface", () => {
 			createContext({ select, input }),
 		);
 
-		expect(input.mock.calls.map(call => call[0])).toEqual(["Database", "Database", "Tools"]);
+		expect(input.mock.calls.map(call => call[0])).toEqual(["(1/2) Database", "(1/2) Database", "(2/2) Tools"]);
 		expect(selects.at(-1)?.checked).toEqual([0, 2]);
 		expect(JSON.parse(text(result)?.replace("User answers:\n", "") ?? "")).toEqual({
 			db: "MySQL 8",

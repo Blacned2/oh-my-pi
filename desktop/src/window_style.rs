@@ -27,24 +27,72 @@ pub enum Material {
 #[serde(rename_all = "camelCase", default)]
 pub struct WindowSettings {
     pub material: Material,
-    /// 0 = clear (no system blur), 1 = light (Mica), 2 = frosted (Acrylic).
+    /// Glass type id picked in the UI ("frosted", "clear", ... or "custom"); the values below are
+    /// the truth, this only remembers which preset tile to highlight.
+    pub glass_type: String,
+    /// System backdrop: 0 = none (clear), 1 = Mica, 2 = Acrylic, 3 = Mica Alt (tabbed).
     pub blur: u8,
     /// Opacity of the page's tint over the glass, in percent.
     pub tint: u8,
+    /// Tint colour as `#rrggbb`; empty follows the theme.
+    pub tint_color: String,
+    /// Top-lit sheen, rim highlight and grain strength, in percent.
+    pub sheen: u8,
+    pub rim: u8,
+    pub grain: u8,
+    /// Blur of floating panes over the glass, in px.
+    pub pane_blur: u8,
+    /// Colour saturation of what shows through floating panes, in percent (100 = unchanged).
+    pub saturation: u8,
+    /// Opacity of the ambient colour glow behind the glass, in percent.
+    pub glow: u8,
+    /// Accent colour as `#rrggbb`; empty follows the theme.
+    pub accent: String,
     pub opaque_when_unfocused: bool,
     pub follow_system: bool,
 }
 
 impl Default for WindowSettings {
     fn default() -> Self {
-        Self { material: Material::Glass, blur: 2, tint: 52, opaque_when_unfocused: true, follow_system: false }
+        Self {
+            material: Material::Glass,
+            glass_type: "frosted".into(),
+            blur: 2,
+            tint: 38,
+            tint_color: String::new(),
+            sheen: 7,
+            rim: 14,
+            grain: 10,
+            pane_blur: 20,
+            saturation: 150,
+            glow: 28,
+            accent: String::new(),
+            opaque_when_unfocused: true,
+            follow_system: false,
+        }
     }
+}
+
+/// `#rrggbb` or empty; anything else is dropped so the page never receives a malformed colour.
+fn clean_color(s: &str) -> String {
+    let ok = s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit());
+    if ok { s.to_ascii_lowercase() } else { String::new() }
 }
 
 impl WindowSettings {
     fn clamped(mut self) -> Self {
-        self.blur = self.blur.min(2);
+        self.blur = self.blur.min(3);
         self.tint = self.tint.min(100);
+        self.sheen = self.sheen.min(100);
+        self.rim = self.rim.min(100);
+        self.grain = self.grain.min(100);
+        self.pane_blur = self.pane_blur.min(40);
+        self.saturation = self.saturation.clamp(50, 250);
+        self.glow = self.glow.min(100);
+        self.tint_color = clean_color(&self.tint_color);
+        self.accent = clean_color(&self.accent);
+        self.glass_type.retain(|c| c.is_ascii_alphanumeric() || c == '-');
+        self.glass_type.truncate(24);
         self
     }
 }
@@ -123,6 +171,7 @@ fn effects_for(state: &MaterialState) -> Option<WindowEffectsConfig> {
     let effect = match state.settings.blur {
         0 => return None,
         1 => Effect::Mica,
+        3 => Effect::Tabbed,
         _ => Effect::Acrylic,
     };
     Some(WindowEffectsConfig { effects: vec![effect], ..Default::default() })

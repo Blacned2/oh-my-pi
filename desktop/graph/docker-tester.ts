@@ -78,23 +78,28 @@ export async function testCandidateInDocker(
 	await using run = await TempDir.create("@kostomp-graph-tester-");
 	const prefix = [dockerPath, "--host", localEngine, "--config", run.path()];
 	const env = { ...systemProcessEnv(), TEMP: run.path(), TMP: run.path() };
-	const docker = (args: string[], abort: AbortSignal, input?: Uint8Array) => {
+	const docker = <Input extends "pipe" | "ignore">(args: string[], abort: AbortSignal, stdin: Input) => {
 		abort.throwIfAborted();
-		return ptree.spawn([...prefix, ...args], { cwd: run.path(), env, signal: abort, stdin: input ?? "ignore" });
+		return ptree.spawn([...prefix, ...args], { cwd: run.path(), env, signal: abort, stdin });
 	};
-	const operatingSystem = await docker(["info", "--format", "{{.OSType}}"], runSignal).text();
+	const operatingSystem = await docker(["info", "--format", "{{.OSType}}"], runSignal, "ignore").text();
 	if (operatingSystem.trim() !== "linux") throw new Error("Graph Tester requires the Linux Docker Desktop engine");
-	const inspectImage = await docker(["image", "inspect", "--format", "{{json .Config}}", image], runSignal).text();
+	const inspectImage = await docker(
+		["image", "inspect", "--format", "{{json .Config}}", image],
+		runSignal,
+		"ignore",
+	).text();
 	const imageConfig = imageConfigSchema.assert(JSON.parse(inspectImage));
 	if (imageConfig.Volumes && Object.keys(imageConfig.Volumes).length !== 0)
 		throw new Error("Graph test image declares volumes");
-	const archive = await (await workspace.testSnapshot(candidate, runSignal)).bytes();
+	const archive = await workspace.testSnapshot(candidate, run.join("candidate.tar"), runSignal);
 	const name = `kostomp-graph-${crypto.randomUUID()}`;
 	let id: string | undefined;
 	const removeContainer = async () => {
 		const cleanup = await docker(
 			["container", "rm", "--force", "--volumes", id ?? name],
 			AbortSignal.timeout(cleanupTimeout),
+			"ignore",
 		).wait({ allowNonZero: true });
 		if (!cleanup.ok && !cleanup.stderr.includes("No such container")) {
 			throw new Error(`Graph test container cleanup failed for ${name}`);
@@ -116,12 +121,12 @@ export async function testCandidateInDocker(
 				"--user=65532:65532",
 				"--no-healthcheck",
 				"--log-driver=none",
-				"--memory=512m",
-				"--memory-swap=512m",
+				"--memory=768m",
+				"--memory-swap=768m",
 				"--cpus=1",
 				"--pids-limit=128",
 				"--env=HOME=/tmp",
-				"--tmpfs=/work:rw,exec,nosuid,nodev,size=192m,uid=65532,gid=65532,mode=0700",
+				"--tmpfs=/work:rw,exec,nosuid,nodev,size=384m,uid=65532,gid=65532,mode=0700",
 				"--tmpfs=/tmp:rw,nosuid,nodev,size=64m,mode=1777",
 				"--entrypoint=/bin/sh",
 				image,
@@ -131,13 +136,25 @@ export async function testCandidateInDocker(
 				...command,
 			],
 			runSignal,
+			"ignore",
 		).text();
 		if (!containerId.test(created.trim())) throw new Error("Graph Tester received an invalid container ID");
 		id = created.trim();
-		const child = docker(["container", "start", "--attach", "--interactive", id], runSignal, archive);
-		const [stdout, exit] = await Promise.all([captureOutput(child.stdout, runSignal), child.exited]);
+		using child = docker(["container", "start", "--attach", "--interactive", id], runSignal, "pipe");
+		const feedArchive = async () => {
+			for await (const chunk of abortableSource(archive.stream(), runSignal)) {
+				await child.stdin.write(chunk);
+				await child.stdin.flush();
+			}
+			await child.stdin.end();
+		};
+		const [stdout, exit] = await Promise.all([captureOutput(child.stdout, runSignal), child.exited, feedArchive()]);
 		runSignal.throwIfAborted();
-		const inspectState = await docker(["container", "inspect", "--format", "{{json .State}}", id], runSignal).text();
+		const inspectState = await docker(
+			["container", "inspect", "--format", "{{json .State}}", id],
+			runSignal,
+			"ignore",
+		).text();
 		const state = containerStateSchema.assert(JSON.parse(inspectState));
 		if (state.Status !== "exited" || state.Error || state.OOMKilled || (state.ExitCode === 0 && exit !== 0)) {
 			throw new Error("Graph test container did not finish normally");

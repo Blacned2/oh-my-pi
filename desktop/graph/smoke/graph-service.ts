@@ -123,11 +123,11 @@ const server = Bun.serve({
 			expectedRead = "token v1";
 			steps = [
 				["kostomp_graph_read_file", { path: "src/api.txt", version: "base" }],
-				["kostomp_graph_submit_plan", { tasks: [{ ...tasks[0], files: ["src/secret.txt"] }] }],
+				["kostomp_graph_submit_plan", { tasks: [{ ...tasks[0], files: ["../secret.txt"] }] }],
 				["kostomp_graph_submit_plan", { tasks }],
 			];
-			if (responses.length >= 2 && !JSON.stringify(responses[1].content).includes("outside the approved scope"))
-				throw new Error("Graph did not reject the out-of-scope plan");
+			if (responses.length >= 2 && !JSON.stringify(responses[1].content).includes("portable"))
+				throw new Error("Graph did not reject the path outside the repository");
 			if (omitPlan) steps.pop();
 		} else if (resultTool === "kostomp_graph_submit_patch") {
 			const owned = Object.keys(edits).find(file => prompt.includes(`Owned files:\\n[\\"${file}`))!;
@@ -296,15 +296,15 @@ try {
 		} while (status.running || status.planning);
 		return status;
 	};
-	const input = { source: source.info().repoRoot, files: Object.keys(edits), objective: "Fix JWT refresh" };
-	await request({ op: "plan", input });
+	const input = { source: source.info().repoRoot, objective: "Fix JWT refresh" };
+	await request({ op: "plan", input: { ...input, source: path.join(input.source, "src") } });
 	let status = await settle();
 	strictEqual(status.run, undefined, "No run exists before approval");
 	const draft = status.draft;
 	if (!draft) throw new Error(`Planner produced no draft: ${JSON.stringify(status)}`);
 	deepStrictEqual(status.logs, ["planner"]);
 	const plannerLog = await request<string>({ op: "log", input: "planner" });
-	strictEqual(plannerLog.includes("outside the approved scope"), true, plannerLog);
+	strictEqual(plannerLog.includes("portable"), true, plannerLog);
 	deepStrictEqual(
 		draft.tasks.map(task => task.id),
 		["contract", "backend", "frontend"],
@@ -324,11 +324,11 @@ try {
 	deepStrictEqual((await settle()).draft, draft, "Rejected approval leaves the draft available");
 	await Bun.write(editedSourceFile, files[backend]);
 	const invalidTasks = draft.tasks.map(task =>
-		task.id === "backend" ? { ...task, files: ["src/secret.txt"] } : task,
+		task.id === "backend" ? { ...task, files: ["../secret.txt"] } : task,
 	);
 	await rejects(
 		request({ op: "edit", input: { ...shownDraft, plan: { tasks: invalidTasks } } }),
-		/outside the approved scope/,
+		/portable/,
 	);
 	deepStrictEqual((await settle()).draft, draft, "Rejected edits leave the original draft available");
 	const editedTasks = draft.tasks.map(task => (task.id === "backend" ? { ...task, brief: editedBrief } : task));
@@ -420,7 +420,7 @@ try {
 	deepStrictEqual(status.draft, discarded, "A failed Planner does not replace the previous draft");
 	strictEqual(status.planError?.includes("did not submit a valid Graph plan"), true);
 	const failedPlannerLog = await request<string>({ op: "log", input: "planner" });
-	strictEqual(failedPlannerLog.includes("outside the approved scope"), true, failedPlannerLog);
+	strictEqual(failedPlannerLog.includes("portable"), true, failedPlannerLog);
 	strictEqual(failedPlannerLog.includes(status.planError!), true, failedPlannerLog);
 	await request({ op: "discard" });
 	await stopService?.();

@@ -7,6 +7,7 @@ import { fmtTokens } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import type { ToolRenderHost } from "../../tool-render";
 import { Markdown, StreamingMarkdown } from "./Markdown";
+import { PromptRail, type RailPrompt } from "./PromptRail";
 import { ToolCard } from "./ToolCard";
 import "./transcript.css";
 
@@ -48,21 +49,31 @@ function Row({
 	kind,
 	gutter,
 	title,
+	entryId,
 	children,
 }: {
 	kind: "user" | "assistant" | "custom" | "marker";
 	gutter: ReactNode;
 	title?: string;
+	entryId?: string;
 	children: ReactNode;
 }): ReactNode {
 	return (
-		<div className={`tr-row tr-row--${kind}`}>
+		<div className={`tr-row tr-row--${kind}`} data-prompt-id={entryId}>
 			<div className="tr-gutter" title={title}>
 				{gutter}
 			</div>
 			<div className="tr-body">{children}</div>
 		</div>
 	);
+}
+
+function promptText(content: string | readonly { type: string; text?: string }[]): string {
+	if (typeof content === "string") return content.trim();
+	return content
+		.map(block => (block.type === "text" ? (block.text ?? "") : ""))
+		.join("\n")
+		.trim();
 }
 
 function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean }): ReactNode {
@@ -193,7 +204,7 @@ const EntryRow = memo(function EntryRow({ entry, results, active, host }: EntryR
 			switch (msg.role) {
 				case "user":
 					return (
-						<Row kind="user" gutter="host" title={entry.timestamp}>
+						<Row kind="user" gutter="host" title={entry.timestamp} entryId={entry.id}>
 							<MsgContent content={msg.content} />
 						</Row>
 					);
@@ -218,7 +229,12 @@ const EntryRow = memo(function EntryRow({ entry, results, active, host }: EntryR
 						? ((details as Record<string, unknown>).from as string)
 						: "guest";
 				return (
-					<Row kind="user" gutter={<span className="tr-badge">{from}</span>} title={entry.timestamp}>
+					<Row
+						kind="user"
+						gutter={<span className="tr-badge">{from}</span>}
+						title={entry.timestamp}
+						entryId={entry.id}
+					>
 						<MsgContent content={entry.content} />
 					</Row>
 				);
@@ -295,6 +311,53 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		return map;
 	}, [visible]);
 
+	// One rail tick per user prompt across the whole session, not just the mounted window.
+	const prompts = useMemo(() => {
+		const list: RailPrompt[] = [];
+		for (const entry of entries) {
+			let content: string | readonly { type: string; text?: string }[] | undefined;
+			if (entry.type === "message" && entry.message.role === "user") content = entry.message.content;
+			else if (entry.type === "custom_message" && entry.customType === "collab-prompt") content = entry.content;
+			if (content === undefined) continue;
+			list.push({ id: entry.id, text: promptText(content) || "…" });
+		}
+		return list;
+	}, [entries]);
+	const [activeId, setActiveId] = useState<string | null>(null);
+	const jumpRef = useRef<string | null>(null);
+
+	const syncActive = (): void => {
+		const el = rootRef.current;
+		if (el === null) return;
+		const line = el.getBoundingClientRect().top + el.clientHeight * 0.35;
+		let current: string | null = null;
+		for (const row of el.querySelectorAll<HTMLElement>("[data-prompt-id]")) {
+			if (row.getBoundingClientRect().top > line) break;
+			current = row.dataset.promptId ?? null;
+		}
+		setActiveId(current);
+	};
+
+	const scrollToPrompt = (id: string): boolean => {
+		const el = rootRef.current;
+		if (el === null) return false;
+		for (const row of el.querySelectorAll<HTMLElement>("[data-prompt-id]")) {
+			if (row.dataset.promptId !== id) continue;
+			el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - 12;
+			return true;
+		}
+		return false;
+	};
+
+	const jumpToPrompt = (id: string): void => {
+		if (scrollToPrompt(id)) return;
+		// Prompt sits above the mounted window: mount from it, then scroll in the layout effect.
+		const index = entries.findIndex(entry => entry.id === id);
+		if (index < 0) return;
+		jumpRef.current = id;
+		setPinnedStart(index);
+	};
+
 	const rootRef = useRef<HTMLDivElement | null>(null);
 	const lockRef = useRef(true);
 	/**
@@ -328,6 +391,16 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		if (!before.anchor.isConnected) return;
 		el.scrollTop += before.anchor.getBoundingClientRect().top - el.getBoundingClientRect().top - before.offset;
 	}, [start]);
+
+	useLayoutEffect(() => {
+		const id = jumpRef.current;
+		if (id === null) return;
+		jumpRef.current = null;
+		prependRef.current = null;
+		scrollToPrompt(id);
+	}, [start]);
+
+	useEffect(syncActive, [entries, start]);
 
 	const showEarlier = (): void => {
 		const el = rootRef.current;
@@ -371,65 +444,71 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	const settled = phase === undefined || phase === "live";
 
 	return (
-		<div
-			ref={rootRef}
-			className={`tr-root${compact === true ? " tr-root--compact" : ""}`}
-			onScroll={() => {
-				const el = rootRef.current;
-				if (el === null) return;
-				updateTranscriptTailLock(el, lockRef);
-				// Back at the bottom: drop the pin so the window trims to the tail again.
-				if (lockRef.current) {
-					if (pinnedStart !== null) setPinnedStart(null);
-				} else if (pinnedStart === null) {
-					setPinnedStart(start);
-				}
-				if (el.scrollTop <= EARLIER_TRIGGER_PX) showEarlier();
-			}}
-		>
-			{settled && entries.length === 0 && stream === null && !working && (
-				<div className="tr-empty">{t("transcript.empty")}</div>
+		<div className="tr-wrap">
+			{compact !== true && prompts.length > 1 && (
+				<PromptRail prompts={prompts} activeId={activeId} onJump={jumpToPrompt} />
 			)}
-			{start > 0 && (
-				<button type="button" className="tr-earlier" onClick={showEarlier}>
-					{t("transcript.showEarlier", { count: start.toLocaleString("en-US") })}
-				</button>
-			)}
-			{visible.map(entry => (
-				<EntryRow key={entry.id} entry={entry} results={results} active={activeTools} host={host} />
-			))}
-			{stream !== null && (
-				<Row kind="assistant" gutter="agent">
-					<AssistantBody
-						message={stream}
-						results={results}
-						active={activeTools}
-						pending={!streamDone}
-						host={host}
-					/>
-				</Row>
-			)}
-			{tailTools.length > 0 && (
-				<Row kind="assistant" gutter={stream === null ? "agent" : ""}>
-					{tailTools.map(tool => (
-						<ToolCard
-							key={tool.toolCallId}
-							toolCallId={tool.toolCallId}
-							name={tool.toolName}
-							intent={tool.intent}
-							args={tool.args}
-							running
-							partialResult={tool.partialResult}
+			<div
+				ref={rootRef}
+				className={`tr-root${compact === true ? " tr-root--compact" : ""}`}
+				onScroll={() => {
+					const el = rootRef.current;
+					if (el === null) return;
+					updateTranscriptTailLock(el, lockRef);
+					// Back at the bottom: drop the pin so the window trims to the tail again.
+					if (lockRef.current) {
+						if (pinnedStart !== null) setPinnedStart(null);
+					} else if (pinnedStart === null) {
+						setPinnedStart(start);
+					}
+					if (el.scrollTop <= EARLIER_TRIGGER_PX) showEarlier();
+					syncActive();
+				}}
+			>
+				{settled && entries.length === 0 && stream === null && !working && (
+					<div className="tr-empty">{t("transcript.empty")}</div>
+				)}
+				{start > 0 && (
+					<button type="button" className="tr-earlier" onClick={showEarlier}>
+						{t("transcript.showEarlier", { count: start.toLocaleString("en-US") })}
+					</button>
+				)}
+				{visible.map(entry => (
+					<EntryRow key={entry.id} entry={entry} results={results} active={activeTools} host={host} />
+				))}
+				{stream !== null && (
+					<Row kind="assistant" gutter="agent">
+						<AssistantBody
+							message={stream}
+							results={results}
+							active={activeTools}
+							pending={!streamDone}
 							host={host}
 						/>
-					))}
-				</Row>
-			)}
-			{working && stream === null && activeTools.size === 0 && (
-				<Row kind="assistant" gutter="agent">
-					<div className="tr-shimmer">{t("transcript.thinking")}</div>
-				</Row>
-			)}
+					</Row>
+				)}
+				{tailTools.length > 0 && (
+					<Row kind="assistant" gutter={stream === null ? "agent" : ""}>
+						{tailTools.map(tool => (
+							<ToolCard
+								key={tool.toolCallId}
+								toolCallId={tool.toolCallId}
+								name={tool.toolName}
+								intent={tool.intent}
+								args={tool.args}
+								running
+								partialResult={tool.partialResult}
+								host={host}
+							/>
+						))}
+					</Row>
+				)}
+				{working && stream === null && activeTools.size === 0 && (
+					<Row kind="assistant" gutter="agent">
+						<div className="tr-shimmer">{t("transcript.thinking")}</div>
+					</Row>
+				)}
+			</div>
 		</div>
 	);
 }

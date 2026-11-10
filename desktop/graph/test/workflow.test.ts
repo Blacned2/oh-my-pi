@@ -108,7 +108,7 @@ test("an approved plan runs dependent Coders on upstream results and a same-resu
 		[backend]: "api v2\n",
 	});
 	const frontendRepo = await fixture(temp.join("frontend"));
-	const input = { source: sourceRoot, objective: "Upgrade the API and its client", files: [backend, frontend] };
+	const input = { source: sourceRoot, objective: "Upgrade the API and its client" };
 	const calls: string[] = [];
 	const executors: ApprovedGraphExecutors = {
 		async plan(_workspace, _input, validate) {
@@ -124,7 +124,6 @@ test("an approved plan runs dependent Coders on upstream results and a same-resu
 		},
 		async code(view, task, work, signal, _log, _repair, context) {
 			calls.push(task.nodeId);
-			expect(work.files).toEqual(input.files);
 			if (task.nodeId === "code-api") return backendChange.patch;
 			expect(context).toEqual({
 				references: [{ file: frontend, line: 1, excerpt: "initial frontend" }],
@@ -150,7 +149,7 @@ test("an approved plan runs dependent Coders on upstream results and a same-resu
 	await using workspace = await GraphWorkspace.pin(sourceRoot);
 	const plan = await proposeGraphPlan(workspace, input, executors, AbortSignal.timeout(30_000));
 	expect(calls).toEqual([]);
-	const context = { sourceRoot, baseSha: workspace.baseSha, objective: input.objective, files: input.files };
+	const context = { sourceRoot, baseSha: workspace.baseSha, objective: input.objective, files: [] };
 	const { id } = store.create(graphPlanForTasks(plan), { ...context, profileHash: "fixture", tasks: plan.tasks });
 	const work = graphWork(store.get(id)!.context!);
 	await runApprovedGraph(store, id, workspace, work, executors);
@@ -166,22 +165,31 @@ test("an approved plan runs dependent Coders on upstream results and a same-resu
 	expect(await Bun.file(path.join(sourceRoot, frontend)).text()).toBe("initial frontend\n");
 });
 
-test("planning stops before the Planner when an approved path collides with the pinned tree on Windows", async () => {
+test("a proposed path that collides with the pinned tree on Windows is rejected", async () => {
 	await using temp = await TempDir.create("@kostomp-graph-plan-collision-");
 	const source = await fixture(temp.join("source"));
 	await using workspace = await GraphWorkspace.pin(source.info().repoRoot);
-	let planned = false;
 	const executors = {
-		async plan() {
-			planned = true;
-			return {};
+		async plan(_workspace, _input, validate) {
+			return validate({
+				tasks: [{ id: "case", title: "Case", brief: "Edit", dependsOn: [], files: ["SRC/backend.txt"] }],
+			});
 		},
 	} as unknown as ApprovedGraphExecutors;
-	const input = { source: source.info().repoRoot, objective: "Edit", files: ["SRC/backend.txt"] };
+	const input = { source: source.info().repoRoot, objective: "Edit" };
 	await expect(proposeGraphPlan(workspace, input, executors, AbortSignal.timeout(30_000))).rejects.toThrow(
 		/collide on Windows/,
 	);
-	expect(planned).toBe(false);
+});
+
+test("listing a directory shows its immediate children in the pinned base", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-list-");
+	const source = await fixture(temp.join("source"));
+	await using workspace = await GraphWorkspace.pin(source.info().repoRoot);
+	expect(workspace.list("")).toEqual(["src/"]);
+	expect(workspace.list("src/")).toEqual(["backend.txt", "frontend.txt"]);
+	expect(() => workspace.list("missing/")).toThrow(/does not exist/);
+	expect(workspace.files().sort()).toEqual([backend, frontend]);
 });
 
 test("parallel Coders reach one candidate, and an unattributed test failure waits for the user to pick a Coder", async () => {
