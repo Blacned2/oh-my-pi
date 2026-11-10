@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- RPC hosts can enter, leave, and read plan mode with the new `plan` command; the agent's plan is approved through a `select` dialog, and the desktop UI gains `/plan [prompt]` with a plan-mode chip
+- RPC hosts can list background jobs with `get_async_jobs` and cancel one with `cancel_async_job`; the desktop UI shows subagents and background jobs as independent toggles at the top right of the chat
+
 ### Changed
 
 - `ask` prompts show their position (`(2/3)`) when a form has several questions; the desktop UI renders it as a "Question 2 of 3" header with progress dots and stacked option cards

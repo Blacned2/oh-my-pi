@@ -4,6 +4,7 @@
 
 ### Added
 
+- Transcript shows a back-to-bottom button while scrolled up from the tail; clicking it scrolls smoothly to the latest message
 - Transcript shows a left-edge prompt rail: one tick per user prompt, hover previews the prompt, click jumps to it (including prompts above the mounted window)
 
 ## [18.18.3] - 2026-11-09

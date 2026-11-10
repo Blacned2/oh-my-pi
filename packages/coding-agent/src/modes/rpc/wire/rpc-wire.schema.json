@@ -175,6 +175,17 @@
 				"clientOmit": []
 			},
 			{
+				"name": "plan",
+				"doc": "Read, enter, or exit plan mode. Entering needs `plan.enabled`; the agent submits its plan through a `select` dialog (Approve and execute / Refine plan) and approval exits plan mode.",
+				"params": "PlanParams",
+				"result": "PlanResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
 				"name": "set_ask_dialog",
 				"doc": "Opt in to `ask` UI requests; returns the applied setting.",
 				"params": "SetAskDialogParams",
@@ -316,6 +327,28 @@
 				"result": null,
 				"nullable": false,
 				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "get_async_jobs",
+				"doc": "List this session's background jobs and its subagents' as a tree: running jobs plus recently settled ones.",
+				"params": null,
+				"result": "AsyncJobTree",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "cancel_async_job",
+				"doc": "Cancel one running background job this session owns; false when no running job has that id.",
+				"params": "CancelAsyncJobParams",
+				"result": "CancelAsyncJobResult",
+				"nullable": false,
+				"unwrap": "cancelled",
 				"timeoutMs": null,
 				"completion": null,
 				"clientOmit": []
@@ -2506,6 +2539,45 @@
 			],
 			"type": "string"
 		},
+		"PlanOp": {
+			"enum": [
+				"get",
+				"enter",
+				"exit"
+			],
+			"type": "string"
+		},
+		"PlanState": {
+			"type": "object",
+			"properties": {
+				"planFilePath": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"planFilePath"
+			],
+			"description": "Plan mode state; `planFilePath` is the artifact the agent drafts the plan in."
+		},
+		"PlanResult": {
+			"type": "object",
+			"properties": {
+				"plan": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/PlanState"
+						},
+						{
+							"type": "null"
+						}
+					]
+				}
+			},
+			"required": [
+				"plan"
+			],
+			"description": "Outcome of every `plan` op; `plan` is null when plan mode is off."
+		},
 		"SlashCommandSource": {
 			"enum": [
 				"builtin",
@@ -3787,6 +3859,124 @@
 				"messages"
 			],
 			"description": "Incremental subagent transcript read."
+		},
+		"AsyncJobType": {
+			"enum": [
+				"bash",
+				"task",
+				"eval"
+			],
+			"type": "string"
+		},
+		"AsyncJobStatus": {
+			"enum": [
+				"running",
+				"completed",
+				"failed",
+				"cancelled"
+			],
+			"type": "string"
+		},
+		"AsyncJob": {
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "string"
+				},
+				"type": {
+					"$ref": "#/$defs/AsyncJobType"
+				},
+				"status": {
+					"$ref": "#/$defs/AsyncJobStatus"
+				},
+				"label": {
+					"type": "string",
+					"description": "Short description of the work; a command line is cut to 120 characters."
+				},
+				"startTime": {
+					"type": "integer",
+					"description": "Epoch milliseconds."
+				},
+				"intent": {
+					"type": "string",
+					"description": "What the job is for, in the model's words."
+				},
+				"endTime": {
+					"type": "integer",
+					"description": "Epoch milliseconds the run settled; absent while running."
+				},
+				"agentId": {
+					"type": "string",
+					"description": "Subagent a `task` job runs."
+				},
+				"ownerId": {
+					"type": "string",
+					"description": "Registry id of the agent that started the job."
+				},
+				"command": {
+					"type": "string",
+					"description": "Full command line of a job that runs a process."
+				},
+				"caption": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"id",
+				"type",
+				"status",
+				"label",
+				"startTime"
+			],
+			"description": "One background job."
+		},
+		"AsyncJobTreeAgent": {
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "string"
+				},
+				"parentId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"id"
+			]
+		},
+		"AsyncJobTree": {
+			"type": "object",
+			"properties": {
+				"running": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/AsyncJob"
+					}
+				},
+				"recent": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/AsyncJob"
+					}
+				},
+				"agents": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/AsyncJobTreeAgent"
+					},
+					"description": "Subagents owning listed jobs, with the ancestors linking them to the root."
+				},
+				"rootId": {
+					"type": "string",
+					"description": "The agent the tree is for; its own jobs are the top level."
+				}
+			},
+			"required": [
+				"running",
+				"recent",
+				"agents"
+			],
+			"description": "Jobs of this session and every subagent below it."
 		},
 		"BtwStatus": {
 			"enum": [
@@ -6956,6 +7146,17 @@
 				"op"
 			]
 		},
+		"PlanParams": {
+			"type": "object",
+			"properties": {
+				"op": {
+					"$ref": "#/$defs/PlanOp"
+				}
+			},
+			"required": [
+				"op"
+			]
+		},
 		"SetAskDialogParams": {
 			"type": "object",
 			"properties": {
@@ -7223,6 +7424,28 @@
 			"required": [
 				"subagentId",
 				"message"
+			]
+		},
+		"CancelAsyncJobParams": {
+			"type": "object",
+			"properties": {
+				"jobId": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"jobId"
+			]
+		},
+		"CancelAsyncJobResult": {
+			"type": "object",
+			"properties": {
+				"cancelled": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"cancelled"
 			]
 		},
 		"LiveStartParams": {

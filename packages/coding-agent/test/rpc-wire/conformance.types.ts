@@ -66,7 +66,7 @@ import type {
 	RpcSubagentSnapshot,
 } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-types";
 import type * as Wire from "@oh-my-pi/pi-coding-agent/modes/rpc/wire/rpc-wire.generated";
-import type { RestoredQueuedMessage } from "@oh-my-pi/pi-coding-agent/session/agent-session-types";
+import type { AsyncJobTree, RestoredQueuedMessage } from "@oh-my-pi/pi-coding-agent/session/agent-session-types";
 import type { SessionStats } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import type { BtwHistoryTurn } from "@oh-my-pi/pi-coding-agent/session/btw-history";
 import type { UsageLimitState } from "@oh-my-pi/pi-coding-agent/session/usage-limit";
@@ -284,6 +284,7 @@ export type State = Assert<
 		slashSubcommand: Outbound<NonNullable<RpcAvailableSlashCommand["subcommands"]>[number], Wire.SlashSubcommand>;
 		subagentSnapshot: Outbound<RpcSubagentSnapshot, Wire.SubagentSnapshot>;
 		subagentMessages: Outbound<RpcSubagentMessagesResult, Wire.SubagentMessages>;
+		asyncJobTree: Outbound<AsyncJobTree, Wire.AsyncJobTree>;
 		btwHistoryRecord: Outbound<RpcBtwHistoryRecord, Wire.BtwHistoryRecord>;
 		btwHistoryTurn: Outbound<BtwHistoryTurn, Wire.BtwHistoryTurn>;
 		logoutAccount: Outbound<LogoutAccount, Wire.LogoutAccount>;

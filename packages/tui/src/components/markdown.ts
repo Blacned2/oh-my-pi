@@ -37,6 +37,7 @@ import type { SymbolTheme } from "../symbols";
 import { TERMINAL } from "../terminal-capabilities";
 import { getSymbolTheme, getThemeEpoch } from "../theme/theme";
 import { canCacheMarkdownListItems } from "../theme/tui-adapters";
+import { fileHyperlink } from "../render/hyperlink";
 import type { Component } from "../tui";
 import {
 	applyBackgroundToLine,
@@ -1960,6 +1961,15 @@ function formatHyperlink(text: string, target: string): string {
 	}
 
 	return `\x1b]8;;${safeTarget}\x07${text}\x1b]8;;\x07`;
+}
+
+/** Absolute Windows (`C:\x`, `C:/x`) or POSIX (two or more segments) path with no whitespace. */
+const CODESPAN_ABSOLUTE_PATH_RE = /^(?:[A-Za-z]:[\\/][^\s<>"|?*]+|\/(?:[^\s/<>"|?*]+\/)+[^\s/<>"|?*]+)$/;
+
+/** Wrap a painted code span in a file link when its text is an absolute filesystem path. */
+function linkifyCodespanPath(code: string, painted: string): string {
+	if (!TERMINAL.hyperlinks || !CODESPAN_ABSOLUTE_PATH_RE.test(code)) return painted;
+	return fileHyperlink(code, painted);
 }
 
 const CODE_ESCAPE_RE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/y;
@@ -4368,7 +4378,7 @@ export class Markdown implements Component {
 				case "codespan": {
 					markHtmlItemWhenContent(token.text);
 					const painted = codespanSwatch(token.text, swatchGlyph);
-					result += (painted || this.#theme.code(token.text)) + stylePrefix;
+					result += linkifyCodespanPath(token.text, painted || this.#theme.code(token.text)) + stylePrefix;
 					break;
 				}
 

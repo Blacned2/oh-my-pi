@@ -105,6 +105,12 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		result: "GoalResult",
 	},
 	{
+		name: "plan",
+		doc: "Read, enter, or exit plan mode. Entering needs `plan.enabled`; the agent submits its plan through a `select` dialog (Approve and execute / Refine plan) and approval exits plan mode.",
+		params: { op: "PlanOp" },
+		result: "PlanResult",
+	},
+	{
 		name: "set_ask_dialog",
 		doc: "Opt in to `ask` UI requests; returns the applied setting.",
 		params: { enabled: "boolean" },
@@ -183,6 +189,18 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		name: "steer_subagent",
 		doc: "Send a message to a running subagent as its user.",
 		params: { subagentId: "string", message: "string" },
+	},
+	{
+		name: "get_async_jobs",
+		doc: "List this session's background jobs and its subagents' as a tree: running jobs plus recently settled ones.",
+		result: "AsyncJobTree",
+	},
+	{
+		name: "cancel_async_job",
+		doc: "Cancel one running background job this session owns; false when no running job has that id.",
+		params: { jobId: "string" },
+		result: { cancelled: "boolean" },
+		unwrap: "cancelled",
 	},
 	{
 		name: "live_start",

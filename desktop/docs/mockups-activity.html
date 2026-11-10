@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="tr"><head><meta charset="utf-8"><title>Kostomp · Subagents & Background tasks mockups</title>
+<style>
+:root{color-scheme:dark;
+  --bg:#120e26;--panel:#1b1638;--raised:#272050;--hover:rgba(190,175,255,.07);--press:rgba(190,175,255,.12);
+  --line-1:rgba(190,175,255,.09);--line-2:rgba(190,175,255,.15);--line-3:rgba(190,175,255,.24);
+  --ink-1:#f1eeff;--ink-2:#b4abdc;--ink-3:#7f76ab;--accent:#a99bff;--accent-2:#ff8a7a;
+  --ok:#3be0b5;--warn:#ffc233;--bad:#ff6b78;--sky:#7cc4ff;--violet:#a99bff;
+  --mono:ui-monospace,"Cascadia Mono","JetBrains Mono",Consolas,monospace;--sans:"Segoe UI",system-ui,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#0b0819;color:var(--ink-1);font:13px/1.5 var(--sans);padding:32px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:36px 0 4px}
+.lead{color:var(--ink-3);margin:0 0 14px;max-width:720px}
+.grid{display:grid;grid-template-columns:1fr;gap:56px}
+.win{background:var(--bg);border:1px solid var(--line-2);border-radius:14px;overflow:hidden;width:100%;height:max(760px,calc(100vh - 150px));display:flex;position:relative;box-shadow:0 12px 32px rgba(8,4,30,.6);font-size:14px}
+.chat{padding:22px 28px!important}.chat.gut{padding-right:470px!important}.chat.top{padding-top:56px!important}
+.msg{max-width:55%}.dock{padding:0 28px 18px!important}
+.float{width:330px!important;max-height:calc(100% - 28px)!important}
+.win .pn,.win .pop,.win .float,.win .pills,.win .mini,.win .list,.win .detail,.win .sh{zoom:1.3}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.bar{height:58px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line-1);color:var(--ink-3);font-size:12px}
+.bar b{color:var(--ink-1);font-weight:600}
+.dots{margin-left:auto;display:flex;align-items:center;gap:12px;height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--line-3);background:rgba(39,32,80,.8)}
+.dots i{display:block}
+.dots i:nth-child(1){width:9px;height:9px;border-radius:50%;background:var(--warn)}
+.dots i:nth-child(2)::before{content:"chatte, subagent ve ba…";font:600 13px var(--sans);color:var(--ink-1)}
+.dots i:nth-child(3)::before{content:"◫  ▭";font:14px var(--sans);color:var(--ink-2);letter-spacing:4px;border-left:1px solid var(--line-2);padding-left:12px}
+.chat{flex:1;overflow:hidden;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:78%;padding:8px 12px;border-radius:12px}
+.msg.u{align-self:flex-end;background:#6d4aff;color:#fff}
+.msg.a{background:var(--panel);border:1px solid var(--line-1);color:var(--ink-2)}
+.tool{font:12px var(--mono);color:var(--ink-3);border-left:2px solid var(--line-3);padding-left:8px}
+.dock{padding:0 14px 12px}
+.composer{border:1px solid var(--line-2);background:var(--panel);border-radius:12px;padding:10px 12px;color:var(--ink-3);display:flex;justify-content:space-between}
+.composer kbd{font:11px var(--mono);border:1px solid var(--line-2);border-radius:5px;padding:0 5px}
+/* shared bits */
+.mono{font-family:var(--mono)}
+.mark{width:1em;display:inline-block;text-align:center;flex:none}
+.run{color:var(--violet)}.done{color:var(--ok)}.fail{color:var(--bad)}.pend{color:var(--ink-3)}.abort{color:var(--warn)}
+.spin{display:inline-block;animation:sp 1.2s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
+.lnk{color:var(--accent);cursor:pointer;font:12px var(--mono)}.lnk.bad{color:var(--bad)}
+.sub{color:var(--ink-3)}
+.chip{font:11px var(--mono);padding:1px 7px;border-radius:999px;background:var(--raised);color:var(--ink-2);border:1px solid var(--line-1);white-space:nowrap}
+.chip.ok{color:var(--ok)}.chip.warn{color:var(--warn)}.chip.bad{color:var(--bad)}.chip.run{color:var(--violet)}
+.bar2{height:3px;border-radius:2px;background:var(--line-2);overflow:hidden}.bar2>i{display:block;height:100%;background:var(--accent)}
+.cap{color:var(--ink-3);font-size:12px;margin:6px 2px 0}
+/* A: tabbed panel above composer */
+.pn{border:1px solid var(--line-1);border-radius:10px;margin-bottom:6px;background:rgba(27,22,56,.6);font:12px/1.5 var(--mono);color:var(--ink-2)}
+.tabs{display:flex;gap:2px;padding:4px 6px 0;border-bottom:1px solid var(--line-1)}
+.tabs span{padding:3px 10px;border-radius:7px 7px 0 0;color:var(--ink-3);cursor:pointer}
+.tabs span.on{color:var(--ink-1);background:var(--raised)}
+.tabs .sp{margin-left:auto;color:var(--ink-3);padding:3px 6px}
+.rows{padding:6px 10px;display:flex;flex-direction:column;gap:2px;max-height:150px;overflow:hidden}
+.row{display:flex;align-items:baseline;gap:8px;min-width:0}
+.row .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .n{font-weight:600;color:var(--sky)}
+/* B: pills + popover */
+.pills{display:flex;gap:6px;margin-bottom:6px;position:relative}
+.pill{display:flex;align-items:center;gap:6px;border:1px solid var(--line-2);background:var(--panel);border-radius:999px;padding:3px 11px;font:12px var(--mono);color:var(--ink-2);cursor:pointer}
+.pill.open{border-color:var(--accent);color:var(--ink-1)}
+.pill .badge{background:var(--accent);color:#140f2e;border-radius:999px;padding:0 6px;font-weight:700;font-size:11px}
+.pop{position:absolute;bottom:34px;left:0;width:430px;background:rgba(24,19,50,.92);backdrop-filter:blur(14px);border:1px solid var(--line-3);border-radius:12px;box-shadow:0 12px 32px rgba(8,4,30,.6);padding:10px 12px;font:12px/1.55 var(--mono);color:var(--ink-2);z-index:3}
+.pop .hd{display:flex;justify-content:space-between;color:var(--ink-1);font-weight:600;margin-bottom:6px}
+.tree .row{padding:2px 4px;border-radius:6px}.tree .row:hover{background:var(--hover)}
+.tree .ind{padding-left:20px;border-left:1px solid var(--line-2);margin-left:7px}
+.sep{height:1px;background:var(--line-1);margin:6px 0}
+/* C: right drawer */
+.drawer{width:290px;border-left:1px solid var(--line-2);background:rgba(27,22,56,.7);display:flex;flex-direction:column;font-size:12px}
+.drawer .dh{padding:10px 12px;border-bottom:1px solid var(--line-1);display:flex;align-items:center;gap:8px}
+.drawer .dh b{font-weight:600}.drawer .dh .x{margin-left:auto;color:var(--ink-3)}
+.sec{padding:8px 12px 2px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;font-size:10.5px}
+.card{margin:6px 10px;padding:8px 10px;border:1px solid var(--line-1);border-radius:10px;background:var(--panel)}
+.card.sel{border-color:var(--accent)}
+.card .h{display:flex;align-items:center;gap:7px}.card .h b{font-weight:600}
+.card .m{display:flex;gap:10px;color:var(--ink-3);font:11px var(--mono);margin-top:4px}
+.card .act{font:11.5px var(--mono);color:var(--ink-2);margin:4px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.log{margin:4px 0 0;padding:6px 8px;background:#0c0920;border-radius:7px;font:11px/1.45 var(--mono);color:var(--ink-3);max-height:74px;overflow:hidden}
+.log em{color:var(--ink-2);font-style:normal}
+.btns{display:flex;gap:10px;margin-top:6px}
+/* C: floating card over the chat, top-right */
+.chatwrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.float{position:absolute;top:10px;right:14px;width:292px;max-height:calc(100% - 20px);overflow:hidden;z-index:3;background:rgba(24,19,50,.84);backdrop-filter:blur(16px) saturate(150%);border:1px solid var(--line-3);border-radius:14px;box-shadow:0 12px 32px rgba(8,4,30,.6);font-size:12px;display:flex;flex-direction:column}
+.float .dh{padding:9px 12px;border-bottom:1px solid var(--line-1);display:flex;align-items:center;gap:8px}
+.float .dh b{font-weight:600}.float .dh .x{margin-left:auto;color:var(--ink-3);letter-spacing:2px}
+.float .card{background:rgba(39,32,80,.45)}
+.mini{position:absolute;top:10px;right:14px;z-index:3;display:flex;gap:6px}
+.mini .pill{background:rgba(24,19,50,.84);backdrop-filter:blur(14px);box-shadow:0 6px 18px rgba(8,4,30,.5)}
+.hint{position:absolute;right:14px;bottom:12px;color:var(--ink-3);font:11px var(--mono)}
+.chat.gut{padding-right:320px}.chat.top{padding-top:46px}
+.float .rows{max-height:none}
+/* C (seçilen): bağımsız toggle'lı yüzen yığın */
+.stack{position:absolute;top:12px;right:18px;z-index:3;display:flex;flex-direction:column;align-items:flex-end;gap:8px;width:370px}
+.stack .toggles{display:flex;gap:6px}
+.pill.on{border-color:var(--accent);background:rgba(169,155,255,.16);color:var(--ink-1)}
+.pill .ord{font:700 10px var(--mono);width:15px;height:15px;border-radius:50%;background:var(--accent);color:#140f2e;display:inline-flex;align-items:center;justify-content:center}
+.pnl{width:100%;background:rgba(24,19,50,.88);backdrop-filter:blur(16px) saturate(150%);border:1px solid var(--line-3);border-radius:12px;box-shadow:0 10px 28px rgba(8,4,30,.55);overflow:hidden;font:12px/1.55 var(--mono);color:var(--ink-2)}
+.pnl .ph{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line-1);color:var(--ink-1);font-weight:600}
+.pnl .ph .x{margin-left:auto;color:var(--ink-3);font-weight:400}
+.pnl .rows{max-height:none;padding:6px 12px;gap:3px}
+.win .stack{zoom:1.3}.chat.gut2{padding-right:540px!important}
+/* D: full-width dashboard overlay */
+.sheet{position:absolute;inset:58px 0 0 0;background:rgba(18,14,38,.93);backdrop-filter:blur(8px);display:flex;flex-direction:column;z-index:4}
+.sheet .sh{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line-1)}
+.sheet .sh b{font-size:14px}.sheet .sh .x{margin-left:auto;color:var(--ink-3)}
+.split{flex:1;display:flex;min-height:0}
+.list{width:300px;border-right:1px solid var(--line-1);overflow:hidden;padding:6px}
+.li{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:8px;font:12px var(--mono);color:var(--ink-2)}
+.li.sel{background:var(--press);color:var(--ink-1)}.li .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.detail{flex:1;padding:14px 18px;overflow:hidden}
+.detail h3{margin:0 0 2px;font-size:14px}
+.kv{display:grid;grid-template-columns:90px 1fr;gap:3px 10px;font:12px var(--mono);margin:10px 0}.kv dt{color:var(--ink-3)}.kv dd{margin:0;color:var(--ink-2)}
+.term{background:#0c0920;border:1px solid var(--line-1);border-radius:8px;padding:8px 10px;font:11.5px/1.5 var(--mono);color:var(--ink-3);height:150px;overflow:hidden}
+.term .o{color:var(--ink-2)}.term .g{color:var(--ok)}.term .r{color:var(--bad)}
+</style></head><body>
+<h1>Subagents &amp; Background tasks — mockup önerileri</h1>
+<p class="lead">Mevcut desktop temasının (<code>app.css</code> token'ları) renkleri ve mono panel stiliyle çizildi. Veri alanları CLI'daki <code>getAsyncJobTree</code> ve mevcut <code>subagent_lifecycle/progress</code> frame'lerinden türetilebilecek olanlarla sınırlı tutuldu.</p>
+
+<div class="grid">
+
+<!-- A -->
+<div>
+<h2>A · Sekmeli tek panel (mevcut paneli genişletir)</h2>
+<p class="lead">Composer üstündeki mevcut "subagents" paneli iki sekmeye bölünür. En küçük değişiklik; yer kaplamaz, işler bitince kendiliğinden kapanır.</p>
+<div class="win"><div class="main">
+ <div class="bar"><b>kostomp</b> · refactor-auth<div class="dots"><i></i><i></i><i></i></div></div>
+ <div class="chat">
+  <div class="msg u">Testleri çalıştır, paralelde auth modülünü incele.</div>
+  <div class="msg a">Üç subagent başlattım ve testleri arka planda çalıştırıyorum.</div>
+  <div class="tool">▸ task ×3 · bash (background) bun test</div>
+ </div>
+ <div class="dock">
+  <div class="pn">
+   <div class="tabs"><span class="on">Subagents <span class="chip run">2</span></span><span>Background <span class="chip run">2</span></span><span class="sp">▾ gizle</span></div>
+   <div class="rows">
+    <div class="row"><span class="mark run"><span class="spin">◐</span></span><span class="n">explore</span><span class="t">auth token akışını haritala</span><span class="sub">1m 12s</span><span class="lnk">view</span><span class="lnk bad">stop</span></div>
+    <div class="row"><span class="mark run"><span class="spin">◐</span></span><span class="n">reviewer</span><span class="t">session middleware değişikliklerini incele</span><span class="sub">0m 41s</span><span class="lnk">view</span><span class="lnk bad">stop</span></div>
+    <div class="row"><span class="mark done">●</span><span class="n">task</span><span class="t">login.test.ts güncellendi</span><span class="sub">2m 03s</span><span class="lnk">view</span></div>
+    <div class="row"><span class="mark pend">○</span><span class="n">task</span><span class="t">docs/auth.md (sırada)</span></div>
+   </div>
+  </div>
+  <div class="composer"><span>Mesaj yaz…</span><kbd>Enter</kbd></div>
+ </div>
+</div></div>
+</div>
+
+<!-- B -->
+<div>
+<h2>B · Composer pill'leri + popover (CLI "jobs pill" ile aynı model)</h2>
+<p class="lead">Composer üstünde iki küçük pill. Tıklayınca subagent + iş ağacı popover olarak açılır. Hiç iş yokken sıfır alan harcar.</p>
+<div class="win"><div class="main">
+ <div class="bar"><b>kostomp</b> · refactor-auth<div class="dots"><i></i><i></i><i></i></div></div>
+ <div class="chat">
+  <div class="msg u">Sunucuyu ayağa kaldır ve logları izle.</div>
+  <div class="msg a">dev sunucusu arka planda çalışıyor, port 5173.</div>
+ </div>
+ <div class="dock">
+  <div class="pills">
+   <div class="pill open"><span class="run"><span class="spin">◐</span></span> agents <span class="badge">2</span></div>
+   <div class="pill"><span class="done">⚙</span> jobs <span class="badge">3</span></div>
+   <div class="pop">
+    <div class="hd"><span>Etkinlik</span><span class="sub">Esc kapat</span></div>
+    <div class="tree">
+     <div class="row"><span class="mark run"><span class="spin">◐</span></span><span class="n">explore</span><span class="t">auth token akışı</span><span class="sub">1m 12s</span></div>
+     <div class="ind">
+      <div class="row"><span class="mark run"><span class="spin">⚙</span></span><span class="t">bash · rg "refreshToken" -n</span><span class="sub">4s</span><span class="lnk bad">x</span></div>
+     </div>
+     <div class="row"><span class="mark run"><span class="spin">◐</span></span><span class="n">reviewer</span><span class="t">middleware incelemesi</span><span class="sub">0m 41s</span></div>
+     <div class="sep"></div>
+     <div class="row"><span class="mark run"><span class="spin">⚙</span></span><span class="t">bg_3 · bun run dev</span><span class="chip ok">:5173</span><span class="sub">8m 20s</span><span class="lnk bad">x</span></div>
+     <div class="row"><span class="mark run"><span class="spin">⚙</span></span><span class="t">bg_4 · bun test --watch</span><span class="sub">8m 02s</span><span class="lnk bad">x</span></div>
+     <div class="row"><span class="mark done">✓</span><span class="t sub">bg_2 · cargo check</span><span class="sub">tamam · 31s</span></div>
+    </div>
+   </div>
+  </div>
+  <div class="composer"><span>Mesaj yaz…</span><kbd>Enter</kbd></div>
+ </div>
+</div></div>
+</div>
+
+<!-- C: durum 1 -->
+<div>
+<h2>C · Seçilen tasarım — durum 1: yalnızca agents açık</h2>
+<p class="lead">Sağ üstte iki bağımsız toggle (agents, jobs). Her biri kendi başına açılıp kapanır. Açık olan toggle vurgulanır, üzerinde açılma sırası rozeti (1, 2) görünür. Kapalıyken yalnızca pill kalır; hiç iş yoksa pill de gizlenir.</p>
+<div class="win"><div class="main">
+ <div class="bar"><b>kostomp</b> · refactor-auth<div class="dots"><i></i><i></i><i></i></div></div>
+ <div class="chatwrap">
+  <div class="chat gut2">
+   <div class="msg u">Bu PR'ı üç ajanla incele, dev sunucusunu da aç.</div>
+   <div class="msg a">Başlatıldı. Sağ üstteki düğmelerden ilerlemeyi izleyebilirsin.</div>
+   <div class="tool">▸ task ×3 · bash (background) bun run dev</div>
+  </div>
+  <div class="stack">
+   <div class="toggles">
+    <div class="pill on"><span class="ord">1</span><span class="run"><span class="spin">◐</span></span> agents <span class="badge">2</span></div>
+    <div class="pill"><span class="done">⚙</span> jobs <span class="badge">3</span></div>
+   </div>
+   <div class="pnl">
+    <div class="ph"><span>Subagents</span><span class="chip run">2 çalışıyor</span><span class="x">✕</span></div>
+    <div class="rows">
+     <div class="row"><span class="mark run"><span class="spin">◐</span></span><span class="n">explore</span><span class="t">auth token akışı</span><span class="sub">1m</span><span class="lnk">view</span><span class="lnk bad">stop</span></div>
+     <div class="row"><span class="mark run"><span class="spin">◐</span></span><span class="n">reviewer</span><span class="t">session middleware</span><span class="sub">41s</span><span class="lnk">view</span><span class="lnk bad">stop</span></div>
+     <div class="row"><span class="mark done">●</span><span class="n">task</span><span class="t sub">login.test.ts</span><span class="sub">2m</span><span class="lnk">view</span></div>
+    </div>
+   </div>
+  </div>
+ </div>
+ <div class="dock"><div class="composer"><span>Mesaj yaz…</span><kbd>Enter</kbd></div></div>
+</div></div>
+</div>
+
+<!-- C: durum 2 -->
+<div>
+<h2>C · Durum 2: agents önce, jobs sonra açıldı</h2>
+<p class="lead">İkisi de açık kalabilir. Paneller açılma sırasıyla pill satırının altına dizilir: önce açılan üstte, sonra açılan altında. Pill'lerdeki 1 ve 2 rozetleri sırayı gösterir.</p>
+<div class="win"><div class="main">
+ <div class="bar"><b>kostomp</b> · refactor-auth<div class="dots"><i></i><i></i><i></i></div></div>
+ <div class="chatwrap">
+  <div class="chat gut2">
+   <div class="msg u">Bu PR'ı üç ajanla incele, dev sunucusunu da aç.</div>
+   <div class="msg a">Başlatıldı. Sağ üstteki düğmelerden ilerlemeyi izleyebilirsin.</div>
+   <div class="tool">▸ task ×3 · bash (background) bun run dev</div>
+  </div>
+  <div class="stack">
+   <div class="toggles">
+    <div class="pill on"><span class="ord">1</span><span class="run"><span class="spin">◐</span></span> agents <span class="badge">2</span></div>
+    <div class="pill on"><span class="ord">2</span><span class="done">⚙</span> jobs <span class="badge">3</span></div>
+   </div>
+   <div class="pnl">
+    <div class="ph"><span>Subagents</span><span class="chip run">2 çalışıyor</span><span class="x">✕</span></div>
+    <div class="rows">
+     <div class="row"><span class="mark run"><span class="spin">◐</span></span><span class="n">explore</span><span class="t">auth token akışı</span><span class="sub">1m</span><span class="lnk">view</span><span class="lnk bad">stop</span></div>
+     <div class="row"><span class="mark run"><span class="spin">◐</span></span><span class="n">reviewer</span><span class="t">session middleware</span><span class="sub">41s</span><span class="lnk">view</span><span class="lnk bad">stop</span></div>
+     <div class="row"><span class="mark done">●</span><span class="n">task</span><span class="t sub">login.test.ts</span><span class="sub">2m</span><span class="lnk">view</span></div>
+    </div>
+   </div>
+   <div class="pnl">
+    <div class="ph"><span>Background</span><span class="chip run">2 çalışıyor</span><span class="x">✕</span></div>
+    <div class="rows">
+     <div class="row"><span class="mark run"><span class="spin">⚙</span></span><span class="t">bun run dev</span><span class="chip ok">:5173</span><span class="sub">8m</span><span class="lnk bad">stop</span></div>
+     <div class="row"><span class="mark run"><span class="spin">⚙</span></span><span class="t">bun test --watch</span><span class="sub">8m</span><span class="lnk bad">stop</span></div>
+     <div class="row"><span class="mark done">✓</span><span class="t sub">cargo check</span><span class="sub">31s</span><span class="lnk">log</span></div>
+    </div>
+   </div>
+  </div>
+ </div>
+ <div class="dock"><div class="composer"><span>Mesaj yaz…</span><kbd>Enter</kbd></div></div>
+</div></div>
+</div>
+
+<!-- C: durum 3 -->
+<div>
+<h2>C · Durum 3: jobs önce, agents sonra açıldı</h2>
+<p class="lead">Aynı pill sırası (agents, jobs), ama paneller açılma sırasını izler: jobs üstte, agents altta. Birini kapatıp yeniden açmak onu yığının sonuna alır. Rozetler (1/2) bunu yansıtır.</p>
+<div class="win"><div class="main">
+ <div class="bar"><b>kostomp</b> · refactor-auth<div class="dots"><i></i><i></i><i></i></div></div>
+ <div class="chatwrap">
+  <div class="chat gut2">
+   <div class="msg u">Bu PR'ı üç ajanla incele, dev sunucusunu da aç.</div>
+   <div class="msg a">Başlatıldı. Sağ üstteki düğmelerden ilerlemeyi izleyebilirsin.</div>
+   <div class="tool">▸ task ×3 · bash (background) bun run dev</div>
+  </div>
+  <div class="stack">
+   <div class="toggles">
+    <div class="pill on"><span class="ord">2</span><span class="run"><span class="spin">◐</span></span> agents <span class="badge">2</span></div>
+    <div class="pill on"><span class="ord">1</span><span class="done">⚙</span> jobs <span class="badge">3</span></div>
+   </div>
+   <div class="pnl">
+    <div class="ph"><span>Background</span><span class="chip run">2 çalışıyor</span><span class="x">✕</span></div>
+    <div class="rows">
+     <div class="row"><span class="mark run"><span class="spin">⚙</span></span><span class="t">bun run dev</span><span class="chip ok">:5173</span><span class="sub">8m</span><span class="lnk bad">stop</span></div>
+     <div class="row"><span class="mark run"><span class="spin">⚙</span></span><span class="t">bun test --watch</span><span class="sub">8m</span><span class="lnk bad">stop</span></div>
+     <div class="row"><span class="mark done">✓</span><span class="t sub">cargo check</span><span class="sub">31s</span><span class="lnk">log</span></div>
+    </div>
+   </div>
+   <div class="pnl">
+    <div class="ph"><span>Subagents</span><span class="chip run">2 çalışıyor</span><span class="x">✕</span></div>
+    <div class="rows">
+     <div class="row"><span class="mark run"><span class="spin">◐</span></span><span class="n">explore</span><span class="t">auth token akışı</span><span class="sub">1m</span><span class="lnk">view</span><span class="lnk bad">stop</span></div>
+     <div class="row"><span class="mark run"><span class="spin">◐</span></span><span class="n">reviewer</span><span class="t">session middleware</span><span class="sub">41s</span><span class="lnk">view</span><span class="lnk bad">stop</span></div>
+     <div class="row"><span class="mark done">●</span><span class="n">task</span><span class="t sub">login.test.ts</span><span class="sub">2m</span><span class="lnk">view</span></div>
+    </div>
+   </div>
+  </div>
+ </div>
+ <div class="dock"><div class="composer"><span>Mesaj yaz…</span><kbd>Enter</kbd></div></div>
+</div></div>
+</div>
+
+<!-- D -->
+<div>
+<h2>D · Tam ekran "Activity" sayfası (master–detail)</h2>
+<p class="lead">Soldan ağaç liste (subagent + iş), sağda seçilenin ayrıntısı, tam log ve eylemler. Yoğun çoklu-agent oturumları için; composer'daki pill'den açılır.</p>
+<div class="win"><div class="main">
+ <div class="bar"><b>kostomp</b> · refactor-auth<div class="dots"><i></i><i></i><i></i></div></div>
+ <div class="sheet">
+  <div class="sh"><b>Activity</b><span class="chip run">2 agent</span><span class="chip run">2 job</span><span class="chip">3 bitti</span><span class="x">✕ kapat</span></div>
+  <div class="split">
+   <div class="list">
+    <div class="sec">Subagents</div>
+    <div class="li"><span class="mark run"><span class="spin">◐</span></span><span class="t">explore · auth token akışı</span><span class="sub">1m</span></div>
+    <div class="li"><span class="mark run"><span class="spin">◐</span></span><span class="t">reviewer · middleware</span><span class="sub">41s</span></div>
+    <div class="li"><span class="mark done">●</span><span class="t">task · login.test.ts</span><span class="sub">2m</span></div>
+    <div class="li"><span class="mark fail">✕</span><span class="t">task · migrate-db</span><span class="sub">9s</span></div>
+    <div class="sec">Background</div>
+    <div class="li sel"><span class="mark run"><span class="spin">⚙</span></span><span class="t">bg_3 · bun run dev</span><span class="sub">8m</span></div>
+    <div class="li"><span class="mark run"><span class="spin">⚙</span></span><span class="t">bg_4 · bun test --watch</span><span class="sub">8m</span></div>
+    <div class="li"><span class="mark done">✓</span><span class="t">bg_2 · cargo check</span><span class="sub">31s</span></div>
+   </div>
+   <div class="detail">
+    <h3>bun run dev <span class="chip run">çalışıyor</span></h3>
+    <div class="sub mono">bg_3 · sahibi: ana oturum</div>
+    <dl class="kv"><dt>başladı</dt><dd>14:02:11 (8m 20s önce)</dd><dt>dizin</dt><dd>C:/Tools/kostomp/desktop</dd><dt>port</dt><dd>5173</dd><dt>çıktı</dt><dd>214 satır</dd></dl>
+    <div class="term"><span class="o">$ bun run dev</span><br><span class="g">VITE v6.0.1 ready in 312 ms</span><br><span class="o">➜ Local: http://localhost:5173/</span><br>hmr update /src/App.tsx<br>hmr update /src/auth.ts<br><span class="r">warn: deprecated import in token.ts</span><br>hmr update /src/session.ts</div>
+    <div class="btns"><span class="lnk">kopyala</span><span class="lnk">tam log</span><span class="lnk bad">durdur</span></div>
+   </div>
+  </div>
+ </div>
+</div></div>
+</div>
+
+</div>
+<p class="cap">Öneri: A hızlı ilk adım (mevcut panel + Background sekmesi), B/D uzun vadeli hedef. C yalnızca geniş pencerelerde mantıklı.</p>
+</body></html>

@@ -324,6 +324,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		return list;
 	}, [entries]);
 	const [activeId, setActiveId] = useState<string | null>(null);
+	const [away, setAway] = useState(false);
 	const jumpRef = useRef<string | null>(null);
 
 	const syncActive = (): void => {
@@ -445,7 +446,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 
 	return (
 		<div className="tr-wrap">
-			{compact !== true && prompts.length > 1 && (
+			{compact !== true && prompts.length > 0 && (
 				<PromptRail prompts={prompts} activeId={activeId} onJump={jumpToPrompt} />
 			)}
 			<div
@@ -455,6 +456,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 					const el = rootRef.current;
 					if (el === null) return;
 					updateTranscriptTailLock(el, lockRef);
+					setAway(!lockRef.current);
 					// Back at the bottom: drop the pin so the window trims to the tail again.
 					if (lockRef.current) {
 						if (pinnedStart !== null) setPinnedStart(null);
@@ -509,6 +511,22 @@ export function Transcript(props: TranscriptProps): ReactNode {
 					</Row>
 				)}
 			</div>
+			{away && (
+				<button
+					type="button"
+					className="tr-bottom"
+					aria-label={t("transcript.toBottom")}
+					title={t("transcript.toBottom")}
+					onClick={() => {
+						const el = rootRef.current;
+						if (el !== null) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+					}}
+				>
+					<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+						<path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+					</svg>
+				</button>
+			)}
 		</div>
 	);
 }

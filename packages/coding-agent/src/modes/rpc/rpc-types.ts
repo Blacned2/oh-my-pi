@@ -20,7 +20,7 @@ import type { BashResult } from "../../exec/bash-executor";
 import type { ContextUsage } from "../../extensibility/extensions/types";
 import type { AgentSessionEvent, SessionStats } from "../../session/agent-session";
 import type { SessionLeaseReport } from "../../session/session-storage";
-import type { RestoredQueuedMessage } from "../../session/agent-session-types";
+import type { AsyncJobTree, RestoredQueuedMessage } from "../../session/agent-session-types";
 import type { CacheWarmingMode } from "../../session/cache-warmer";
 import type { FileEntry, SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { UsageLimitState } from "../../session/usage-limit";
@@ -41,6 +41,7 @@ import type { RpcSessionListItem } from "./rpc-sessions";
 import type { HighlightToken } from "./highlight-tokens";
 import type { GoalModeState } from "../../goals/state";
 import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
+import type { RpcPlanOp, RpcPlanResult } from "./rpc-plan";
 import type { BtwHistoryRecord } from "../../session/btw-history";
 
 // ============================================================================
@@ -86,6 +87,7 @@ export type RpcCommand =
 			objective?: string;
 			token_budget?: number;
 	  }
+	| { id?: string; type: "plan"; op: RpcPlanOp }
 	| { id?: string; type: "set_ask_dialog"; enabled: boolean }
 	| { id?: string; type: "get_available_commands" }
 	| { id?: string; type: "get_entries"; since?: string }
@@ -105,6 +107,8 @@ export type RpcCommand =
 	| { id?: string; type: "get_subagent_messages"; subagentId?: string; sessionFile?: string; fromByte?: number }
 	| { id?: string; type: "cancel_subagent"; subagentId: string }
 	| { id?: string; type: "steer_subagent"; subagentId: string; message: string }
+	| { id?: string; type: "get_async_jobs" }
+	| { id?: string; type: "cancel_async_job"; jobId: string }
 	// Live voice (GPT live bound to this session)
 	| { id?: string; type: "live_start"; voice?: string; instructions?: string }
 	| { id?: string; type: "live_connect"; sdpOffer: string; voice?: string; instructions?: string }
@@ -532,6 +536,7 @@ export type RpcResponse =
 	  }
 	| { id?: string; type: "response"; command: "set_slow_mode"; success: true; data: { enabled: boolean } }
 	| { id?: string; type: "response"; command: "goal"; success: true; data: RpcGoalResult }
+	| { id?: string; type: "response"; command: "plan"; success: true; data: RpcPlanResult }
 	| { id?: string; type: "response"; command: "set_ask_dialog"; success: true; data: { enabled: boolean } }
 	| {
 			id?: string;
@@ -593,6 +598,14 @@ export type RpcResponse =
 			data: { cancelled: boolean };
 	  }
 	| { id?: string; type: "response"; command: "steer_subagent"; success: true }
+	| { id?: string; type: "response"; command: "get_async_jobs"; success: true; data: AsyncJobTree }
+	| {
+			id?: string;
+			type: "response";
+			command: "cancel_async_job";
+			success: true;
+			data: { cancelled: boolean };
+	  }
 
 	// Model
 	| {

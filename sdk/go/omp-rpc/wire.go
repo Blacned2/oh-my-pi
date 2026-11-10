@@ -2098,6 +2098,67 @@ func (v *GoalStatus) UnmarshalJSON(data []byte) error {
 	return unknownValue("GoalStatus", s)
 }
 
+type PlanOp string
+
+const (
+	PlanOpGet   PlanOp = "get"
+	PlanOpEnter PlanOp = "enter"
+	PlanOpExit  PlanOp = "exit"
+)
+
+func (v *PlanOp) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "PlanOp")
+	if err != nil {
+		return err
+	}
+	switch value := PlanOp(s); value {
+	case PlanOpGet, PlanOpEnter, PlanOpExit:
+		*v = value
+		return nil
+	}
+	return unknownValue("PlanOp", s)
+}
+
+// Plan mode state; `planFilePath` is the artifact the agent drafts the plan in.
+type PlanState struct {
+	PlanFilePath string `json:"planFilePath"`
+}
+
+func (v *PlanState) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PlanState", v.decodeFrom)
+}
+
+func (v *PlanState) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PlanState
+	d := fieldDecoder{raw: raw, owner: "PlanState"}
+	d.required("planFilePath", &out.PlanFilePath)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+// Outcome of every `plan` op; `plan` is null when plan mode is off.
+type PlanResult struct {
+	Plan *PlanState `json:"plan"`
+}
+
+func (v *PlanResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "PlanResult", v.decodeFrom)
+}
+
+func (v *PlanResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out PlanResult
+	d := fieldDecoder{raw: raw, owner: "PlanResult"}
+	d.nullable("plan", &out.Plan)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type SlashCommandSource string
 
 const (
@@ -3474,6 +3535,145 @@ func (v *SubagentMessages) decodeFrom(raw map[string]json.RawMessage) error {
 	d.required("reset", &out.Reset)
 	d.required("entries", &out.Entries)
 	d.required("messages", &out.Messages)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type AsyncJobType string
+
+const (
+	AsyncJobTypeBash AsyncJobType = "bash"
+	AsyncJobTypeTask AsyncJobType = "task"
+	AsyncJobTypeEval AsyncJobType = "eval"
+)
+
+func (v *AsyncJobType) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "AsyncJobType")
+	if err != nil {
+		return err
+	}
+	switch value := AsyncJobType(s); value {
+	case AsyncJobTypeBash, AsyncJobTypeTask, AsyncJobTypeEval:
+		*v = value
+		return nil
+	}
+	return unknownValue("AsyncJobType", s)
+}
+
+type AsyncJobStatus string
+
+const (
+	AsyncJobStatusRunning   AsyncJobStatus = "running"
+	AsyncJobStatusCompleted AsyncJobStatus = "completed"
+	AsyncJobStatusFailed    AsyncJobStatus = "failed"
+	AsyncJobStatusCancelled AsyncJobStatus = "cancelled"
+)
+
+func (v *AsyncJobStatus) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "AsyncJobStatus")
+	if err != nil {
+		return err
+	}
+	switch value := AsyncJobStatus(s); value {
+	case AsyncJobStatusRunning, AsyncJobStatusCompleted, AsyncJobStatusFailed, AsyncJobStatusCancelled:
+		*v = value
+		return nil
+	}
+	return unknownValue("AsyncJobStatus", s)
+}
+
+// One background job.
+type AsyncJob struct {
+	ID     string         `json:"id"`
+	Type   AsyncJobType   `json:"type"`
+	Status AsyncJobStatus `json:"status"`
+	// Short description of the work; a command line is cut to 120 characters.
+	Label string `json:"label"`
+	// Epoch milliseconds.
+	StartTime int64 `json:"startTime"`
+	// What the job is for, in the model's words.
+	Intent *string `json:"intent,omitempty"`
+	// Epoch milliseconds the run settled; absent while running.
+	EndTime *int64 `json:"endTime,omitempty"`
+	// Subagent a `task` job runs.
+	AgentID *string `json:"agentId,omitempty"`
+	// Registry id of the agent that started the job.
+	OwnerID *string `json:"ownerId,omitempty"`
+	// Full command line of a job that runs a process.
+	Command *string `json:"command,omitempty"`
+	Caption *string `json:"caption,omitempty"`
+}
+
+func (v *AsyncJob) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "AsyncJob", v.decodeFrom)
+}
+
+func (v *AsyncJob) decodeFrom(raw map[string]json.RawMessage) error {
+	var out AsyncJob
+	d := fieldDecoder{raw: raw, owner: "AsyncJob"}
+	d.required("id", &out.ID)
+	d.required("type", &out.Type)
+	d.required("status", &out.Status)
+	d.required("label", &out.Label)
+	d.required("startTime", &out.StartTime)
+	d.optional("intent", &out.Intent)
+	d.optional("endTime", &out.EndTime)
+	d.optional("agentId", &out.AgentID)
+	d.optional("ownerId", &out.OwnerID)
+	d.optional("command", &out.Command)
+	d.optional("caption", &out.Caption)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type AsyncJobTreeAgent struct {
+	ID       string  `json:"id"`
+	ParentID *string `json:"parentId,omitempty"`
+}
+
+func (v *AsyncJobTreeAgent) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "AsyncJobTreeAgent", v.decodeFrom)
+}
+
+func (v *AsyncJobTreeAgent) decodeFrom(raw map[string]json.RawMessage) error {
+	var out AsyncJobTreeAgent
+	d := fieldDecoder{raw: raw, owner: "AsyncJobTreeAgent"}
+	d.required("id", &out.ID)
+	d.optional("parentId", &out.ParentID)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+// Jobs of this session and every subagent below it.
+type AsyncJobTree struct {
+	Running []AsyncJob `json:"running"`
+	Recent  []AsyncJob `json:"recent"`
+	// Subagents owning listed jobs, with the ancestors linking them to the root.
+	Agents []AsyncJobTreeAgent `json:"agents"`
+	// The agent the tree is for; its own jobs are the top level.
+	RootID *string `json:"rootId,omitempty"`
+}
+
+func (v *AsyncJobTree) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "AsyncJobTree", v.decodeFrom)
+}
+
+func (v *AsyncJobTree) decodeFrom(raw map[string]json.RawMessage) error {
+	var out AsyncJobTree
+	d := fieldDecoder{raw: raw, owner: "AsyncJobTree"}
+	d.required("running", &out.Running)
+	d.required("recent", &out.Recent)
+	d.required("agents", &out.Agents)
+	d.optional("rootId", &out.RootID)
 	if d.err != nil {
 		return d.err
 	}
@@ -7965,6 +8165,25 @@ func (v *CancelSubagentResult) decodeFrom(raw map[string]json.RawMessage) error 
 	return nil
 }
 
+type CancelAsyncJobResult struct {
+	Cancelled bool `json:"cancelled"`
+}
+
+func (v *CancelAsyncJobResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "CancelAsyncJobResult", v.decodeFrom)
+}
+
+func (v *CancelAsyncJobResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out CancelAsyncJobResult
+	d := fieldDecoder{raw: raw, owner: "CancelAsyncJobResult"}
+	d.required("cancelled", &out.Cancelled)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type LiveStartResult struct {
 	Voice string `json:"voice"`
 }
@@ -8674,6 +8893,18 @@ func (c Commands) Goal(ctx context.Context, p GoalCommand) (GoalResult, error) {
 	return out, err
 }
 
+// PlanCommand holds the parameters of "plan".
+type PlanCommand struct {
+	Op PlanOp `json:"op"`
+}
+
+// Plan sends "plan": Read, enter, or exit plan mode. Entering needs `plan.enabled`; the agent submits its plan through a `select` dialog (Approve and execute / Refine plan) and approval exits plan mode.
+func (c Commands) Plan(ctx context.Context, p PlanCommand) (PlanResult, error) {
+	var out PlanResult
+	err := c.call(ctx, "plan", p, 0, &out)
+	return out, err
+}
+
 // SetAskDialogCommand holds the parameters of "set_ask_dialog".
 type SetAskDialogCommand struct {
 	Enabled bool `json:"enabled"`
@@ -8814,6 +9045,25 @@ type SteerSubagentCommand struct {
 // SteerSubagent sends "steer_subagent": Send a message to a running subagent as its user.
 func (c Commands) SteerSubagent(ctx context.Context, p SteerSubagentCommand) error {
 	return c.call(ctx, "steer_subagent", p, 0, nil)
+}
+
+// GetAsyncJobs sends "get_async_jobs": List this session's background jobs and its subagents' as a tree: running jobs plus recently settled ones.
+func (c Commands) GetAsyncJobs(ctx context.Context) (AsyncJobTree, error) {
+	var out AsyncJobTree
+	err := c.call(ctx, "get_async_jobs", nil, 0, &out)
+	return out, err
+}
+
+// CancelAsyncJobCommand holds the parameters of "cancel_async_job".
+type CancelAsyncJobCommand struct {
+	JobID string `json:"jobId"`
+}
+
+// CancelAsyncJob sends "cancel_async_job": Cancel one running background job this session owns; false when no running job has that id.
+func (c Commands) CancelAsyncJob(ctx context.Context, p CancelAsyncJobCommand) (bool, error) {
+	var out CancelAsyncJobResult
+	err := c.call(ctx, "cancel_async_job", p, 0, &out)
+	return out.Cancelled, err
 }
 
 // LiveStartCommand holds the parameters of "live_start".

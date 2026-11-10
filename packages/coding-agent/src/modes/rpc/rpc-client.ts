@@ -15,10 +15,12 @@ import type { FileSink } from "bun";
 import type { BashResult } from "../../exec/bash-executor";
 import type { AgentSessionEvent, SessionStats } from "../../session/agent-session";
 import type { CacheWarmingMode } from "../../session/cache-warmer";
+import type { AsyncJobTree } from "../../session/agent-session-types";
 import type { SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { SessionLeaseReport } from "../../session/session-storage";
 import { MAX_RPC_FRAME_BYTES, MAX_RPC_REASSEMBLED_BYTES, RpcFrameDecoder, type RpcProtocolVersion } from "./rpc-frame";
 import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
+import type { RpcPlanOp, RpcPlanResult } from "./rpc-plan";
 import {
 	RPC_MESSAGES_PAGE_BUSY_ERROR,
 	RPC_MESSAGES_PAGE_STALE_ERROR,
@@ -882,6 +884,15 @@ export class RpcClient {
 	}
 
 	/**
+	 * Read, enter, or exit plan mode. While on, the agent drafts a plan and submits it through a
+	 * `select` UI request; headless hosts auto-approve.
+	 */
+	async plan(op: RpcPlanOp): Promise<RpcPlanResult> {
+		const response = await this.#send({ type: "plan", op });
+		return this.#getData(response);
+	}
+
+	/**
 	 * Start a GPT live voice session bound to this session; resolves once it is connected
 	 * and recording. `instructions` replaces the bundled live prompt (Handlebars:
 	 * `{{username}}`, `{{firstName}}`). Frames arrive through {@link onLive}.
@@ -988,6 +999,16 @@ export class RpcClient {
 	async cancelSubagent(subagentId: string): Promise<boolean> {
 		const response = await this.#send({ type: "cancel_subagent", subagentId });
 		return this.#getData<{ cancelled: boolean }>(response).cancelled;
+	}
+
+	/** Background jobs of this session and its subagents: the running ones and recently settled ones. */
+	async getAsyncJobs(): Promise<AsyncJobTree> {
+		return this.#getData<AsyncJobTree>(await this.#send({ type: "get_async_jobs" }));
+	}
+
+	/** Cancel one running background job this session owns. Resolves `false` when no running job has that id. */
+	async cancelAsyncJob(jobId: string): Promise<boolean> {
+		return this.#getData<{ cancelled: boolean }>(await this.#send({ type: "cancel_async_job", jobId })).cancelled;
 	}
 
 	/**

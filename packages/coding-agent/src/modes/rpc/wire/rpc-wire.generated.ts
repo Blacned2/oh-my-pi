@@ -399,6 +399,18 @@ export type GoalOp = "get" | "create" | "resume" | "pause" | "drop";
 
 export type GoalStatus = "active" | "paused" | "budget-limited" | "complete" | "dropped";
 
+export type PlanOp = "get" | "enter" | "exit";
+
+/** Plan mode state; `planFilePath` is the artifact the agent drafts the plan in. */
+export interface PlanState {
+	planFilePath: string;
+}
+
+/** Outcome of every `plan` op; `plan` is null when plan mode is off. */
+export interface PlanResult {
+	plan: PlanState | null;
+}
+
 export type SlashCommandSource = "builtin" | "skill" | "extension" | "custom" | "mcp_prompt" | "file";
 
 /** Forwarded subagent frames: none, lifecycle and progress, or also raw session events. */
@@ -794,6 +806,47 @@ export interface SubagentMessages {
 	reset: boolean;
 	entries: Record<string, unknown>[];
 	messages: AgentMessage[];
+}
+
+export type AsyncJobType = "bash" | "task" | "eval";
+
+export type AsyncJobStatus = "running" | "completed" | "failed" | "cancelled";
+
+/** One background job. */
+export interface AsyncJob {
+	id: string;
+	type: AsyncJobType;
+	status: AsyncJobStatus;
+	/** Short description of the work; a command line is cut to 120 characters. */
+	label: string;
+	/** Epoch milliseconds. */
+	startTime: number;
+	/** What the job is for, in the model's words. */
+	intent?: string;
+	/** Epoch milliseconds the run settled; absent while running. */
+	endTime?: number;
+	/** Subagent a `task` job runs. */
+	agentId?: string;
+	/** Registry id of the agent that started the job. */
+	ownerId?: string;
+	/** Full command line of a job that runs a process. */
+	command?: string;
+	caption?: string;
+}
+
+export interface AsyncJobTreeAgent {
+	id: string;
+	parentId?: string;
+}
+
+/** Jobs of this session and every subagent below it. */
+export interface AsyncJobTree {
+	running: AsyncJob[];
+	recent: AsyncJob[];
+	/** Subagents owning listed jobs, with the ancestors linking them to the root. */
+	agents: AsyncJobTreeAgent[];
+	/** The agent the tree is for; its own jobs are the top level. */
+	rootId?: string;
 }
 
 /** Side-question turn lifecycle; `interrupted` marks a turn whose process died while it ran. */
@@ -1758,6 +1811,10 @@ export interface GoalParams {
 	token_budget?: number;
 }
 
+export interface PlanParams {
+	op: PlanOp;
+}
+
 export interface SetAskDialogParams {
 	enabled: boolean;
 }
@@ -1839,6 +1896,14 @@ export interface CancelSubagentResult {
 export interface SteerSubagentParams {
 	subagentId: string;
 	message: string;
+}
+
+export interface CancelAsyncJobParams {
+	jobId: string;
+}
+
+export interface CancelAsyncJobResult {
+	cancelled: boolean;
 }
 
 export interface LiveStartParams {
@@ -2173,6 +2238,7 @@ export interface RpcWireCommands {
 	set_fast_mode: { params: SetFastModeParams; result: FastModeResult };
 	set_slow_mode: { params: SetSlowModeParams; result: SetSlowModeResult };
 	goal: { params: GoalParams; result: GoalResult };
+	plan: { params: PlanParams; result: PlanResult };
 	set_ask_dialog: { params: SetAskDialogParams; result: SetAskDialogResult };
 	get_available_commands: { params: undefined; result: GetAvailableCommandsResult };
 	get_entries: { params: GetEntriesParams; result: SessionEntries };
@@ -2186,6 +2252,8 @@ export interface RpcWireCommands {
 	get_subagent_messages: { params: GetSubagentMessagesParams; result: SubagentMessages };
 	cancel_subagent: { params: CancelSubagentParams; result: CancelSubagentResult };
 	steer_subagent: { params: SteerSubagentParams; result: undefined };
+	get_async_jobs: { params: undefined; result: AsyncJobTree };
+	cancel_async_job: { params: CancelAsyncJobParams; result: CancelAsyncJobResult };
 	live_start: { params: LiveStartParams; result: LiveStartResult };
 	live_connect: { params: LiveConnectParams; result: LiveConnectResult };
 	live_stop: { params: undefined; result: undefined };

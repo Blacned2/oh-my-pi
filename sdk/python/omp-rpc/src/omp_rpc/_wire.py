@@ -114,6 +114,11 @@ _GOAL_STATUS_VALUES: Final[frozenset[str]] = frozenset({"active", "paused", "bud
 _decode_goal_status = cast("Decoder[GoalStatus]", literal(_GOAL_STATUS_VALUES))
 
 
+PlanOp: TypeAlias = Literal["get", "enter", "exit"]
+_PLAN_OP_VALUES: Final[frozenset[str]] = frozenset({"get", "enter", "exit"})
+_decode_plan_op = cast("Decoder[PlanOp]", literal(_PLAN_OP_VALUES))
+
+
 SlashCommandSource: TypeAlias = Literal["builtin", "skill", "extension", "custom", "mcp_prompt", "file"]
 _SLASH_COMMAND_SOURCE_VALUES: Final[frozenset[str]] = frozenset({"builtin", "skill", "extension", "custom", "mcp_prompt", "file"})
 _decode_slash_command_source = cast("Decoder[SlashCommandSource]", literal(_SLASH_COMMAND_SOURCE_VALUES))
@@ -139,6 +144,16 @@ SlowModeScope: TypeAlias = Literal["session", "global"]
 """Where `/slow` lives: persisted config shared by every session, or this session's flex tier."""
 _SLOW_MODE_SCOPE_VALUES: Final[frozenset[str]] = frozenset({"session", "global"})
 _decode_slow_mode_scope = cast("Decoder[SlowModeScope]", literal(_SLOW_MODE_SCOPE_VALUES))
+
+
+AsyncJobType: TypeAlias = Literal["bash", "task", "eval"]
+_ASYNC_JOB_TYPE_VALUES: Final[frozenset[str]] = frozenset({"bash", "task", "eval"})
+_decode_async_job_type = cast("Decoder[AsyncJobType]", literal(_ASYNC_JOB_TYPE_VALUES))
+
+
+AsyncJobStatus: TypeAlias = Literal["running", "completed", "failed", "cancelled"]
+_ASYNC_JOB_STATUS_VALUES: Final[frozenset[str]] = frozenset({"running", "completed", "failed", "cancelled"})
+_decode_async_job_status = cast("Decoder[AsyncJobStatus]", literal(_ASYNC_JOB_STATUS_VALUES))
 
 
 BtwStatus: TypeAlias = Literal["running", "complete", "cancelled", "error", "interrupted"]
@@ -557,6 +572,18 @@ class ModelInfo:
     priority: int | None = None
     thinking: ThinkingConfig | None = None
     compat: JsonObject | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class PlanState:
+    """Plan mode state; `planFilePath` is the artifact the agent drafts the plan in."""
+    plan_file_path: str
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class PlanResult:
+    """Outcome of every `plan` op; `plan` is null when plan mode is off."""
+    plan: PlanState | None
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -980,6 +1007,46 @@ class SubagentMessages:
     """`fromByte` exceeded the file size and reading restarted at zero."""
     entries: tuple[JsonObject, ...]
     messages: tuple[AgentMessage, ...]
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class AsyncJob:
+    """One background job."""
+    id: str
+    type: AsyncJobType
+    status: AsyncJobStatus
+    label: str
+    """Short description of the work; a command line is cut to 120 characters."""
+    start_time: int
+    """Epoch milliseconds."""
+    intent: str | None = None
+    """What the job is for, in the model's words."""
+    end_time: int | None = None
+    """Epoch milliseconds the run settled; absent while running."""
+    agent_id: str | None = None
+    """Subagent a `task` job runs."""
+    owner_id: str | None = None
+    """Registry id of the agent that started the job."""
+    command: str | None = None
+    """Full command line of a job that runs a process."""
+    caption: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class AsyncJobTreeAgent:
+    id: str
+    parent_id: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class AsyncJobTree:
+    """Jobs of this session and every subagent below it."""
+    running: tuple[AsyncJob, ...]
+    recent: tuple[AsyncJob, ...]
+    agents: tuple[AsyncJobTreeAgent, ...]
+    """Subagents owning listed jobs, with the ancestors linking them to the root."""
+    root_id: str | None = None
+    """The agent the tree is for; its own jobs are the top level."""
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -2094,6 +2161,20 @@ def parse_model_info(value: object, path: str = "ModelInfo") -> ModelInfo:
     )
 
 
+def parse_plan_state(value: object, path: str = "PlanState") -> PlanState:
+    payload = expect_object(value, path)
+    return PlanState(
+        plan_file_path=required(payload, "planFilePath", decode_str, path),
+    )
+
+
+def parse_plan_result(value: object, path: str = "PlanResult") -> PlanResult:
+    payload = expect_object(value, path)
+    return PlanResult(
+        plan=required(payload, "plan", nullable(parse_plan_state), path),
+    )
+
+
 def parse_todo_item(value: object, path: str = "TodoItem") -> TodoItem:
     payload = expect_object(value, path)
     return TodoItem(
@@ -2539,6 +2620,41 @@ def parse_subagent_messages(value: object, path: str = "SubagentMessages") -> Su
         reset=required(payload, "reset", decode_bool, path),
         entries=required(payload, "entries", array(decode_json_object), path),
         messages=required(payload, "messages", array(parse_agent_message), path),
+    )
+
+
+def parse_async_job(value: object, path: str = "AsyncJob") -> AsyncJob:
+    payload = expect_object(value, path)
+    return AsyncJob(
+        id=required(payload, "id", decode_str, path),
+        type=required(payload, "type", _decode_async_job_type, path),
+        status=required(payload, "status", _decode_async_job_status, path),
+        label=required(payload, "label", decode_str, path),
+        start_time=required(payload, "startTime", decode_int, path),
+        intent=optional(payload, "intent", decode_str, path),
+        end_time=optional(payload, "endTime", decode_int, path),
+        agent_id=optional(payload, "agentId", decode_str, path),
+        owner_id=optional(payload, "ownerId", decode_str, path),
+        command=optional(payload, "command", decode_str, path),
+        caption=optional(payload, "caption", decode_str, path),
+    )
+
+
+def parse_async_job_tree_agent(value: object, path: str = "AsyncJobTreeAgent") -> AsyncJobTreeAgent:
+    payload = expect_object(value, path)
+    return AsyncJobTreeAgent(
+        id=required(payload, "id", decode_str, path),
+        parent_id=optional(payload, "parentId", decode_str, path),
+    )
+
+
+def parse_async_job_tree(value: object, path: str = "AsyncJobTree") -> AsyncJobTree:
+    payload = expect_object(value, path)
+    return AsyncJobTree(
+        running=required(payload, "running", array(parse_async_job), path),
+        recent=required(payload, "recent", array(parse_async_job), path),
+        agents=required(payload, "agents", array(parse_async_job_tree_agent), path),
+        root_id=optional(payload, "rootId", decode_str, path),
     )
 
 
@@ -3739,6 +3855,12 @@ class WireClient:
             params["token_budget"] = token_budget
         return parse_goal_result(self._command("goal", params), "goal")
 
+    def plan(self, op: PlanOp) -> PlanResult:
+        """Read, enter, or exit plan mode. Entering needs `plan.enabled`; the agent submits its plan through a `select` dialog (Approve and execute / Refine plan) and approval exits plan mode."""
+        params: dict[str, object] = {}
+        params["op"] = op
+        return parse_plan_result(self._command("plan", params), "plan")
+
     def set_ask_dialog(self, enabled: bool) -> bool:
         """Opt in to `ask` UI requests; returns the applied setting."""
         params: dict[str, object] = {}
@@ -3802,6 +3924,17 @@ class WireClient:
         params["subagentId"] = subagent_id
         params["message"] = message
         self._command("steer_subagent", params)
+
+    def get_async_jobs(self) -> AsyncJobTree:
+        """List this session's background jobs and its subagents' as a tree: running jobs plus recently settled ones."""
+        params: dict[str, object] = {}
+        return parse_async_job_tree(self._command("get_async_jobs", params), "get_async_jobs")
+
+    def cancel_async_job(self, job_id: str) -> bool:
+        """Cancel one running background job this session owns; false when no running job has that id."""
+        params: dict[str, object] = {}
+        params["jobId"] = job_id
+        return required(expect_object(self._command("cancel_async_job", params), "cancel_async_job"), "cancelled", decode_bool, "cancel_async_job")
 
     def live_start(self, *, voice: str | None = None, instructions: str | None = None) -> str:
         """Start a live voice session bound to this session; returns the voice in use."""
@@ -4467,6 +4600,11 @@ __all__ = [
     "AssistantToolCallDeltaEvent",
     "AssistantToolCallEndEvent",
     "AssistantToolCallStartEvent",
+    "AsyncJob",
+    "AsyncJobStatus",
+    "AsyncJobTree",
+    "AsyncJobTreeAgent",
+    "AsyncJobType",
     "Attribution",
     "AutoCompactionAction",
     "AutoCompactionEndEvent",
@@ -4570,6 +4708,9 @@ __all__ = [
     "ParentIrc",
     "PathCompletion",
     "PathCompletionItem",
+    "PlanOp",
+    "PlanResult",
+    "PlanState",
     "PromoteQueuedMessageResult",
     "PromptAck",
     "PromptError",
@@ -4684,6 +4825,9 @@ __all__ = [
     "parse_assistant_tool_call_delta_event",
     "parse_assistant_tool_call_end_event",
     "parse_assistant_tool_call_start_event",
+    "parse_async_job",
+    "parse_async_job_tree",
+    "parse_async_job_tree_agent",
     "parse_auto_compaction_end_event",
     "parse_auto_compaction_start_event",
     "parse_auto_retry_end_event",
@@ -4769,6 +4913,8 @@ __all__ = [
     "parse_parent_irc",
     "parse_path_completion",
     "parse_path_completion_item",
+    "parse_plan_result",
+    "parse_plan_state",
     "parse_promote_queued_message_result",
     "parse_prompt_ack",
     "parse_prompt_error",

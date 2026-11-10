@@ -149,6 +149,7 @@ Important edge behavior from runtime:
 - `{ id?, type: "set_fast_mode", enabled: boolean }`
 - `{ id?, type: "set_slow_mode", enabled: boolean }`
 - `{ id?, type: "goal", op: "get" | "create" | "resume" | "pause" | "drop", objective?: string, token_budget?: number }`
+- `{ id?, type: "plan", op: "get" | "enter" | "exit" }` — response `data: { plan: { planFilePath: string } | null }`; while plan mode is on the agent's proposal arrives as a `select` UI request (`Approve and execute` / `Refine plan`), and headless hosts auto-approve
 - `{ id?, type: "set_ask_dialog", enabled: boolean }`
 - `{ id?, type: "get_available_commands" }`
 - `{ id?, type: "get_entries", since?: string }`
@@ -162,6 +163,8 @@ Important edge behavior from runtime:
 - `{ id?, type: "get_subagent_messages", subagentId?: string, sessionFile?: string, fromByte?: number }`
 - `{ id?, type: "cancel_subagent", subagentId: string }`
 - `{ id?, type: "steer_subagent", subagentId: string, message: string }`
+- `{ id?, type: "get_async_jobs" }`
+- `{ id?, type: "cancel_async_job", jobId: string }`
 
 ### Model
 
@@ -1122,6 +1125,15 @@ whose result the parent already accepted, even before its terminal lifecycle
 frame), or already cancelled, so hosts can treat it as idempotent. If the
 `aborted` tombstone cannot be persisted, the subagent is still aborted and
 disposed, and the command returns an error response with the write failure.
+
+### Background jobs
+
+`get_async_jobs` returns the session's background jobs (long-running `bash`, `eval`, and `task` jobs) and those of its subagents: `running` jobs, `recent` ones that settled within the last minutes, `rootId`, and `agents`, the subagents that own listed jobs with the `parentId` links to the root. `task` jobs also appear in `get_subagents`; a host that shows both usually hides `type: "task"` jobs from the job list. `cancel_async_job` cancels one running job by `jobId`; it only reaches jobs the session owns, and `cancelled` is `false` when no running job has that id.
+
+```json
+{ "id": "req_1", "type": "get_async_jobs" }
+{ "id": "req_1", "type": "response", "command": "get_async_jobs", "success": true, "data": { "running": [{ "id": "bg_3", "type": "bash", "status": "running", "label": "bun run dev", "startTime": 1762783331000 }], "recent": [], "rootId": "Main", "agents": [] } }
+```
 
 ### Steering subagents
 

@@ -26,6 +26,12 @@ export const stateDefs = {
 	TodoStatus: "'pending' | 'in_progress' | 'completed' | 'abandoned' | 'blocked'",
 	GoalOp: "'get' | 'create' | 'resume' | 'pause' | 'drop'",
 	GoalStatus: "'active' | 'paused' | 'budget-limited' | 'complete' | 'dropped'",
+	PlanOp: "'get' | 'enter' | 'exit'",
+	PlanState: doc(
+		{ planFilePath: "string" },
+		"Plan mode state; `planFilePath` is the artifact the agent drafts the plan in.",
+	),
+	PlanResult: doc({ plan: "PlanState | null" }, "Outcome of every `plan` op; `plan` is null when plan mode is off."),
 	SlashCommandSource: "'builtin' | 'skill' | 'extension' | 'custom' | 'mcp_prompt' | 'file'",
 	SubagentSubscriptionLevel: doc(
 		"'off' | 'progress' | 'events'",
@@ -365,6 +371,37 @@ export const stateDefs = {
 			messages: "AgentMessage[]",
 		},
 		"Incremental subagent transcript read.",
+	),
+	AsyncJobType: "'bash' | 'task' | 'eval'",
+	AsyncJobStatus: "'running' | 'completed' | 'failed' | 'cancelled'",
+	AsyncJob: doc(
+		{
+			id: "string",
+			type: "AsyncJobType",
+			status: "AsyncJobStatus",
+			label: doc("string", "Short description of the work; a command line is cut to 120 characters."),
+			"intent?": doc("string", "What the job is for, in the model's words."),
+			startTime: doc("number.integer", "Epoch milliseconds."),
+			"endTime?": doc("number.integer", "Epoch milliseconds the run settled; absent while running."),
+			"agentId?": doc("string", "Subagent a `task` job runs."),
+			"ownerId?": doc("string", "Registry id of the agent that started the job."),
+			"command?": doc("string", "Full command line of a job that runs a process."),
+			"caption?": "string",
+		},
+		"One background job.",
+	),
+	AsyncJobTreeAgent: { id: "string", "parentId?": "string" },
+	AsyncJobTree: doc(
+		{
+			running: "AsyncJob[]",
+			recent: "AsyncJob[]",
+			"rootId?": doc("string", "The agent the tree is for; its own jobs are the top level."),
+			agents: doc(
+				"AsyncJobTreeAgent[]",
+				"Subagents owning listed jobs, with the ancestors linking them to the root.",
+			),
+		},
+		"Jobs of this session and every subagent below it.",
 	),
 	BtwStatus: doc(
 		"'running' | 'complete' | 'cancelled' | 'error' | 'interrupted'",

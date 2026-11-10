@@ -2852,6 +2852,41 @@ impl GoalStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PlanOp {
+	#[serde(rename = "get")]
+	Get,
+	#[serde(rename = "enter")]
+	Enter,
+	#[serde(rename = "exit")]
+	Exit,
+}
+
+impl PlanOp {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Get => "get",
+			Self::Enter => "enter",
+			Self::Exit => "exit",
+		}
+	}
+}
+
+/// Plan mode state; `planFilePath` is the artifact the agent drafts the plan in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanState {
+	#[serde(rename = "planFilePath")]
+	pub plan_file_path: String,
+}
+
+/// Outcome of every `plan` op; `plan` is null when plan mode is off.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanResult {
+	#[serde(deserialize_with = "Deserialize::deserialize")]
+	pub plan: Option<PlanState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SlashCommandSource {
 	#[serde(rename = "builtin")]
 	Builtin,
@@ -3560,6 +3595,100 @@ pub struct SubagentMessages {
 	pub reset: bool,
 	pub entries: Vec<Map<String, Value>>,
 	pub messages: Vec<AgentMessage>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AsyncJobType {
+	#[serde(rename = "bash")]
+	Bash,
+	#[serde(rename = "task")]
+	Task,
+	#[serde(rename = "eval")]
+	Eval,
+}
+
+impl AsyncJobType {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Bash => "bash",
+			Self::Task => "task",
+			Self::Eval => "eval",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AsyncJobStatus {
+	#[serde(rename = "running")]
+	Running,
+	#[serde(rename = "completed")]
+	Completed,
+	#[serde(rename = "failed")]
+	Failed,
+	#[serde(rename = "cancelled")]
+	Cancelled,
+}
+
+impl AsyncJobStatus {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Running => "running",
+			Self::Completed => "completed",
+			Self::Failed => "failed",
+			Self::Cancelled => "cancelled",
+		}
+	}
+}
+
+/// One background job.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AsyncJob {
+	pub id: String,
+	pub r#type: AsyncJobType,
+	pub status: AsyncJobStatus,
+	/// Short description of the work; a command line is cut to 120 characters.
+	pub label: String,
+	/// Epoch milliseconds.
+	#[serde(rename = "startTime")]
+	pub start_time: i64,
+	/// What the job is for, in the model's words.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub intent: Option<String>,
+	/// Epoch milliseconds the run settled; absent while running.
+	#[serde(rename = "endTime", default, skip_serializing_if = "Option::is_none")]
+	pub end_time: Option<i64>,
+	/// Subagent a `task` job runs.
+	#[serde(rename = "agentId", default, skip_serializing_if = "Option::is_none")]
+	pub agent_id: Option<String>,
+	/// Registry id of the agent that started the job.
+	#[serde(rename = "ownerId", default, skip_serializing_if = "Option::is_none")]
+	pub owner_id: Option<String>,
+	/// Full command line of a job that runs a process.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub command: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub caption: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AsyncJobTreeAgent {
+	pub id: String,
+	#[serde(rename = "parentId", default, skip_serializing_if = "Option::is_none")]
+	pub parent_id: Option<String>,
+}
+
+/// Jobs of this session and every subagent below it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AsyncJobTree {
+	pub running: Vec<AsyncJob>,
+	pub recent: Vec<AsyncJob>,
+	/// Subagents owning listed jobs, with the ancestors linking them to the root.
+	pub agents: Vec<AsyncJobTreeAgent>,
+	/// The agent the tree is for; its own jobs are the top level.
+	#[serde(rename = "rootId", default, skip_serializing_if = "Option::is_none")]
+	pub root_id: Option<String>,
 }
 
 /// Side-question turn lifecycle; `interrupted` marks a turn whose process died while it ran.
@@ -5516,6 +5645,11 @@ pub struct GoalParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanParams {
+	pub op: PlanOp,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetAskDialogParams {
 	pub enabled: bool,
 }
@@ -5629,6 +5763,17 @@ pub struct SteerSubagentParams {
 	#[serde(rename = "subagentId")]
 	pub subagent_id: String,
 	pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CancelAsyncJobParams {
+	#[serde(rename = "jobId")]
+	pub job_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CancelAsyncJobResult {
+	pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -6942,6 +7087,22 @@ impl Command for GoalCommand {
 	}
 }
 
+/// Read, enter, or exit plan mode. Entering needs `plan.enabled`; the agent submits its plan through a `select` dialog (Approve and execute / Refine plan) and approval exits plan mode.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanCommand {
+	pub op: PlanOp,
+}
+
+impl Command for PlanCommand {
+	const NAME: &'static str = "plan";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = PlanResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<PlanResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
 /// Opt in to `ask` UI requests; returns the applied setting.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetAskDialogCommand {
@@ -7152,6 +7313,37 @@ impl Command for SteerSubagentCommand {
 	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
 		let _ = data;
 		Ok(())
+	}
+}
+
+/// List this session's background jobs and its subagents' as a tree: running jobs plus recently settled ones.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct GetAsyncJobsCommand {}
+
+impl Command for GetAsyncJobsCommand {
+	const NAME: &'static str = "get_async_jobs";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = AsyncJobTree;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<AsyncJobTree>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Cancel one running background job this session owns; false when no running job has that id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CancelAsyncJobCommand {
+	#[serde(rename = "jobId")]
+	pub job_id: String,
+}
+
+impl Command for CancelAsyncJobCommand {
+	const NAME: &'static str = "cancel_async_job";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = bool;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<CancelAsyncJobResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.cancelled)
 	}
 }
 

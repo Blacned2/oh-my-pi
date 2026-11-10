@@ -83,6 +83,7 @@ import { claimRpcInput, readRpcInputFrames } from "./rpc-input";
 import { pageRpcMessages, RPC_MESSAGES_PAGE_BUSY_ERROR, RpcMessagesPageError } from "./rpc-messages";
 import { RpcBtwController } from "./rpc-btw";
 import { RpcGoalController } from "./rpc-goal";
+import { RpcPlanController } from "./rpc-plan";
 import { RpcDictationBridge, type RpcDictationControllerFactory } from "./rpc-dictation";
 import { RpcLiveBridge, type RpcLiveSessionFactory } from "./rpc-live";
 import {
@@ -1740,6 +1741,11 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	// correct waiting promise regardless of which code path created the request.
 	const rpcUiContext = new RpcExtensionUIContext(pendingExtensionRequests, output);
 	setToolUIContext?.(rpcUiContext, true);
+	// Headless hosts have no dialog surface: plan approval is automatic there.
+	const planController = new RpcPlanController(
+		session,
+		headless ? undefined : (title, options) => rpcUiContext.select(title, options),
+	);
 	const setAskDialog = (command: RpcCommand & { type: "set_ask_dialog" }): RpcResponse => {
 		rpcUiContext.askDialogEnabled = command.enabled === true;
 		return success(command.id, "set_ask_dialog", { enabled: rpcUiContext.askDialogEnabled });
@@ -2370,6 +2376,14 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				}
 			}
 
+			case "plan": {
+				try {
+					return success(id, "plan", await planController.handle(command));
+				} catch (planError) {
+					return error(id, "plan", planError instanceof Error ? planError.message : String(planError));
+				}
+			}
+
 			case "set_ask_dialog":
 				return setAskDialog(command);
 
@@ -2544,6 +2558,17 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				} catch (err) {
 					return error(id, "cancel_subagent", err instanceof Error ? err.message : String(err));
 				}
+			}
+
+			case "get_async_jobs": {
+				return success(id, "get_async_jobs", session.getAsyncJobTree() ?? { running: [], recent: [], agents: [] });
+			}
+
+			case "cancel_async_job": {
+				if (typeof command.jobId !== "string" || command.jobId.length === 0) {
+					return error(id, "cancel_async_job", "`jobId` must be a non-empty string.");
+				}
+				return success(id, "cancel_async_job", { cancelled: session.cancelAsyncJob(command.jobId) });
 			}
 
 			case "steer_subagent": {

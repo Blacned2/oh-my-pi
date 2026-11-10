@@ -356,6 +356,28 @@
 	border-color: var(--border-strong);
 }
 
+.tr-bottom {
+	position: absolute;
+	z-index: 3;
+	right: 16px;
+	bottom: 16px;
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 1px solid var(--border-strong);
+	border-radius: 999px;
+	background: var(--bg-raised);
+	color: var(--fg-muted);
+	cursor: pointer;
+	box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
+}
+
+.tr-bottom:hover {
+	color: var(--fg);
+}
+
 .tr-shimmer {
 	color: var(--fg-muted);
 	font-size: 12.5px;

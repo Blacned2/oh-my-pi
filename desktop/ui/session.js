@@ -148,14 +148,17 @@
   const HL_CACHE_MAX = 300;
   const hlCache = new Map(); // `${lang}\0${code}` -> { tokens } once answered, { promise } while asked
   let hlUnsupported = false; // an omp without highlight_code: stop asking
+  // `highlight` is shared by every session, but `request` belongs to one: each ready session registers its own.
+  const hlAskers = new Map(); // sid -> request
   /** Resolves with the token list, or null (no language, too big, an older omp, a failure). */
   function highlight(code, lang) {
-    if (hlUnsupported || !lang || !code || code.length > HL_MAX_CHARS) return Promise.resolve(null);
+    const ask = [...hlAskers.values()].at(-1);
+    if (hlUnsupported || !ask || !lang || !code || code.length > HL_MAX_CHARS) return Promise.resolve(null);
     const key = lang + "\0" + code;
     const hit = hlCache.get(key);
     if (hit) return hit.promise ?? Promise.resolve(hit.tokens);
     const entry = {};
-    entry.promise = request("highlight_code", { code, lang }, 5000).then(
+    entry.promise = ask("highlight_code", { code, lang }, 5000).then(
       (data) => {
         const list = data && Array.isArray(data.tokens) ? data.tokens.filter((t) => t && typeof t.text === "string") : null;
         if (hlCache.get(key) === entry) hlCache.set(key, { tokens: list });
@@ -970,7 +973,7 @@
     });
     railActive = -1;
     rail.replaceChildren(...railTurns.map((t) => t.tick));
-    rail.hidden = railTurns.length < 2;
+    rail.hidden = railTurns.length < 1;
     railCard.hidden = true;
     paintRailActive();
   }
@@ -1008,6 +1011,11 @@
   const STDERR_MAX = 200;
   let stderrLines = [];
   const stripAnsi = (s) => String(s ?? "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  /** A UI-side problem with a frame (parse failure, render exception): kept with the process logs, "Show logs". */
+  function logFrameIssue(text) {
+    stderrLines.push("[ui] " + text);
+    if (stderrLines.length > STDERR_MAX) stderrLines.splice(0, stderrLines.length - STDERR_MAX);
+  }
   function onStderr(line) {
     if (typeof line !== "string") return;
     stderrLines.push(stripAnsi(line));
@@ -1095,6 +1103,16 @@
   el.thinkingBtn.addEventListener("click", toggleThinking);
 
   // ---- messages ---------------------------------------------------------
+  let lastAssistantId = null; // key of the newest assistant message node, for healing a missed message_end
+  /** After a turn settles, re-render the final assistant message from the transcript when its live render missed the text. */
+  function healLastMessage(list) {
+    const last = Array.isArray(list) ? list[list.length - 1] : null;
+    if (!isObj(last) || last.role !== "assistant" || !lastAssistantId) return;
+    const text = (Array.isArray(last.content) ? last.content : []).filter((b) => isObj(b) && b.type === "text" && typeof b.text === "string" && b.text).map((b) => b.text).join("\n\n");
+    if (!text || text === lastAnswer) return;
+    logFrameIssue("healed assistant message the live stream did not render");
+    renderMessage(lastAssistantId, last, false);
+  }
   function renderMessage(id, message, live = false) {
     if (!message || (message.role !== "user" && message.role !== "assistant")) return;
     if (message.role === "user" && (message.synthetic || message.steering)) return;
@@ -1152,6 +1170,7 @@
         .map((b) => b.text)
         .join("\n\n");
       if (answer && !live) lastAnswer = answer;
+      if (live || answer) lastAssistantId = id;
       if (answer && !live) {
         const bar = document.createElement("div");
         bar.className = "msg-acts";
@@ -1843,15 +1862,85 @@
     }
   }
   function renderAgents() {
-    const list = [...agents.values()].sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
-    if (!list.length) {
-      el.agents.replaceChildren();
-      el.agents.hidden = true;
-      return;
-    }
-    const running = list.filter((a) => a.status === "running" || a.status === "pending").length;
-    const head = span("panel-head", `subagents ${running} running · ${list.length - running} done`);
-    const rows = list.map((a) => {
+    renderStack();
+  }
+
+  // ---- activity stack: subagents and background jobs, two independent toggles at the top right of the chat ----
+  // Each toggle opens its own panel; open panels stack under the toggles in the order they were opened.
+  const JOB_MARK = { running: "⚙", completed: "✓", failed: "✕", cancelled: "⊘" };
+  const JOBS_POLL_MS = 2000;
+  let jobTree = { running: [], recent: [], rootId: undefined, agents: [] };
+  let jobsSupported = true; // an older omp answers get_async_jobs with "Unknown command"; the jobs toggle then stays hidden
+  let jobsBusy = false;
+  let jobsPoll = null;
+  let jobsSoon = null;
+  let stackOrder = []; // "agents" | "jobs", oldest opened first
+  const stack = document.createElement("div");
+  stack.className = "stack";
+  stack.hidden = true;
+  const stackToggles = document.createElement("div");
+  stackToggles.className = "stack-toggles";
+  const stackPanels = document.createElement("div");
+  stackPanels.className = "stack-panels";
+  stack.append(stackToggles, stackPanels);
+  messagesWrap.append(stack);
+
+  const isRunning = (s) => s === "running" || s === "pending";
+  /** Jobs the jobs panel lists: running first, then recent; `task` jobs are the subagents, shown in their own panel. */
+  function listedJobs() {
+    const keep = (j) => isObj(j) && j.type !== "task";
+    return [...jobTree.running.filter(keep), ...jobTree.recent.filter(keep)];
+  }
+  function fmtAge(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 60) return s + "s";
+    const m = Math.floor(s / 60);
+    return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+  }
+  function stackToggle(kind) {
+    const at = stackOrder.indexOf(kind);
+    if (at >= 0) stackOrder.splice(at, 1);
+    else stackOrder.push(kind);
+    if (kind === "jobs" && at < 0) refreshJobs();
+    renderStack();
+  }
+  function stackPill(kind, label, running, total) {
+    const open = stackOrder.includes(kind);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "stack-pill" + (open ? " on" : "");
+    b.setAttribute("aria-pressed", String(open));
+    b.title = open ? `Hide ${label}` : `Show ${label}`;
+    if (open && stackOrder.length > 1) b.append(span("ord", String(stackOrder.indexOf(kind) + 1)));
+    const mark = span("mark" + (running ? " run" : ""), kind === "jobs" ? JOB_MARK.running : running ? AGENT_MARK.running : AGENT_MARK.completed);
+    b.append(mark, span("", label), span("badge", String(running || total)));
+    b.addEventListener("click", () => stackToggle(kind));
+    return b;
+  }
+  function stackPanel(kind, title, running, done, rows) {
+    const panel = document.createElement("div");
+    panel.className = "stack-panel";
+    panel.dataset.kind = kind;
+    panel.setAttribute("role", "region");
+    panel.setAttribute("aria-label", title);
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "link stack-x";
+    close.title = `Hide ${title}`;
+    close.setAttribute("aria-label", `Hide ${title}`);
+    close.textContent = "✕";
+    close.addEventListener("click", () => stackToggle(kind));
+    const head = document.createElement("div");
+    head.className = "stack-head";
+    head.append(span("", title), span("chip" + (running ? " run" : ""), running ? `${running} running` : `${done} done`), close);
+    const body = document.createElement("div");
+    body.className = "stack-rows";
+    body.append(...rows);
+    panel.append(head, body);
+    return panel;
+  }
+  function agentRows(list) {
+    return list.map((a) => {
       const row = document.createElement("div");
       row.className = "panel-row agent " + a.status;
       const what = oneLine(a.description || a.task || "");
@@ -1865,11 +1954,108 @@
       if (Number(pr.tokens) > 0) meta.push(fmtTok(Number(pr.tokens)) + " tok");
       if (meta.length) row.append(span("panel-sub", meta.join(" · ")));
       row.append(linkBtn("view", "Show its transcript and steer it", () => openSubagent(a.id)));
-      if (a.status === "running" || a.status === "pending") row.append(linkBtn("stop", "Cancel this subagent", () => cancelSubagent(a.id)));
+      if (isRunning(a.status)) row.append(linkBtn("stop", "Cancel this subagent", () => cancelSubagent(a.id)));
       return row;
     });
-    el.agents.replaceChildren(head, ...rows);
-    el.agents.hidden = false;
+  }
+  function jobRows(list) {
+    const now = Date.now();
+    return list.map((j) => {
+      const row = document.createElement("div");
+      row.className = "panel-row job " + j.status;
+      const what = oneLine(j.intent || j.label || j.id);
+      row.append(span("mark", JOB_MARK[j.status] ?? "⚙"), span("text", clip(what, 120)));
+      row.title = str(j.command) || str(j.label) || what;
+      const meta = [];
+      if (str(j.ownerId) && j.ownerId !== jobTree.rootId) meta.push(j.ownerId);
+      meta.push(fmtAge((Number(j.endTime) || now) - Number(j.startTime || now)));
+      row.append(span("panel-sub", meta.join(" · ")));
+      if (j.status === "running") row.append(linkBtn("stop", "Cancel this job", () => cancelJob(j.id)));
+      return row;
+    });
+  }
+  function renderStack() {
+    const agentList = [...agents.values()].sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
+    const jobList = jobsSupported ? listedJobs() : [];
+    const agentsRunning = agentList.filter((a) => isRunning(a.status)).length;
+    const jobsRunning = jobList.filter((j) => j.status === "running").length;
+    const has = { agents: agentList.length > 0, jobs: jobList.length > 0 };
+    stackOrder = stackOrder.filter((k) => has[k]);
+    if (!has.agents && !has.jobs) {
+      stack.hidden = true;
+      stackToggles.replaceChildren();
+      stackPanels.replaceChildren();
+      messagesWrap.classList.remove("stack-open");
+      syncJobsPoll();
+      return;
+    }
+    const scroll = new Map([...stackPanels.querySelectorAll(".stack-rows")].map((n) => [n.parentElement.dataset.kind, n.scrollTop]));
+    const toggles = [];
+    if (has.agents) toggles.push(stackPill("agents", "agents", agentsRunning, agentList.length));
+    if (has.jobs) toggles.push(stackPill("jobs", "jobs", jobsRunning, jobList.length));
+    const panels = stackOrder.map((kind) =>
+      kind === "agents"
+        ? stackPanel("agents", "Subagents", agentsRunning, agentList.length - agentsRunning, agentRows(agentList))
+        : stackPanel("jobs", "Background", jobsRunning, jobList.length - jobsRunning, jobRows(jobList)),
+    );
+    stackToggles.replaceChildren(...toggles);
+    stackPanels.replaceChildren(...panels);
+    for (const p of panels) p.querySelector(".stack-rows").scrollTop = scroll.get(p.dataset.kind) ?? 0;
+    stack.hidden = false;
+    messagesWrap.classList.toggle("stack-open", panels.length > 0);
+    syncJobsPoll();
+  }
+  /** Poll while this session has a running job or the jobs panel is open; the elapsed times refresh with it. */
+  function syncJobsPoll() {
+    const want = alive && jobsSupported && (jobTree.running.some((j) => j.type !== "task") || stackOrder.includes("jobs"));
+    if (want && !jobsPoll) jobsPoll = setInterval(refreshJobs, JOBS_POLL_MS);
+    else if (!want && jobsPoll) {
+      clearInterval(jobsPoll);
+      jobsPoll = null;
+    }
+  }
+  async function refreshJobs() {
+    if (!jobsSupported || !alive || jobsBusy) return;
+    jobsBusy = true;
+    try {
+      const r = await request("get_async_jobs", {}, 5000);
+      if (isObj(r)) {
+        jobTree = {
+          running: Array.isArray(r.running) ? r.running : [],
+          recent: Array.isArray(r.recent) ? r.recent : [],
+          rootId: str(r.rootId) || undefined,
+          agents: Array.isArray(r.agents) ? r.agents : [],
+        };
+      }
+    } catch (e) {
+      if (/Unknown command/i.test(errText(e))) jobsSupported = false;
+    } finally {
+      jobsBusy = false;
+    }
+    renderStack();
+  }
+  /** A tool call or turn just ended: a background job may have started or settled. */
+  function refreshJobsSoon() {
+    if (!jobsSupported || jobsSoon) return;
+    jobsSoon = setTimeout(() => {
+      jobsSoon = null;
+      refreshJobs();
+    }, 300);
+  }
+  function clearJobs() {
+    clearTimeout(jobsSoon);
+    jobsSoon = null;
+    jobTree = { running: [], recent: [], rootId: undefined, agents: [] };
+    renderStack();
+  }
+  async function cancelJob(id) {
+    try {
+      const r = await request("cancel_async_job", { jobId: id });
+      if (r && r.cancelled === false) note("That job is no longer running.");
+    } catch (e) {
+      note("Could not stop the job: " + errText(e), true);
+    }
+    refreshJobs();
   }
   async function cancelSubagent(id) {
     try {
@@ -2091,6 +2277,49 @@
     const op = { Pause: "pause", Resume: "resume", Drop: "drop" }[acts[pick]];
     if (op) goalOp(op);
   });
+  // ---- plan mode (`plan` op): a chip in the status line --------------------------
+  let plan = null;
+  function setPlan(p) {
+    plan = p && typeof p === "object" && typeof p.planFilePath === "string" ? p : null;
+    el.plan.hidden = !plan;
+    if (!plan) return;
+    el.plan.textContent = "plan mode";
+    el.plan.title = `Plan file: ${plan.planFilePath}\nClick to exit plan mode.`;
+  }
+  async function planOp(op) {
+    try {
+      const r = await request("plan", { op }, 60000);
+      setPlan(r?.plan ?? null);
+      return r;
+    } catch (e) {
+      note(`plan ${op} failed: ${errText(e)}`, true);
+      return null;
+    }
+  }
+  /** Re-read plan mode: the agent's approved plan leaves it without a frame of its own. */
+  async function refreshPlan() {
+    try {
+      setPlan((await request("plan", { op: "get" }, 15000))?.plan ?? null);
+    } catch {
+      // an omp without the `plan` op: no chip
+    }
+  }
+  el.plan.addEventListener("click", async () => {
+    if (!plan) return;
+    const pick = await askLocal("Plan mode", `Plan file: ${plan.planFilePath}`, ["Exit plan mode", "Close"]);
+    if (pick === 0 && (await planOp("exit"))) note("Plan mode off.");
+  });
+  /** `/plan [prompt]`: toggle plan mode; with a prompt, enter it and send the prompt as the first planning turn. */
+  async function runPlan(arg) {
+    const r = await planOp(plan && !arg ? "exit" : "enter");
+    if (!r) return;
+    if (!arg) return note(r.plan ? "Plan mode on. Describe the task; the agent proposes a plan for your approval." : "Plan mode off.");
+    if (!r.plan) return;
+    const cmd = { type: "prompt", message: arg };
+    if (busy) cmd.streamingBehavior = "steer";
+    send(cmd);
+  }
+
   /** `/goal [show|pause|resume|drop|set <objective>|<objective>]` (TUI-only in omp, so handled here). */
   async function runGoal(arg) {
     const [word, ...rest] = arg.split(/\s+/);
@@ -2280,6 +2509,7 @@
     { name: "copy", description: "Copy the last answer (code: its last code block, cmd: the last shell command)", input: { hint: "[code|cmd]" }, run: (arg) => runCopy(arg) },
     { name: "export", override: true, description: "Export the session to an HTML file and open it", input: { hint: "[path]" }, run: (arg) => runExport(arg) },
     { name: "goal", description: "Show or set the session goal: pause, resume, drop, <objective>", input: { hint: "[objective|pause|resume|drop]" }, run: (arg) => runGoal(arg) },
+    { name: "plan", override: true, description: "Toggle plan mode: the agent plans and proposes before it edits (with a prompt: plan that)", input: { hint: "[prompt]" }, run: (arg) => runPlan(arg) },
     { name: "hotkeys", description: "Show the keyboard shortcuts", run: () => showHotkeys() },
     { name: "queue", description: "Queue a message for after the current turn (bare: show the queue)", input: { hint: "<message>" }, run: (arg, images) => runQueue(arg, images) },
   ];
@@ -2888,7 +3118,7 @@
       // An older omp without set_ask_dialog keeps using single dialogs; nothing to report.
       // "subsub": an older omp without subagent events just shows no subagent panel.
       // "evfilter": without bash_output chunks, full bash snapshots keep arriving.
-      if (!["hist", "stats", "askdlg", "warns", "todos", "subsub", "evfilter"].includes(frame.id)) note(`${frame.command || "command"} failed: ${frame.error || "unknown error"}`, true);
+      if (!["hist", "settle", "stats", "askdlg", "warns", "todos", "subsub", "evfilter"].includes(frame.id)) note(`${frame.command || "command"} failed: ${frame.error || "unknown error"}`, true);
       return;
     }
     const data = frame.data || {};
@@ -2909,6 +3139,7 @@
       if (data.queuedMessages && typeof data.queuedMessages === "object") setQueue(data.queuedMessages);
       setTodos(data.todoPhases);
       setGoal(data.goal && typeof data.goal === "object" ? data.goal.goal : null);
+      refreshPlan();
     } else if (frame.id === "todos") {
       setTodos(data.todoPhases);
     } else if (frame.id === "warns") {
@@ -2929,6 +3160,8 @@
     } else if (frame.id === "hist") {
       renderHistory(data.messages || []);
       refreshStats();
+    } else if (frame.id === "settle") {
+      healLastMessage(data.messages);
     } else if (frame.id === "stats") {
       sessionStats = data;
       renderTotal();
@@ -2941,13 +3174,24 @@
     }
   }
   // ---- frames -----------------------------------------------------------
+  /** A frame whose handler throws loses only itself; the error is kept for "Show logs" instead of vanishing in the webview console. */
   function onFrame(frame) {
+    try {
+      handleFrame(frame);
+    } catch (e) {
+      logFrameIssue(`${frame?.type ?? "frame"} handler threw: ${e?.stack ?? e}`);
+      console.error(e);
+    }
+  }
+  function handleFrame(frame) {
     switch (frame.type) {
       case "ready":
+        hlAskers.set(sid, request);
         setBusy(false);
         alive = true;
         readyGate.isOpen = true;
         readyGate.open();
+        refreshJobs();
         bashExclude = frame.supportsBashExcludeFromContext === true;
         send({ id: "state", type: "get_state" });
         send({ id: "models", type: "get_available_models" });
@@ -3004,8 +3248,10 @@
         const ended = tools.get(frame.toolCallId);
         if (ended) ended.streamText = undefined;
         updateTool(frame, { result: frame.result, isError: !!frame.isError, done: true });
+        refreshJobsSoon();
         scrollDown();
         if (frame.toolName === "todo") refreshTodos();
+        if (frame.toolName === "write" && plan) refreshPlan();
         break;
       }
       case "prompt_result":
@@ -3015,6 +3261,9 @@
       case "session_settled":
         setBusy(false);
         send({ id: "sfile", type: "get_state" }); // a /new or /resume inside the turn may have switched files
+        send({ id: "settle", type: "get_messages" });
+        refreshJobsSoon();
+        refreshPlan();
         // A turn cut off before message_end would otherwise keep saying "streaming…".
         for (const [id, led] of ledgers) {
           if (!turnUsage.has(id)) {
@@ -3935,7 +4184,9 @@
     setQueue(null);
     setTodos([]);
     clearAgents();
+    clearJobs();
     setGoal(null);
+    setPlan(null);
   }
   /** The process moved to another transcript (switch, branch, fork, tree, new): re-read it. */
   function reloadTranscript(text) {
@@ -4113,9 +4364,14 @@
     sid,
     el: root,
     onFrame,
+    /** A stdout line that was not valid JSON. */
+    onBadFrame(line, e) {
+      logFrameIssue(`unparseable frame (${String(line).length} chars): ${e}; head: ${String(line).slice(0, 120)}`);
+    },
     /** The omp process ended (crash or stop): say so in the transcript. */
     onExit() {
       alive = false;
+      hlAskers.delete(sid);
       setBusy(false);
       closeDialog(); // nobody is waiting for its answer any more
       clearExtUi();
@@ -4132,6 +4388,8 @@
     /** Re-read the scoped model list into the model picker. */
     refreshModels: () => send({ id: "models", type: "get_available_models" }),
     focus: () => el.input.focus(),
+    /** The session is closed for good: stop routing highlight requests to its process. */
+    dispose: () => hlAskers.delete(sid),
     lastAnswer: () => lastAnswer,
     restart: () => start(cwd, false),
     /** `new_session` in the running process (starts the process again when it has exited). */

@@ -209,7 +209,15 @@
     save();
   }
   const groupHeads = new Map(); // cwd -> header element
-  /** Sidebar order: one header per project folder, its tabs underneath (first-opened project first). */
+  const COLLAPSED_KEY = "kostomp-collapsed-projects";
+  const collapsed = new Set((() => { try { return JSON.parse(localStorage.getItem(COLLAPSED_KEY)) ?? []; } catch { return []; } })());
+  function setCollapsed(key, on) {
+    if (on) collapsed.add(key); else collapsed.delete(key);
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed])); } catch {}
+    groupTabs();
+  }
+  /** Sidebar order: one header per project folder, its tabs underneath (first-opened project first).
+   *  Clicking a header folds its tabs; its + opens a new chat in that project. */
   function groupTabs() {
     const groups = new Map();
     for (const s of sessions.values()) {
@@ -227,11 +235,49 @@
       if (!head) {
         head = document.createElement("div");
         head.className = "stab-group";
-        head.setAttribute("role", "presentation");
+        head.setAttribute("role", "button");
+        head.tabIndex = 0;
+        const chev = document.createElement("span");
+        chev.className = "stab-group-chev";
+        chev.setAttribute("aria-hidden", "true");
+        chev.textContent = "▾";
+        const name = document.createElement("span");
+        name.className = "stab-group-name";
+        const add = document.createElement("button");
+        add.type = "button";
+        add.className = "stab-group-add";
+        add.textContent = "+";
+        head.append(chev, name, add);
+        const toggle = () => setCollapsed(head.dataset.key, !collapsed.has(head.dataset.key));
+        head.addEventListener("click", (e) => {
+          if (e.target === add) return;
+          toggle();
+        });
+        head.addEventListener("keydown", (e) => {
+          if (e.target === head && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggle(); }
+        });
+        add.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const k = head.dataset.key;
+          if (!k) return;
+          if (collapsed.has(k)) setCollapsed(k, false);
+          const entry = addSession({ cwd: k, resume: false });
+          placeChat(entry.sid);
+          entry.api.focus();
+        });
         groupHeads.set(key, head);
       }
-      head.textContent = key ? baseName(key) : "starting…";
+      head.dataset.key = key;
+      const isCollapsed = collapsed.has(key);
+      head.classList.toggle("collapsed", isCollapsed);
+      head.setAttribute("aria-expanded", String(!isCollapsed));
+      head.querySelector(".stab-group-name").textContent = key ? baseName(key) : "starting…";
+      const add = head.querySelector(".stab-group-add");
+      add.hidden = !key;
+      add.title = `New chat in ${baseName(key)}`;
+      add.setAttribute("aria-label", add.title);
       head.title = key;
+      for (const s of rows) s.tab.hidden = isCollapsed;
       strip.append(head, ...rows.map((s) => s.tab));
     }
   }
@@ -405,6 +451,7 @@
     const order = [...sessions.keys()];
     const next = order[order.indexOf(sid) + 1] ?? order[order.indexOf(sid) - 1];
     invoke("rpc_stop", { id: sid }).catch(() => {});
+    entry.api.dispose();
     sessions.delete(sid);
     entry.tab.remove();
     layout.remove(sid);
@@ -999,7 +1046,8 @@
     let frame;
     try {
       frame = JSON.parse(line);
-    } catch {
+    } catch (err) {
+      sessions.get(id)?.api.onBadFrame(line, err);
       return;
     }
     // protocol v2 chunking is opt-in via negotiate_protocol, which this client never sends.

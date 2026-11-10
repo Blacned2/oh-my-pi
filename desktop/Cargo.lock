@@ -1952,7 +1952,7 @@ dependencies = [
 
 [[package]]
 name = "kostomp-desktop"
-version = "1.0.21"
+version = "1.0.23"
 dependencies = [
  "serde",
  "serde_json",

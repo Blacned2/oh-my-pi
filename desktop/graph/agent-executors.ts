@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { RpcClientCustomTool } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
-import { isEnoent, prompt, TempDir } from "@oh-my-pi/pi-utils";
+import { getAgentDbPath, isEnoent, prompt, TempDir } from "@oh-my-pi/pi-utils";
 import { type DockerTestProfile, testCandidateInDocker } from "./docker-tester";
 import { type OmpWorkerOptions, runOmpWorker } from "./omp-worker";
 import coderPrompt from "./prompts/coder.md" with { type: "text" };
@@ -62,11 +62,21 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 		const home = tmp.join("home");
 		await fs.mkdir(cwd);
 		const agentDir = path.join(".omp", "agent");
+		const workerAgentDir = path.join(home, agentDir);
 		try {
-			await fs.cp(path.join(worker.home, agentDir), path.join(home, agentDir), { recursive: true });
+			await fs.cp(path.join(worker.home, agentDir), workerAgentDir, { recursive: true });
 		} catch (error) {
-			if (isEnoent(error)) throw new Error(`Graph worker profile is missing at ${path.join(worker.home, agentDir)}`);
-			throw error;
+			if (!isEnoent(error)) throw error;
+			await fs.mkdir(workerAgentDir, { recursive: true });
+		}
+		// A profile without its own credentials uses the accounts already signed in to the app.
+		const workerDb = getAgentDbPath(workerAgentDir);
+		if (!(await Bun.file(workerDb).exists())) {
+			try {
+				await fs.copyFile(getAgentDbPath(), workerDb);
+			} catch (error) {
+				if (!isEnoent(error)) throw error;
+			}
 		}
 		const transcript: string[] = [];
 		try {
