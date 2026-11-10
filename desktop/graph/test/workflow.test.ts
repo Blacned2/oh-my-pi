@@ -169,17 +169,17 @@ test("a proposed path that collides with the pinned tree on Windows is rejected"
 	await using temp = await TempDir.create("@kostomp-graph-plan-collision-");
 	const source = await fixture(temp.join("source"));
 	await using workspace = await GraphWorkspace.pin(source.info().repoRoot);
-	const executors = {
+	const executors: Pick<ApprovedGraphExecutors, "plan"> = {
 		async plan(_workspace, _input, validate) {
 			return validate({
 				tasks: [{ id: "case", title: "Case", brief: "Edit", dependsOn: [], files: ["SRC/backend.txt"] }],
 			});
 		},
-	} as unknown as ApprovedGraphExecutors;
+	};
 	const input = { source: source.info().repoRoot, objective: "Edit" };
-	await expect(proposeGraphPlan(workspace, input, executors, AbortSignal.timeout(30_000))).rejects.toThrow(
-		/collide on Windows/,
-	);
+	await expect(
+		proposeGraphPlan(workspace, input, executors as ApprovedGraphExecutors, AbortSignal.timeout(30_000)),
+	).rejects.toThrow(/collide on Windows/);
 });
 
 test("listing a directory shows its immediate children in the pinned base", async () => {

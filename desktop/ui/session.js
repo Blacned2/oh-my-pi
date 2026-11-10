@@ -892,6 +892,99 @@
     pinned = m.scrollHeight - m.scrollTop - m.clientHeight < 80;
   }, { passive: true });
   new MutationObserver(() => scrollDown()).observe(el.messages, { childList: true, subtree: true, characterData: true });
+  // ---- turn rail: one tick per user message in the left margin; hover previews the turn, click jumps to it ----
+  const RAIL_TOP_GAP = 46; // matches `.messages` top padding, so a jumped-to prompt lands under the pane header
+  const rail = document.createElement("div");
+  rail.className = "turn-rail";
+  rail.hidden = true;
+  const railCard = document.createElement("div");
+  railCard.className = "turn-card";
+  railCard.hidden = true;
+  const railTitle = document.createElement("div");
+  railTitle.className = "turn-card-title";
+  const railBody = document.createElement("div");
+  railBody.className = "turn-card-body";
+  railCard.append(railTitle, railBody);
+  const messagesWrap = document.createElement("div");
+  messagesWrap.className = "messages-wrap";
+  el.messages.replaceWith(messagesWrap);
+  messagesWrap.append(el.messages, rail, railCard);
+  let railTurns = []; // { node, tick } per user message, in transcript order
+  let railActive = -1;
+  const userPrompt = (node) => (node.querySelector(".bubble") ?? node).textContent.trim();
+  /** Text of the first non-empty assistant bubble after this prompt, before the next prompt. */
+  function turnReply(node) {
+    for (let n = node.nextElementSibling; n && !n.classList.contains("user"); n = n.nextElementSibling) {
+      if (!n.classList.contains("assistant")) continue;
+      const text = n.textContent.replace(/\s+/g, " ").trim();
+      if (text) return text;
+    }
+    return "";
+  }
+  function jumpToTurn(node) {
+    const m = el.messages;
+    const top = node.getBoundingClientRect().top - m.getBoundingClientRect().top;
+    m.scrollTo({ top: m.scrollTop + top - RAIL_TOP_GAP });
+  }
+  function showRailCard(i) {
+    const t = railTurns[i];
+    if (!t) return;
+    railTitle.textContent = userPrompt(t.node);
+    railBody.textContent = turnReply(t.node);
+    railBody.hidden = !railBody.textContent;
+    railCard.hidden = false;
+    const wrapBox = messagesWrap.getBoundingClientRect();
+    const tickBox = t.tick.getBoundingClientRect();
+    const mid = tickBox.top - wrapBox.top + tickBox.height / 2;
+    const half = railCard.offsetHeight / 2;
+    railCard.style.top = Math.max(8, Math.min(wrapBox.height - railCard.offsetHeight - 8, mid - half)) + "px";
+  }
+  function paintRailActive() {
+    if (rail.hidden) return;
+    const m = el.messages;
+    const edge = m.getBoundingClientRect().top + RAIL_TOP_GAP + m.clientHeight * 0.25;
+    let active = 0;
+    for (let i = 0; i < railTurns.length; i++) {
+      if (railTurns[i].node.getBoundingClientRect().top <= edge) active = i;
+      else break;
+    }
+    if (active === railActive) return;
+    railTurns[railActive]?.tick.classList.remove("on");
+    railTurns[active].tick.classList.add("on");
+    railTurns[active].tick.setAttribute("aria-current", "true");
+    railTurns[railActive]?.tick.removeAttribute("aria-current");
+    railActive = active;
+  }
+  function rebuildRail() {
+    const nodes = [...el.messages.children].filter((n) => n.classList.contains("msg") && n.classList.contains("user"));
+    if (nodes.length === railTurns.length && nodes.every((n, i) => n === railTurns[i].node)) return;
+    railTurns = nodes.map((node, i) => {
+      const tick = document.createElement("button");
+      tick.type = "button";
+      tick.className = "turn-tick";
+      tick.setAttribute("aria-label", `Prompt ${i + 1}`);
+      tick.addEventListener("click", () => jumpToTurn(node));
+      tick.addEventListener("pointerenter", () => showRailCard(i));
+      tick.addEventListener("focus", () => showRailCard(i));
+      return { node, tick };
+    });
+    railActive = -1;
+    rail.replaceChildren(...railTurns.map((t) => t.tick));
+    rail.hidden = railTurns.length < 2;
+    railCard.hidden = true;
+    paintRailActive();
+  }
+  rail.addEventListener("pointerleave", () => (railCard.hidden = true));
+  rail.addEventListener("focusout", () => (railCard.hidden = true));
+  let railFrame = 0;
+  el.messages.addEventListener("scroll", () => {
+    if (railFrame) return;
+    railFrame = requestAnimationFrame(() => {
+      railFrame = 0;
+      paintRailActive();
+    });
+  }, { passive: true });
+  new MutationObserver(rebuildRail).observe(el.messages, { childList: true });
   function note(text, error, kind = "note") {
     const n = document.createElement("div");
     n.className = "msg " + kind + (error ? " error" : "");
