@@ -469,6 +469,15 @@ export async function daemonClientForProject(projectDir: string): Promise<Daemon
 	return sharedDaemonClient(`project:${canonical}`, () => createDaemonBrokerClient(canonical));
 }
 
+/**
+ * The process-shared client for a project directory when something here already created one;
+ * never creates it, so a status poll cannot be the reason a broker gets spawned.
+ */
+export async function existingDaemonClientForProject(projectDir: string): Promise<DaemonBrokerClient | undefined> {
+	const canonical = await canonicalProjectDir(projectDir);
+	return sharedClients.get(`project:${canonical}`);
+}
+
 /** Get the process-shared client that leases one profile-independent, machine-global daemon broker. */
 export async function daemonClientForGlobal(service: string): Promise<DaemonBrokerClient> {
 	const runtimeDir = getGlobalDaemonRuntimeDir(service);

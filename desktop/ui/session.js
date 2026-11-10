@@ -1985,7 +1985,6 @@
       stack.hidden = true;
       stackToggles.replaceChildren();
       stackPanels.replaceChildren();
-      messagesWrap.classList.remove("stack-open");
       syncJobsPoll();
       return;
     }
@@ -2002,7 +2001,6 @@
     stackPanels.replaceChildren(...panels);
     for (const p of panels) p.querySelector(".stack-rows").scrollTop = scroll.get(p.dataset.kind) ?? 0;
     stack.hidden = false;
-    messagesWrap.classList.toggle("stack-open", panels.length > 0);
     syncJobsPoll();
   }
   /** Poll while this session has a running job or the jobs panel is open; the elapsed times refresh with it. */

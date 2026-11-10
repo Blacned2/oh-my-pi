@@ -126,8 +126,9 @@ export async function runOmpWorker(options: OmpWorkerOptions): Promise<void> {
 		});
 	} catch (cause) {
 		if (options.signal?.aborted) options.signal.throwIfAborted();
-		transcript?.push(`Failed while ${phase}: ${cause instanceof Error ? cause.message : String(cause)}`);
-		throw new Error(`Graph worker failed while ${phase}`, { cause });
+		const reason = cause instanceof Error ? cause.message : String(cause);
+		transcript?.push(`Failed while ${phase}: ${reason}`);
+		throw new Error(`Graph worker failed while ${phase}: ${reason}`, { cause });
 	} finally {
 		unsubscribe();
 		unsubscribeEvents?.();

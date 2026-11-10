@@ -49,6 +49,7 @@ import {
 	wordCompletionQuery,
 } from "@oh-my-pi/pi-tui/prompt/word-completion";
 import { requestTextPrediction, textPredictionBackend } from "../../predict/client";
+import { listServiceJobRows, stopOwnedServiceJob } from "../../launch/service-jobs";
 import { type AgentSession, type NavigateTreeResult, SessionBusyError } from "../../session/agent-session";
 import type { AgentSessionHandle } from "../../session/agent-session-handle";
 import type { MCPManager } from "../../mcp/manager";
@@ -2561,14 +2562,35 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			}
 
 			case "get_async_jobs": {
-				return success(id, "get_async_jobs", session.getAsyncJobTree() ?? { running: [], recent: [], agents: [] });
+				const tree = session.getAsyncJobTree() ?? { running: [], recent: [], agents: [] };
+				try {
+					const services = await listServiceJobRows(session.sessionManager.getCwd(), session.sessionId);
+					return success(id, "get_async_jobs", {
+						...tree,
+						running: [...tree.running, ...services.running],
+						recent: [...tree.recent, ...services.recent],
+					});
+				} catch (err) {
+					logger.debug("Listing services as jobs failed", { error: toError(err).message });
+					return success(id, "get_async_jobs", tree);
+				}
 			}
 
 			case "cancel_async_job": {
 				if (typeof command.jobId !== "string" || command.jobId.length === 0) {
 					return error(id, "cancel_async_job", "`jobId` must be a non-empty string.");
 				}
-				return success(id, "cancel_async_job", { cancelled: session.cancelAsyncJob(command.jobId) });
+				if (session.cancelAsyncJob(command.jobId)) return success(id, "cancel_async_job", { cancelled: true });
+				try {
+					const stopped = await stopOwnedServiceJob(
+						session.sessionManager.getCwd(),
+						session.sessionId,
+						command.jobId,
+					);
+					return success(id, "cancel_async_job", { cancelled: stopped });
+				} catch (err) {
+					return error(id, "cancel_async_job", toError(err).message);
+				}
 			}
 
 			case "steer_subagent": {

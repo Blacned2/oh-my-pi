@@ -923,5 +923,4 @@ details.thinking[open] .peek{display:none}
 .panel-row.job.failed .mark{color:var(--bad)}
 .panel-row.job.cancelled .mark{color:var(--warn)}
 .panel-row.job.completed,.panel-row.job.failed,.panel-row.job.cancelled{opacity:.7}
-@container (min-width:1100px){.messages-wrap.stack-open .messages{padding-right:390px}}
 @media (prefers-reduced-motion:reduce){.stack-pill .mark.run,.stack-panel{animation:none}}
