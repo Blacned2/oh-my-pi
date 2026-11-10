@@ -31,6 +31,7 @@ import type { TspSpan, TspTone } from "@oh-my-pi/pi-wire";
 import { node, span } from "../native/describe";
 import { thinkingLevelToken } from "../theme/theme-class";
 import type { StatusLineSession } from "./host";
+import type { VersionUpdate } from "../prompt/welcome";
 import type { RenderedSegment, SegmentContext, SegmentView, StatusLineSegment, StatusLineSegmentId } from "./types";
 
 export type { SegmentContext } from "./types";
@@ -1110,6 +1111,37 @@ const cacheSegment: StatusLineSegment = {
 	},
 };
 
+/** Short update suffix for the `version` segment: target, then percent / ready / failed marker. */
+function versionUpdateText(update: VersionUpdate): { text: string; color: ThemeColor } {
+	const head = `→ v${update.version}`;
+	if (update.phase === "ready") return { text: `${head} ${theme.status.success}`, color: "success" };
+	if (update.phase === "failed") return { text: `${head} ${theme.status.warning}`, color: "warning" };
+	const progress = update.fraction === undefined ? "…" : ` ${Math.round(update.fraction * 100)}%`;
+	return { text: `${head}${progress}`, color: "accent" };
+}
+
+const versionSegment: StatusLineSegment = {
+	id: "version",
+	render(ctx) {
+		if (!ctx.version) return { content: "", visible: false };
+		const base = theme.fg("dim", `v${ctx.version}`);
+		if (!ctx.versionUpdate) return { content: base, visible: true };
+		const { text, color } = versionUpdateText(ctx.versionUpdate);
+		return { content: `${base} ${theme.fg(color, text)}`, visible: true };
+	},
+	describe(ctx) {
+		if (!ctx.version) return null;
+		const spans: TspSpan[] = [span(`v${ctx.version}`, "dim mono")];
+		let tone: TspTone | undefined;
+		if (ctx.versionUpdate) {
+			const { text, color } = versionUpdateText(ctx.versionUpdate);
+			tone = toneOf(color);
+			spans.push(span(` ${text}`, tone ? `${tone} mono` : "accent mono"));
+		}
+		return segView(spans, undefined, tone);
+	},
+};
+
 const sessionNameSegment: StatusLineSegment = {
 	id: "session_name",
 	render(ctx) {
@@ -1400,6 +1432,7 @@ export const SEGMENTS: Record<StatusLineSegmentId, StatusLineSegment> = {
 	time: timeSegment,
 	session: sessionSegment,
 	hostname: hostnameSegment,
+	version: versionSegment,
 	cache_read: cacheReadSegment,
 	cache_write: cacheWriteSegment,
 	cache_hit: cacheHitSegment,

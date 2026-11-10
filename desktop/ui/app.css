@@ -912,7 +912,8 @@ details.thinking[open] .peek{display:none}
 .stack-pill .ord{width:15px;height:15px;border-radius:50%;display:grid;place-items:center;background:var(--ink-1);color:var(--panel);font:700 10px var(--mono)}
 @keyframes stack-spin{to{transform:rotate(360deg)}}
 .stack-panels{width:100%;display:flex;flex-direction:column;gap:8px}
-.stack-panel{pointer-events:auto;width:100%;border:1px solid var(--line-3);border-radius:12px;background:var(--overlay);backdrop-filter:blur(14px) saturate(150%);box-shadow:var(--shadow-2);color:var(--ink-2);overflow:hidden;animation:pop .16s ease-out}
+.stack-panel{pointer-events:auto;width:100%;border:1px solid var(--line-3);border-radius:12px;background:var(--overlay);backdrop-filter:blur(14px) saturate(150%);box-shadow:var(--shadow-2);color:var(--ink-2);overflow:hidden}
+.stack-panel.enter{animation:pop .16s ease-out}
 .stack-head{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line-1);color:var(--ink-1);font-weight:600}
 .stack-head .chip{padding:0 8px;font-size:11px;font-weight:400;color:var(--ink-3)}
 .stack-head .chip.run{color:var(--c-violet)}
@@ -923,4 +924,4 @@ details.thinking[open] .peek{display:none}
 .panel-row.job.failed .mark{color:var(--bad)}
 .panel-row.job.cancelled .mark{color:var(--warn)}
 .panel-row.job.completed,.panel-row.job.failed,.panel-row.job.cancelled{opacity:.7}
-@media (prefers-reduced-motion:reduce){.stack-pill .mark.run,.stack-panel{animation:none}}
+@media (prefers-reduced-motion:reduce){.stack-pill .mark.run,.stack-panel,.stack-panel.enter{animation:none}}

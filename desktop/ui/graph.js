@@ -23,6 +23,8 @@
   const failureObservation = document.getElementById("graph-failure-observation");
   const history = document.getElementById("graph-history");
   const sideGraphs = document.getElementById("side-graphs");
+  const graphsToggle = document.getElementById("graphs-toggle");
+  const graphEmpty = document.getElementById("graph-empty");
   const newRun = document.getElementById("graph-new");
   const newLabel = document.getElementById("graph-new-label");
   const activityActions = document.getElementById("graph-activity-actions");
@@ -274,11 +276,15 @@
       detail.className = "graph-run-detail";
       detail.textContent = folderName(run.context?.sourceRoot ?? "") || run.id.slice(0, 8);
       button.title = name.textContent;
-      button.append(name, detail);
+      const icon = document.createElement("span");
+      icon.className = "graph-run-ico";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = name.textContent.charAt(0) || "G";
+      button.append(icon, name, detail);
       item.append(button);
       return item;
     }));
-    sideGraphs.hidden = runs.length === 0;
+    graphEmpty.hidden = runs.length > 0;
     markCurrent();
   }
 
@@ -360,9 +366,16 @@
   // A chat coming to the front, from the sidebar or anywhere else, leaves the Graph pane.
   document.addEventListener("kostomp-chat-shown", () => setMode(false));
   const chatControls = document.getElementById("session-tabs");
-  const leaveForChat = event => { if (!event.target.closest("#graph-new")) setMode(false); };
+  const leaveForChat = event => { if (!event.target.closest("#graph-new, #graphs-toggle")) setMode(false); };
   chatControls.addEventListener("click", leaveForChat, true);
   chatControls.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") leaveForChat(event); }, true);
+  function setGraphList(open, persist = true) {
+    sideGraphs.hidden = !open;
+    graphsToggle.setAttribute("aria-expanded", String(open));
+    if (persist) try { localStorage.setItem("kostomp-graph-list", open ? "1" : "0"); } catch {}
+  }
+  setGraphList(localStorage.getItem("kostomp-graph-list") !== "0", false);
+  graphsToggle.addEventListener("click", () => setGraphList(sideGraphs.hidden));
   renderProjects();
   void action(renderHistory, true);
   newRun.addEventListener("click", () => {

@@ -31,6 +31,7 @@ const profileSchema = type({
 		timeoutMs: "1 <= number.integer <= 300000",
 	},
 	"maxCoders?": "1 <= number.integer <= 4",
+	"allowDirty?": "boolean",
 	"failureJudge?": {
 		provider: "string > 0",
 		model: "string > 0",
@@ -39,7 +40,10 @@ const profileSchema = type({
 	},
 });
 const draftSelection = type({ draft: "string", hash: "string" });
-const requestSchema = type({ op: "'status' | 'cancel' | 'patch' | 'list' | 'resume' | 'discard' | 'compose'" })
+const requestSchema = type({
+	op: "'status' | 'cancel' | 'patch' | 'list' | 'resume' | 'discard' | 'compose' | 'settings'",
+})
+	.or({ op: "'configure'", input: profileSchema })
 	.or({ op: "'plan'", input: approvedGraphInputSchema })
 	.or({ op: "'approve'", input: draftSelection })
 	.or({ op: "'edit'", input: draftSelection.and({ plan: "unknown" }) })
@@ -57,6 +61,7 @@ interface ActiveRun extends Job {
 interface LoadedProfile {
 	hash: string;
 	maxCoders: number;
+	allowDirty: boolean;
 	executors: ApprovedGraphExecutors;
 	observeFailure?: TestFailureObserver;
 }
@@ -81,25 +86,31 @@ function assertIdle(): void {
 	if (active || planning) throw new Error("A Graph run or plan is already active");
 }
 
-async function loadProfile(): Promise<LoadedProfile> {
-	const profile = profileSchema.assert(
-		await Bun.file(profilePath)
-			.json()
-			.catch((error: unknown) => {
-				if (isEnoent(error)) throw new Error(`Graph profile is missing. Configure ${profilePath}`);
-				throw error;
-			}),
-	);
+type GraphProfile = typeof profileSchema.infer;
+
+/** The saved profile exactly as written, or undefined before the first save. */
+async function readProfileFile(): Promise<unknown> {
+	try {
+		return await Bun.file(profilePath).json();
+	} catch (error) {
+		if (isEnoent(error)) return undefined;
+		throw error;
+	}
+}
+
+function buildProfile(profile: GraphProfile): LoadedProfile {
 	const {
 		provider,
 		model,
 		tester: { dockerPath, imageId, command: commands, timeoutMs },
 		maxCoders,
+		allowDirty,
 		failureJudge,
 	} = profile;
 	const [command, ...args] = commands;
 	if (!command) throw new Error("Graph Tester profile requires a container command");
-	// An unset limit keeps the hash of runs saved before the field existed.
+	// An unset limit keeps the hash of runs saved before the field existed. `allowDirty` stays out of the hash:
+	// it only relaxes the source check and changes nothing a saved plan or run depends on.
 	const identity: unknown[] = [provider, model, dockerPath, imageId, commands, timeoutMs];
 	if (maxCoders !== undefined) identity.push({ maxCoders });
 	if (failureJudge)
@@ -109,6 +120,7 @@ async function loadProfile(): Promise<LoadedProfile> {
 	return {
 		hash: new Bun.CryptoHasher("sha256").update(JSON.stringify(identity)).digest("hex"),
 		maxCoders: maxCoders ?? DEFAULT_MAX_CODERS,
+		allowDirty: allowDirty ?? false,
 		observeFailure: failureJudge && createTestFailureObserver(failureJudge),
 		executors: createApprovedGraphExecutors(
 			{
@@ -124,7 +136,36 @@ async function loadProfile(): Promise<LoadedProfile> {
 	};
 }
 
-function launch(run: GraphRun & { context: GraphRunContext }, { executors, maxCoders, observeFailure }: LoadedProfile) {
+async function loadProfile(): Promise<LoadedProfile> {
+	const raw = await readProfileFile();
+	if (raw === undefined) throw new Error("Graph profile is missing. Configure it in Settings > Graph");
+	return buildProfile(profileSchema.assert(raw));
+}
+
+async function readSettings() {
+	const profile = await readProfileFile();
+	let error: string | undefined;
+	if (profile !== undefined) {
+		try {
+			buildProfile(profileSchema.assert(profile));
+		} catch (cause) {
+			error = toError(cause).message.slice(0, 2048);
+		}
+	}
+	return { path: profilePath, profile: profile ?? null, error };
+}
+
+async function saveSettings(profile: GraphProfile): Promise<void> {
+	buildProfile(profile);
+	const staged = `${profilePath}.tmp`;
+	await Bun.write(staged, `${JSON.stringify(profile, null, "\t")}\n`);
+	await fs.rename(staged, profilePath);
+}
+
+function launch(
+	run: GraphRun & { context: GraphRunContext },
+	{ executors, maxCoders, allowDirty, observeFailure }: LoadedProfile,
+) {
 	const controller = new AbortController();
 	const { context } = run;
 	selected = run.id;
@@ -133,7 +174,7 @@ function launch(run: GraphRun & { context: GraphRunContext }, { executors, maxCo
 	const job = (async () => {
 		try {
 			const work = graphWork(context);
-			await using workspace = await GraphWorkspace.pin(work.source, controller.signal);
+			await using workspace = await GraphWorkspace.pin(work.source, { signal: controller.signal, allowDirty });
 			if (workspace.baseSha !== context.baseSha || workspace.sourceRoot !== context.sourceRoot) {
 				throw new Error("The source changed since the Graph run");
 			}
@@ -154,10 +195,11 @@ function launch(run: GraphRun & { context: GraphRunContext }, { executors, maxCo
 
 async function proposePlan(input: ApprovedGraphInput) {
 	if (!isFullyQualifiedPath(input.source)) throw new Error("Choose an absolute source repository directory");
-	const { sourceRoot, baseSha } = await inspectGraphSource(input.source);
+	const profile = await loadProfile();
+	const { allowDirty } = profile;
+	const { sourceRoot, baseSha } = await inspectGraphSource(input.source, { allowDirty });
 	if (!input.objective.trim()) throw new Error("Graph requires an objective");
 	const scoped = { ...input, source: sourceRoot };
-	const profile = await loadProfile();
 	const controller = new AbortController();
 	const id = crypto.randomUUID();
 	planError = undefined;
@@ -165,7 +207,7 @@ async function proposePlan(input: ApprovedGraphInput) {
 	const job = (async () => {
 		let log = "";
 		try {
-			await using workspace = await GraphWorkspace.pin(sourceRoot, controller.signal);
+			await using workspace = await GraphWorkspace.pin(sourceRoot, { signal: controller.signal, allowDirty });
 			if (workspace.baseSha !== baseSha) throw new Error("The source changed while planning");
 			const plan = await proposeGraphPlan(workspace, scoped, profile.executors, controller.signal, text => {
 				log = cleanDiagnostic(text);
@@ -204,10 +246,11 @@ function selectedDraft({ draft: id, hash }: typeof draftSelection.infer) {
 
 async function editPlan(selection: typeof draftSelection.infer, proposal: unknown): Promise<void> {
 	const draft = selectedDraft(selection);
-	if ((await loadProfile()).hash !== draft.profileHash) throw new Error("The Graph profile changed. Plan again");
-	if (!(await graphBaseIsCurrent(draft.input.source, draft.baseSha)))
+	const { hash, allowDirty } = await loadProfile();
+	if (hash !== draft.profileHash) throw new Error("The Graph profile changed. Plan again");
+	if (!(await graphBaseIsCurrent(draft.input.source, draft.baseSha, { allowDirty })))
 		throw new Error("The source changed. Plan again");
-	await using workspace = await GraphWorkspace.pin(draft.input.source);
+	await using workspace = await GraphWorkspace.pin(draft.input.source, { allowDirty });
 	if (workspace.baseSha !== draft.baseSha || workspace.sourceRoot !== draft.input.source) {
 		throw new Error("The source changed. Plan again");
 	}
@@ -225,7 +268,8 @@ async function approvePlan(selection: typeof draftSelection.infer) {
 	if (taskPlanHash(plan) !== hash) throw new Error("The proposed plan changed. Review it again before approving");
 	const profile = await loadProfile();
 	if (profile.hash !== profileHash) throw new Error("The Graph profile changed. Plan again");
-	if (!(await graphBaseIsCurrent(input.source, baseSha))) throw new Error("The source changed. Plan again");
+	if (!(await graphBaseIsCurrent(input.source, baseSha, { allowDirty: profile.allowDirty })))
+		throw new Error("The source changed. Plan again");
 	const context: GraphRunContext = {
 		sourceRoot: input.source,
 		baseSha,
@@ -253,6 +297,12 @@ function selectedRun(): GraphRun | null {
 
 async function handle(request: typeof requestSchema.infer) {
 	if (request.op === "list") return store.recent();
+	if (request.op === "settings") return readSettings();
+	if (request.op === "configure") {
+		assertIdle();
+		await saveSettings(request.input);
+		return null;
+	}
 	if (request.op === "compose") {
 		selected = undefined;
 		return null;
@@ -299,7 +349,7 @@ async function handle(request: typeof requestSchema.infer) {
 		const profile = await loadProfile();
 		if (profile.hash !== context.profileHash)
 			throw new Error("The Graph profile changed. Restore it or start a new run");
-		if (!(await graphBaseIsCurrent(context.sourceRoot, context.baseSha)))
+		if (!(await graphBaseIsCurrent(context.sourceRoot, context.baseSha, { allowDirty: profile.allowDirty })))
 			throw new Error("The source changed since the Graph run");
 		const admitted =
 			request.op === "retry"
@@ -317,9 +367,10 @@ async function handle(request: typeof requestSchema.infer) {
 	const release = run?.context && active?.id !== run.id ? readGraphRelease(store, run.id) : undefined;
 	if (request.op === "patch") {
 		if (!run?.context || release?.status !== "ready_to_export") throw new Error("Graph has no verified patch");
+		const { allowDirty } = await loadProfile();
 		if (
 			release.artifact.baseSha !== run.context.baseSha ||
-			!(await graphBaseIsCurrent(run.context.sourceRoot, run.context.baseSha))
+			!(await graphBaseIsCurrent(run.context.sourceRoot, run.context.baseSha, { allowDirty }))
 		) {
 			staleRuns.add(run.id);
 			throw new Error("The source changed since the Graph run");

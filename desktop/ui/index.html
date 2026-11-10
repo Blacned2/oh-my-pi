@@ -70,14 +70,21 @@
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.8 7.2 6.3 15.8m6.9-8.6 4.5 8.6"/></svg>
           <span id="graph-new-label" class="new-chat-label">New graph</span>
         </button>
-        <button type="button" id="sessions-open" class="new-chat sessions-open" title="Open the sessions list as a tab" aria-label="Open the sessions list">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
-          <span class="new-chat-label">Sessions list</span>
-        </button>
+        <div class="side-switch">
+          <button type="button" id="sessions-open" class="new-chat sessions-open" title="Open the sessions list as a tab" aria-label="Open the sessions list">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+            <span class="new-chat-label">Sessions</span>
+          </button>
+          <button type="button" id="graphs-toggle" class="new-chat sessions-open" title="Show or hide the graph runs list" aria-label="Graph runs list" aria-controls="side-graphs" aria-expanded="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.8 7.2 6.3 15.8m6.9-8.6 4.5 8.6"/></svg>
+            <span class="new-chat-label">Graphs</span>
+          </button>
+        </div>
       </div>
-      <div id="side-graphs" class="side-graphs" role="group" aria-label="Graph runs" hidden>
+      <div id="side-graphs" class="side-graphs" role="group" aria-label="Graph runs">
         <div class="side-accounts-title">Graphs</div>
         <ul id="graph-history" class="graph-run-list" aria-label="Recent graph runs"></ul>
+        <div id="graph-empty" class="saved-empty" hidden>No graph runs yet</div>
       </div>
       <div id="side-accounts" class="side-accounts" role="group" aria-label="Claude accounts" hidden>
         <div class="side-accounts-title">Claude accounts</div>

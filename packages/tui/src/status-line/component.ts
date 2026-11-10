@@ -7,6 +7,7 @@ import {
 } from "@oh-my-pi/pi-ai/usage/google-antigravity";
 import { getNextTimeBasedPricingTransition } from "@oh-my-pi/pi-catalog/models";
 import type { Model, ModelCost } from "@oh-my-pi/pi-catalog/types";
+import type { VersionUpdate } from "../prompt/welcome";
 import type { VcsGitRepo, VcsRepo } from "@oh-my-pi/pi-natives";
 import * as vcs from "@oh-my-pi/pi-natives/vcs";
 import {
@@ -795,6 +796,8 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	#vibeWorkerTokenRate: (() => number | null) | null = null;
 	#collabStatus: CollabStatus | null = null;
 	#streamStatus: { viewers: number } | null = null;
+	#version: string | undefined;
+	#versionUpdate: VersionUpdate | null = null;
 	#recording = false;
 	#focusedAgentId: string | undefined;
 	#activeRepoCache: ActiveRepoCache | undefined;
@@ -1259,6 +1262,20 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	setStreamStatus(status: { viewers: number } | null): void {
 		if (this.#streamStatus?.viewers === status?.viewers) return;
 		this.#streamStatus = status;
+		this.#invalidateStatusLineRenderCache();
+	}
+
+	/** Running build's version for the `version` segment. */
+	setVersion(version: string | undefined): void {
+		if (this.#version === version) return;
+		this.#version = version;
+		this.#invalidateStatusLineRenderCache();
+	}
+
+	/** Background self-update state shown after the version; `null` clears it. */
+	setVersionUpdate(update: VersionUpdate | null): void {
+		if (JSON.stringify(this.#versionUpdate) === JSON.stringify(update)) return;
+		this.#versionUpdate = update;
 		this.#invalidateStatusLineRenderCache();
 	}
 
@@ -2725,6 +2742,8 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 			vim: this.#vimStatus,
 			collab: this.#collabStatus,
 			stream: this.#streamStatus,
+			version: this.#version,
+			versionUpdate: this.#versionUpdate,
 			recording: this.#recording,
 			usageStats,
 			contextPercent,

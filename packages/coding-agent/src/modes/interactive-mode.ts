@@ -2528,6 +2528,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		const startupQuiet = cfgStartupQuiet.get(settings);
 		this.composer.setPreferences({ quiet: startupQuiet });
 		this.composer.updateWelcome({ version: this.#version });
+		this.statusLine.setVersion(this.#version);
 		this.#syncHeaderExtras();
 		this.statusLine.watchBranch(() => this.ui.requestRender());
 		this.composer.setStatusComponent(this.statusLine);
@@ -9017,6 +9018,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	/** Show (or with `null`, clear) background auto-update progress after the welcome banner's version. */
 	showVersionUpdate(update: VersionUpdate | null): void {
 		this.composer.updateWelcome({ versionUpdate: update });
+		this.statusLine.setVersionUpdate(update);
+		this.ui.requestRender();
 	}
 
 	/**

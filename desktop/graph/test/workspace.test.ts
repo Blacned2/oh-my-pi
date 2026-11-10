@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { TempDir } from "@oh-my-pi/pi-utils";
 import { author, changeSet, fixture, original } from "../fixtures/git";
 import { buildTestSnapshot } from "../test-snapshot";
-import { GraphWorkspace } from "../workspace";
+import { graphBaseIsCurrent, GraphWorkspace } from "../workspace";
 
 test("combines two disjoint changes privately and releases only with matching evidence on a clean source", async () => {
 	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
@@ -90,6 +90,17 @@ test("a dirty source cannot be pinned, even when the changed file is untracked",
 	await Bun.write(path.join(root, "local.txt"), "local only");
 	await expect(GraphWorkspace.pin(root)).rejects.toThrow(/clean, stable/);
 	expect(await Bun.file(path.join(root, "local.txt")).text()).toBe("local only");
+});
+
+test("allowDirty pins the committed HEAD without the local edits and keeps the base current", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
+	const source = await fixture(temp.join("source"));
+	const root = source.info().repoRoot;
+	await Bun.write(path.join(root, "local.txt"), "local only");
+	await using workspace = await GraphWorkspace.pin(root, { allowDirty: true });
+	expect(workspace.list("")).toEqual(["src/"]);
+	expect(await graphBaseIsCurrent(root, workspace.baseSha)).toBe(false);
+	expect(await graphBaseIsCurrent(root, workspace.baseSha, { allowDirty: true })).toBe(true);
 });
 
 test("a declared patch cannot introduce a symlink into the candidate", async () => {

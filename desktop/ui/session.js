@@ -1913,6 +1913,7 @@
     b.title = open ? `Hide ${label}` : `Show ${label}`;
     if (open && stackOrder.length > 1) b.append(span("ord", String(stackOrder.indexOf(kind) + 1)));
     const mark = span("mark" + (running ? " run" : ""), kind === "jobs" ? JOB_MARK.running : running ? AGENT_MARK.running : AGENT_MARK.completed);
+    if (running) mark.style.animationDelay = `-${Date.now() % 1400}ms`; // keep the spin phase across re-renders
     b.append(mark, span("", label), span("badge", String(running || total)));
     b.addEventListener("click", () => stackToggle(kind));
     return b;
@@ -1999,6 +2000,7 @@
     );
     stackToggles.replaceChildren(...toggles);
     stackPanels.replaceChildren(...panels);
+    for (const p of panels) p.classList.toggle("enter", !scroll.has(p.dataset.kind));
     for (const p of panels) p.querySelector(".stack-rows").scrollTop = scroll.get(p.dataset.kind) ?? 0;
     stack.hidden = false;
     syncJobsPoll();

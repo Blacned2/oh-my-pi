@@ -203,7 +203,7 @@ describe("SelectorController session replacement overlay", () => {
 		selector!.handleInput("\n");
 		await resumeStarted.promise;
 
-		expect(handleResume).toHaveBeenCalledWith(session.path, { followContinuation: true });
+		expect(handleResume).toHaveBeenCalledWith(session.path);
 		expect(hide).not.toHaveBeenCalled();
 
 		// The selector remains mounted until resume finishes, but it must not accept

@@ -1,5 +1,6 @@
-// Settings tab: the window material (glass / opaque, owned by the Rust side, window_style.rs) and
-// every omp setting, read and written through the omp CLI (`omp config list|set|reset --json`).
+// Settings tab: the window material (glass / opaque, owned by the Rust side, window_style.rs), the Graph
+// profile (graph_request, see graph/service.ts) and every omp setting, read and written through the omp CLI
+// (`omp config list|set|reset --json`).
 (() => {
   const { invoke } = window.__TAURI__.core;
   const { listen } = window.__TAURI__.event;
@@ -113,6 +114,7 @@
     tasks: '<path d="M3 5l2 2 4-4M3 13l2 2 4-4M13 6h8M13 14h8M13 20h8"/>',
     extensions: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17.5h7M17.5 14v7"/>',
     providers: '<path d="M12 22v-5M9 8V2M15 8V2M18 8v5a6 6 0 0 1-12 0V8z"/>',
+    graph: '<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.5 6h7M7.2 8.2l3.6 7.6M16.8 8.2l-3.6 7.6"/>',
     other: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   };
   const PAGE_KEY = "kostomp-settings-page";
@@ -136,6 +138,7 @@
   navButton("models", "Models");
   navButton("agents", "Agents");
   navButton("extensions", "Extensions");
+  navButton("graph", "Graph");
   nav.append(h("div", { class: "set-sep", role: "separator" }));
   for (const [id, label] of OMP_TABS) navButton(id, label);
 
@@ -186,6 +189,7 @@
     else if (id === "accounts") renderAccountsPage();
     else if (id === "models") renderModelsPage();
     else if (id === "agents") renderAgentsPage();
+    else if (id === "graph") renderGraphPage();
     else if (id === "extensions") renderExtensionsPage();
     else renderOmpPage(id);
   }
@@ -1207,6 +1211,151 @@
       commit(parsed);
     });
     return area;
+  }
+
+  // ---- graph page (graph/service.ts: the profile.json settings / configure requests) ----
+  async function graphRequest(op, input) {
+    const res = await invoke("graph_request", { request: { op, input } });
+    if (!res.ok) throw new Error(res.error);
+    return res.data;
+  }
+
+  function renderGraphPage() {
+    const body = h("div", { class: "set-body" });
+    pageEl.append(
+      h("h1", { text: "Graph" }),
+      h("p", { class: "set-lead", text: "The model that plans and codes, the Docker tester, the failure judge and how Graph treats the source checkout." }),
+      body);
+    body.append(waitBox("Reading the Graph profile…"));
+    graphRequest("settings").then(
+      (state) => { if (page === "graph") drawGraph(body, state); },
+      (err) => { if (page === "graph") failBox(body, err, () => showPage("graph")); });
+  }
+
+  function drawGraph(body, { path, profile, error }) {
+    body.replaceChildren();
+    const p = profile && typeof profile === "object" ? profile : {};
+    const tester = p.tester || {};
+    const judge = p.failureJudge || null;
+    const input = (type, label, value, cls) => h("input", { class: cls || "field", type, spellcheck: false,
+      "aria-label": label, value: value ?? "" });
+    const switchOf = (label, on, onFlip) => {
+      const b = toggle(label, (want) => { b.setAttribute("aria-checked", String(want)); onFlip(want); });
+      b.setAttribute("aria-checked", String(on));
+      return b;
+    };
+    const group = (title, ...rows) => h("section", { class: "set-group" }, h("h2", { text: title }), ...rows);
+
+    let allowDirty = p.allowDirty === true;
+    let judgeOn = judge !== null;
+    const provider = input("text", "Provider", p.provider);
+    const model = input("text", "Model", p.model);
+    const maxCoders = h("select", { class: "field", "aria-label": "Parallel Coders" },
+      h("option", { value: "", text: "Default (2)", selected: p.maxCoders === undefined }),
+      [1, 2, 3, 4].map((n) => h("option", { value: String(n), text: String(n), selected: p.maxCoders === n })));
+    const dockerPath = input("text", "Docker executable", tester.dockerPath);
+    const imageId = input("text", "Docker image ID", tester.imageId);
+    const command = h("textarea", { class: "field json", spellcheck: false, rows: 3, "aria-label": "Container command",
+      placeholder: "/bin/sh\n-c\nbun test", value: Array.isArray(tester.command) ? tester.command.join("\n") : "" });
+    const timeout = input("number", "Tester timeout (ms)", tester.timeoutMs, "field num");
+    const judgeProvider = input("text", "Judge provider", judge?.provider);
+    const judgeModel = input("text", "Judge model", judge?.model);
+    const judgeTimeout = input("number", "Judge timeout (ms)", judge?.timeoutMs, "field num");
+    const judgeUrl = input("text", "Judge base URL", judge?.baseUrl);
+    judgeUrl.placeholder = "Provider default";
+
+    const judgeRows = [
+      row("Provider", "Catalog provider that serves the judge model.", judgeProvider),
+      row("Model", "Bundled judgment model. Its API key comes from the app's environment.", judgeModel),
+      row("Timeout (ms)", "Up to 5000. A slow judge is recorded as unavailable.", judgeTimeout),
+      row("Base URL", "Optional endpoint override.", judgeUrl),
+    ];
+    const syncJudge = () => {
+      for (const r of judgeRows) {
+        r.classList.toggle("off", !judgeOn);
+        for (const c of r.querySelectorAll("input")) c.disabled = !judgeOn;
+      }
+    };
+    const commandRow = row("Container command", "One argument per line. The first is the executable.", command);
+    commandRow.classList.add("wide");
+
+    const status = h("div", { class: "row-err", hidden: true });
+    const save = h("button", { type: "button", class: "btn", text: "Save" });
+
+    function collect() {
+      const text = (el, name) => {
+        const v = el.value.trim();
+        if (!v) throw new Error(name + " is required.");
+        return v;
+      };
+      const whole = (el, name) => {
+        const v = Number(el.value);
+        if (el.value.trim() === "" || !Number.isInteger(v)) throw new Error(name + " must be a whole number.");
+        return v;
+      };
+      const out = {
+        provider: text(provider, "Provider"),
+        model: text(model, "Model"),
+        tester: {
+          dockerPath: text(dockerPath, "Docker executable"),
+          imageId: text(imageId, "Docker image ID"),
+          command: command.value.split(/\r?\n/).filter((line) => line.trim() !== ""),
+          timeoutMs: whole(timeout, "Tester timeout"),
+        },
+      };
+      if (!out.tester.command.length) throw new Error("Container command is required.");
+      if (maxCoders.value) out.maxCoders = Number(maxCoders.value);
+      if (allowDirty) out.allowDirty = true;
+      if (judgeOn) {
+        out.failureJudge = {
+          provider: text(judgeProvider, "Judge provider"),
+          model: text(judgeModel, "Judge model"),
+          timeoutMs: whole(judgeTimeout, "Judge timeout"),
+        };
+        if (judgeUrl.value.trim()) out.failureJudge.baseUrl = judgeUrl.value.trim();
+      }
+      return out;
+    }
+    const show = (text, ok) => {
+      status.hidden = false;
+      status.className = ok ? "set-foot" : "row-err";
+      status.textContent = text;
+    };
+    save.addEventListener("click", async () => {
+      let next;
+      try { next = collect(); } catch (x) { show(x.message, false); return; }
+      save.disabled = true;
+      try {
+        await graphRequest("configure", next);
+        show("Saved.", true);
+      } catch (x) {
+        show(rpcErrorText(x), false);
+      } finally {
+        save.disabled = false;
+      }
+    });
+
+    if (error) body.append(h("div", { class: "row-err", text: "The saved profile is not usable: " + error }));
+    body.append(
+      group("Source",
+        row("Allow uncommitted changes", "Plan and run on a dirty checkout. Graph still works from the committed HEAD only, so uncommitted edits are invisible to the agents, and a patch may conflict with them when applied.",
+          switchOf("Allow uncommitted changes", allowDirty, (on) => { allowDirty = on; }))),
+      group("Agents",
+        row("Provider", "Catalog provider the Planner, Coders and Reviewer run on.", provider),
+        row("Model", "Model ID. Credentials live in the Graph profile-home agent directory.", model),
+        row("Parallel Coders", "How many Coders with disjoint files run at once.", maxCoders)),
+      group("Tester",
+        row("Docker executable", "Absolute path to docker.exe.", dockerPath),
+        row("Image ID", "A preloaded image. Graph never pulls one.", imageId),
+        commandRow,
+        row("Timeout (ms)", "Up to 300000.", timeout)),
+      group("Failure judge",
+        row("Observe test failures", "Classify failed tests with a judge model. Observation only: it never changes a decision.",
+          switchOf("Observe test failures", judgeOn, (on) => { judgeOn = on; syncJudge(); })),
+        ...judgeRows),
+      h("div", { class: "models-bar" }, save, status),
+      h("p", { class: "set-foot", text: "Saved to " + path + ". Changing the agents, tester, parallel Coders or failure judge makes saved plans and runs ask for a new plan; the source option does not. Settings cannot be saved while a Graph plan or run is active." }));
+    syncJudge();
   }
 
   // ---- start ------------------------------------------------------------

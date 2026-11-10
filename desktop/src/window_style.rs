@@ -164,8 +164,13 @@ impl Inner {
     }
 }
 
+/// The system backdrop depends on the chosen material only, never on focus. Losing focus turns the
+/// page opaque, but a backgrounded WebView throttles that repaint: removing the backdrop here
+/// would leave the still-glass page over a bare transparent window (it looks far more see-through)
+/// until the next click brings the page back to life.
 fn effects_for(state: &MaterialState) -> Option<WindowEffectsConfig> {
-    if !state.glass {
+    let s = &state.settings;
+    if s.material != Material::Glass || (s.follow_system && !state.system_transparency) {
         return None;
     }
     let effect = match state.settings.blur {

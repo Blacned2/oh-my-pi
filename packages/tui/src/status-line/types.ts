@@ -3,6 +3,7 @@ import type { SessionState, TspSpan, TspTone } from "@oh-my-pi/pi-wire";
 import type { NativeNode, NativeUiEvent } from "../native/node";
 import type { ContextLineMode, StatusLinePreset, StatusLineSegmentId, StatusLineSeparatorStyle } from "./schema";
 import type { ActiveRepoContext, PromptCacheStatus, StatusLineSession } from "./host";
+import type { VersionUpdate } from "../prompt/welcome";
 import type { LoopConditionConfig, LoopLimitRuntime } from "./loop";
 
 export type { ContextLineMode, StatusLinePreset, StatusLineSegmentId, StatusLineSeparatorStyle };
@@ -80,6 +81,10 @@ export interface SegmentContext {
 	now?: Date;
 	/** Deterministic host label for previews/tests; production omits it. */
 	hostname?: string;
+	/** Running build's version (no leading `v`); the `version` segment is hidden without it. */
+	version?: string;
+	/** Background self-update state shown by the `version` segment after the version. */
+	versionUpdate?: VersionUpdate | null;
 	/** Focused subagent id while the view is proxied at its session, undefined otherwise. */
 	focusedAgentId?: string | undefined;
 	/** Effective `statusLine.sessionAccent`; `false` disables hash-derived accent colors, while `true` or omission enables them. */

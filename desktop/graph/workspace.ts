@@ -42,22 +42,32 @@ export type GraphRelease =
 	| { status: "needs_input"; reason?: string }
 	| { status: "stale_base" };
 
-export async function graphBaseIsCurrent(sourceRoot: string, baseSha: string, signal?: AbortSignal): Promise<boolean> {
+export interface GraphSourceOptions {
+	signal?: AbortSignal;
+	/** Accept uncommitted changes. Graph still reads only the committed `HEAD`, so they never reach a run. */
+	allowDirty?: boolean;
+}
+
+export async function graphBaseIsCurrent(
+	sourceRoot: string,
+	baseSha: string,
+	{ signal, allowDirty }: GraphSourceOptions = {},
+): Promise<boolean> {
 	const source = vcs.git(sourceRoot);
 	return (
 		source !== null &&
 		source.info().repoRoot === sourceRoot &&
-		!(await source.isDirty(signal)) &&
+		(allowDirty || !(await source.isDirty(signal))) &&
 		(await source.headSha(signal)) === baseSha
 	);
 }
 
-export async function inspectGraphSource(sourceDirectory: string, signal?: AbortSignal) {
+export async function inspectGraphSource(sourceDirectory: string, { signal, allowDirty }: GraphSourceOptions = {}) {
 	const source = vcs.requireGit(sourceDirectory);
 	const { repoRoot: sourceRoot, gitDir, commonDir } = source.info();
 	const baseSha = await source.headSha(signal);
 	if (!baseSha || !sha1.test(baseSha)) throw new Error("Graph requires a checked-out SHA-1 Git commit");
-	if ((await source.isDirty(signal)) || (await source.headSha(signal)) !== baseSha) {
+	if ((!allowDirty && (await source.isDirty(signal))) || (await source.headSha(signal)) !== baseSha) {
 		throw new Error("Graph requires a clean, stable source checkout");
 	}
 	return { sourceRoot, gitDir, commonDir, baseSha };
@@ -114,13 +124,15 @@ export class GraphWorkspace implements AsyncDisposable {
 	private constructor(
 		readonly baseSha: string,
 		readonly sourceRoot: string,
+		readonly allowDirty: boolean,
 		private readonly scratch: TempDir,
 		private readonly repo: VcsGitRepo,
 		private readonly spellings: ReadonlyMap<string, string>,
 	) {}
 
-	static async pin(sourceDirectory: string, signal?: AbortSignal): Promise<GraphWorkspace> {
-		const { sourceRoot, gitDir, commonDir, baseSha } = await inspectGraphSource(sourceDirectory, signal);
+	static async pin(sourceDirectory: string, options: GraphSourceOptions = {}): Promise<GraphWorkspace> {
+		const { signal, allowDirty = false } = options;
+		const { sourceRoot, gitDir, commonDir, baseSha } = await inspectGraphSource(sourceDirectory, options);
 		const temporaryRoot = await fs.realpath(os.tmpdir());
 		const metadataRoots = await Promise.all([gitDir, commonDir].map(directory => fs.realpath(directory)));
 		if (
@@ -139,7 +151,7 @@ export class GraphWorkspace implements AsyncDisposable {
 			signal?.throwIfAborted();
 			const spellings = new Map<string, string>();
 			for (const file of await repo.lsTree(baseSha, [], signal)) registerSpelling(spellings, repoPathPrefixes(file));
-			return new GraphWorkspace(baseSha, sourceRoot, scratch, repo, spellings);
+			return new GraphWorkspace(baseSha, sourceRoot, allowDirty, scratch, repo, spellings);
 		} catch (error) {
 			await scratch[Symbol.asyncDispose]();
 			throw error;
@@ -346,7 +358,8 @@ export class GraphWorkspace implements AsyncDisposable {
 		) {
 			return { status: "needs_input" };
 		}
-		if (!(await graphBaseIsCurrent(this.sourceRoot, this.baseSha, signal))) return { status: "stale_base" };
+		if (!(await graphBaseIsCurrent(this.sourceRoot, this.baseSha, { signal, allowDirty: this.allowDirty })))
+			return { status: "stale_base" };
 		return { status: "ready_to_export", artifact: { ...candidate, patch: data.patch } };
 	}
 }

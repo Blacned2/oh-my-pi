@@ -249,18 +249,22 @@ export class OAuthAccounts implements OAuthApi {
 	 * selector displayed by a "pick the Nth account" UI as `position + 1`.
 	 *
 	 * When `sessionId` is supplied, the session-sticky OAuth credential is marked
-	 * `active`. No account is active before that session has resolved or pinned a
-	 * credential.
+	 * `active`. Before that session has resolved or pinned a credential, the
+	 * account that most recently served any session (persisted across restarts) is `active`.
 	 */
 	accounts(provider: string, sessionId?: string): OAuthAccountSummary[] {
 		if (this.#deps.overrides.suppressesOAuth(provider, this.#deps.affinity.isRestricted(provider, sessionId))) {
 			return [];
 		}
 		const sessionCredential = this.#deps.affinity.get(provider, sessionId);
-		const activeCredentialId =
+		let activeCredentialId =
 			sessionCredential?.type === "oauth"
 				? this.#deps.pool.entries(provider)[sessionCredential.index]?.id
 				: undefined;
+		if (sessionCredential === undefined) {
+			const lastUsedIndex = this.#deps.affinity.lastUsedOAuthIndex(provider);
+			if (lastUsedIndex !== undefined) activeCredentialId = this.#deps.pool.entries(provider)[lastUsedIndex]?.id;
+		}
 		const activeLastUsedAtMs = activeCredentialId !== undefined ? sessionCredential?.lastUsedAtMs : undefined;
 		return this.#getStoredOAuthSelections(provider).map((selection, position) => {
 			const active = selection.credentialId === activeCredentialId;

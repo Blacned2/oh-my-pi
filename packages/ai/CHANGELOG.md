@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the connected/active OAuth account showing the first stored account after a restart instead of the account used last
+
 ## [18.18.4] - 2026-11-09
 
 ### Added

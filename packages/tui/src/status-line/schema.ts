@@ -28,6 +28,7 @@ export const STATUS_LINE_SEGMENT_IDS = [
 	"usage",
 	"collab",
 	"stream",
+	"version",
 	"vim",
 ] as const;
 

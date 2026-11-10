@@ -1,6 +1,6 @@
 [package]
 name = "kostomp-desktop"
-version = "1.0.24"
+version = "1.0.26"
 edition = "2021"
 description = "Desktop window for the omp stats dashboard"
 

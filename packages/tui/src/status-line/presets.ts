@@ -4,7 +4,7 @@ import type { PresetDef, StatusLinePreset } from "./types";
 export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 	default: {
 		leftSegments: ["pi", "vim", "model", "mode", "collab", "stream", "path", "git", "pr", "context_pct", "cost"],
-		rightSegments: ["session_name", "cache_trend"],
+		rightSegments: ["session_name", "cache_trend", "version"],
 		separator: "powerline-thin",
 		segmentOptions: {
 			model: { showThinkingLevel: true },
@@ -15,7 +15,7 @@ export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 
 	minimal: {
 		leftSegments: ["vim", "path", "git"],
-		rightSegments: ["session_name", "mode", "context_pct"],
+		rightSegments: ["session_name", "mode", "context_pct", "version"],
 		separator: "slash",
 		segmentOptions: {
 			path: { abbreviate: true, maxLength: 30 },
@@ -25,7 +25,7 @@ export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 
 	compact: {
 		leftSegments: ["vim", "model", "mode", "git", "pr"],
-		rightSegments: ["session_name", "cost", "context_pct"],
+		rightSegments: ["session_name", "cost", "context_pct", "version"],
 		separator: "powerline-thin",
 		segmentOptions: {
 			model: { showThinkingLevel: false },
@@ -47,6 +47,7 @@ export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 			"context_pct",
 			"time_spent",
 			"time",
+			"version",
 		],
 		separator: "powerline",
 		segmentOptions: {
@@ -73,6 +74,7 @@ export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 			"context_total",
 			"time_spent",
 			"time",
+			"version",
 		],
 		separator: "powerline",
 		segmentOptions: {
@@ -86,7 +88,7 @@ export const STATUS_LINE_PRESETS: Record<StatusLinePreset, PresetDef> = {
 	ascii: {
 		// No Nerd Font dependencies
 		leftSegments: ["vim", "model", "mode", "path", "git", "pr"],
-		rightSegments: ["session_name", "token_total", "cost", "context_pct"],
+		rightSegments: ["session_name", "token_total", "cost", "context_pct", "version"],
 		separator: "ascii",
 		segmentOptions: {
 			model: { showThinkingLevel: true },

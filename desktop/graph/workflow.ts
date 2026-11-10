@@ -295,7 +295,10 @@ export async function runApprovedGraph(
 	} while (
 		!signal?.aborted &&
 		readGraphRelease(store, runId)?.status === "needs_input" &&
-		(await graphBaseIsCurrent(workspace.sourceRoot, workspace.baseSha, signal)) &&
+		(await graphBaseIsCurrent(workspace.sourceRoot, workspace.baseSha, {
+			signal,
+			allowDirty: workspace.allowDirty,
+		})) &&
 		retryGraphNode(store, runId, work)
 	);
 }

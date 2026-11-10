@@ -1935,7 +1935,7 @@ export class SelectorController {
 			const historyMatcher = historyStorage
 				? (query: string) => historyStorage.matchingSessionIds(query)
 				: undefined;
-			onSelectSession = session => this.handleResumeSession(session.path, { followContinuation: true });
+			onSelectSession = session => this.handleResumeSession(session.path);
 			selectorOptions = {
 				...(!onSelect
 					? {

@@ -379,7 +379,13 @@ export class SessionAffinity implements SessionsApi {
 		// filtered array would be off-by-N when any non-OAuth credential precedes the
 		// OAuth ones (e.g. [api_key, oauth_A, oauth_B] stored order).
 		const stickyCredential = sessionPref?.type === "oauth" ? allCredentials[sessionPref.index] : undefined;
-		return stickyCredential?.type === "oauth" ? stickyCredential : oauthCredentials[0];
+		if (stickyCredential?.type === "oauth") return stickyCredential;
+		// No pin yet (fresh process): the account that last served a request wins over the first stored one,
+		// matching the order CredentialSelector will start with.
+		const lastUsedIndex = sessionPref === undefined ? this.lastUsedOAuthIndex(provider) : undefined;
+		const lastUsed = lastUsedIndex === undefined ? undefined : allCredentials[lastUsedIndex];
+		if (lastUsed?.type === "oauth" && oauthCredentials.includes(lastUsed)) return lastUsed;
+		return oauthCredentials[0];
 	}
 
 	/**
