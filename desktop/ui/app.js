@@ -11,7 +11,7 @@
 
   window.kostompConfirmDelete = async (title, detail) => {
     const dialog = document.createElement("dialog");
-    dialog.className = "delete-confirm";
+    dialog.className = "delete-confirm glass";
     dialog.setAttribute("aria-label", title);
     const heading = document.createElement("h2");
     heading.textContent = title;

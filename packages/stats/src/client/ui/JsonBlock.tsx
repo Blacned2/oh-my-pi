@@ -33,7 +33,7 @@ export function JsonBlock({ data, title = "JSON", initialCollapsed = false }: Js
 			<div className="row" style={{ justifyContent: "space-between" }}>
 				<button
 					type="button"
-					className="btn"
+					className="btn glass-control"
 					data-variant="ghost"
 					data-size="sm"
 					onClick={() => setCollapsed(c => !c)}
@@ -42,7 +42,7 @@ export function JsonBlock({ data, title = "JSON", initialCollapsed = false }: Js
 					{collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
 					{title}
 				</button>
-				<button type="button" className="btn" data-variant="ghost" data-size="sm" onClick={copy}>
+				<button type="button" className="btn glass-control" data-variant="ghost" data-size="sm" onClick={copy}>
 					{copied ? <Check size={13} /> : <Copy size={13} />}
 					{copied ? "Copied" : "Copy"}
 				</button>

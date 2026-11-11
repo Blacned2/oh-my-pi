@@ -40,7 +40,7 @@ export function Segmented<T extends string>({
 	}, [value, options]);
 
 	return (
-		<div ref={rootRef} className="segmented" data-size={size} role="radiogroup" aria-label={ariaLabel}>
+		<div ref={rootRef} className="segmented glass-control" data-size={size} role="radiogroup" aria-label={ariaLabel}>
 			{thumb && <span className="segmented-thumb" style={{ left: thumb.left, width: thumb.width }} />}
 			{options.map(option => (
 				<button

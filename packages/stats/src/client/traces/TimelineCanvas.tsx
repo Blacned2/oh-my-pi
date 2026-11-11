@@ -847,7 +847,7 @@ function renderTooltip(hover: Hit, traceStart: number, ref: React.RefObject<HTML
 	if (hover.kind === "marker") {
 		const { marker } = hover;
 		return (
-			<div ref={ref} className="traces-tooltip" style={style}>
+			<div ref={ref} className="traces-tooltip glass" style={style}>
 				<div className="traces-tooltip-title">{marker.label}</div>
 				<div className="muted num">
 					{new Date(marker.time).toLocaleTimeString()} ({formatOffset(marker.time - traceStart)})
@@ -858,7 +858,7 @@ function renderTooltip(hover: Hit, traceStart: number, ref: React.RefObject<HTML
 
 	const { span } = hover;
 	return (
-		<div ref={ref} className="traces-tooltip" style={style}>
+		<div ref={ref} className="traces-tooltip glass" style={style}>
 			<div className="traces-tooltip-title truncate">{span.label}</div>
 			<div className="muted num">
 				{formatDurationMs(span.end - span.start)} · {new Date(span.start).toLocaleTimeString()} (

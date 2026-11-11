@@ -36,19 +36,19 @@
       return n;
     };
     const btn = (label, cls, onClick) => {
-      const b = mk("button", "fb-btn " + (cls || ""), label);
+      const b = mk("button", "fb-btn glass-control " + (cls || ""), label);
       b.type = "button";
       b.addEventListener("click", onClick);
       return b;
     };
     const veil = mk("div", "fb-veil");
-    const dlg = mk("div", "fb-panel");
+    const dlg = mk("div", "fb-panel glass");
     dlg.setAttribute("role", "dialog");
     dlg.setAttribute("aria-modal", "true");
     const title = imgMode ? "Choose images" : "Choose project folder";
     dlg.setAttribute("aria-label", title);
     const head = mk("div", "fb-head");
-    const crumbs = mk("div", "fb-path");
+    const crumbs = mk("div", "fb-path glass-control");
     const closeX = mk("button", "fb-x", "✕");
     closeX.type = "button";
     closeX.setAttribute("aria-label", "Close");

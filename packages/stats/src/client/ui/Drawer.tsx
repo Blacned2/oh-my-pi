@@ -46,7 +46,7 @@ export function Drawer({ open, onClose, title, subtitle, actions, width, childre
 			<div className="drawer-scrim" onClick={onClose} role="presentation" />
 			<div
 				ref={panelRef}
-				className="drawer"
+				className="drawer glass"
 				role="dialog"
 				aria-modal="true"
 				tabIndex={-1}
@@ -60,7 +60,7 @@ export function Drawer({ open, onClose, title, subtitle, actions, width, childre
 					{actions}
 					<button
 						type="button"
-						className="btn"
+						className="btn glass-control"
 						data-variant="ghost"
 						data-icon="true"
 						onClick={onClose}

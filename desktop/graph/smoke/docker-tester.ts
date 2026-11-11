@@ -1,7 +1,7 @@
 import { rejects, strictEqual } from "node:assert";
 import { $which, ptree, TempDir, windowsPathToWslMount } from "@oh-my-pi/pi-utils";
 import { type DockerTestProfile, testCandidateInDocker } from "../docker-tester";
-import { changeSet, fixture, original } from "../fixtures/git";
+import { author, changeSet, fixture, original } from "../fixtures/git";
 import { GraphWorkspace } from "../workspace";
 import probe from "./isolation-probe.sh" with { type: "text" };
 
@@ -103,4 +103,31 @@ try {
 	controller.abort();
 	await running.catch(() => {});
 }
-process.stdout.write("Graph Tester isolation, release evidence and cancellation passed\n");
+// Exceeds both the old 256 MiB snapshot cap and the old 384 MiB /work tmpfs.
+{
+	const largeSource = await fixture(temp.join("large-source"));
+	const files = Array.from({ length: 5 }, (_, index) => `assets/part-${index}.bin`);
+	const asset = new Uint8Array(80 * 1024 * 1024).fill(0x61);
+	const hash = new Bun.CryptoHasher("sha256").update(asset).digest("hex");
+	for (const file of files) await Bun.write(temp.join("large-source", file), asset);
+	await Bun.write(
+		temp.join("large-source", "assets", "SHA256SUMS"),
+		files.map(file => `${hash}  ${file}\n`).join(""),
+	);
+	await largeSource.stageFiles([...files, "assets/SHA256SUMS"]);
+	await largeSource.commitCreate("Large game assets", { author });
+	await using largeWorkspace = await GraphWorkspace.pin(largeSource.info().repoRoot);
+	const scopes = new Map([["code", ["src/backend.txt"]]]);
+	const changes = await largeWorkspace.captureChangeSet("code", ["src/backend.txt"], patch.patch);
+	const largeCandidate = await largeWorkspace.compose(scopes, [changes]);
+	const largeResult = await testCandidateInDocker(largeWorkspace, largeCandidate, {
+		...profile,
+		timeoutMs: 120_000,
+		command: ["/bin/sh", "-c", "sha256sum --check assets/SHA256SUMS"],
+	});
+	strictEqual(largeResult.treeId, largeCandidate.treeId);
+	strictEqual(largeResult.exitCode, 0, largeResult.stderr || largeResult.stdout);
+	strictEqual(largeResult.stdout.trim(), files.map(file => `${file}: OK`).join("\n"));
+	strictEqual(await largeSource.isDirty(), false);
+}
+process.stdout.write("Graph Tester isolation, release evidence, cancellation and 400 MiB snapshot passed\n");

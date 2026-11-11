@@ -5,7 +5,7 @@ import { ArchiveError } from "../../src/ar/error";
 import { type ArchiveLimits, DEFAULT_ARCHIVE_LIMITS } from "../../src/ar/limits";
 import { openArchive } from "../../src/ar/open";
 import { type ByteSource, memoryByteSource } from "../../src/ar/source";
-import { encodeTar, readTar, readTarEntriesFromBuffer, sniffTar } from "../../src/ar/tar";
+import { encodeTar, readTar, readTarEntriesFromBuffer, sniffTar, streamTar } from "../../src/ar/tar";
 import type { ArchiveIndexEntry, FormatReadOptions } from "../../src/ar/types";
 import { arFixture as fixture } from "./fixtures";
 
@@ -287,6 +287,21 @@ describe("tar writer", () => {
 		expect(entryAt(entries, "tree").mode).toBe(0o755);
 		expect(await memberBytes(entryAt(entries, "tree/repeat.txt"))).toEqual(members[0][1]);
 		expect(new TextDecoder().decode(await memberBytes(entryAt(entries, longPath)))).toBe("long name");
+	});
+
+	test("streams each async member before its producer reuses the payload buffer", async () => {
+		const payload = new Uint8Array(1025).fill(0x41);
+		const longPath = `long/${"segment".repeat(30)}/payload.bin`;
+		async function* members(): AsyncGenerator<readonly [string, Uint8Array]> {
+			yield ["first.bin", payload];
+			payload.fill(0x42);
+			yield [longPath, payload];
+		}
+		const chunks: Uint8Array[] = [];
+		for await (const chunk of streamTar(members())) chunks.push(chunk.slice());
+		const entries = await index(Buffer.concat(chunks));
+		expect(await memberBytes(entryAt(entries, "first.bin"))).toEqual(new Uint8Array(1025).fill(0x41));
+		expect(await memberBytes(entryAt(entries, longPath))).toEqual(new Uint8Array(1025).fill(0x42));
 	});
 
 	test("supports explicit empty directories and rejects unsafe or conflicting paths", async () => {

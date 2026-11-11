@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Added shared Aurora liquid-glass chrome and controls while keeping charts and tables opaque for reading.
+
 ## [18.18.4] - 2026-11-09
 
 ### Fixed

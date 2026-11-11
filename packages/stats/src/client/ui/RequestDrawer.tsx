@@ -61,7 +61,7 @@ export function RequestDrawer({ id, onClose }: RequestDrawerProps) {
 				details && status ? (
 					<div className="row" style={{ gap: 6 }}>
 						<a
-							className="btn"
+							className="btn glass-control"
 							data-size="sm"
 							data-variant="ghost"
 							href={buildHash({

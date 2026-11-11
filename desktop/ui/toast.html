@@ -3,18 +3,16 @@
 <head>
 <meta charset="utf-8">
 <title>Kostomp</title>
+<link rel="stylesheet" href="glass.css">
 <style>
-  :root { color-scheme: dark light; --bg: #1d1a2b; --fg: #f2effa; --dim: #a9a3bf; --line: rgba(255,255,255,.09); --hover: rgba(255,255,255,.07); --bar: #f7b731; }
-  @media (prefers-color-scheme: light) {
-    :root { --bg: #ffffff; --fg: #1c1a26; --dim: #6b667d; --line: rgba(0,0,0,.09); --hover: rgba(0,0,0,.05); }
-  }
+  :root { --fg:var(--ink-1); --dim:var(--ink-2); --line:var(--line-2); --bar:var(--warn); }
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; user-select: none; }
   body { padding: 12px; box-sizing: border-box; }
   .card {
     position: relative; height: 100%; box-sizing: border-box; display: flex; gap: 12px; align-items: flex-start;
     padding: 12px 14px; border-radius: 16px; background: var(--bg); color: var(--fg);
     border: 1px solid var(--line); box-shadow: 0 8px 28px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.3);
-    cursor: pointer; overflow: hidden; animation: in .22s cubic-bezier(.2,.9,.3,1.1);
+    cursor: pointer; overflow: hidden; animation: glass-enter 180ms ease-out; transform-origin: bottom right;
   }
   .card:hover { background-image: linear-gradient(var(--hover), var(--hover)); }
   @keyframes in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
@@ -32,10 +30,14 @@
   .bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--bar); transform-origin: left; animation: drain 8s linear forwards; }
   .card:hover .bar { animation-play-state: paused; }
   @keyframes drain { to { transform: scaleX(0); } }
+  .card.glass{background:var(--glass-tint);color:var(--ink-1)}
+  .x:focus-visible{opacity:1}
+  @media(prefers-reduced-transparency:reduce){.card.glass{background:var(--panel)}}
+  @media(prefers-reduced-motion:reduce){.card,.card.out,.bar{animation:none;transition:none}}
 </style>
 </head>
 <body>
-<div class="card" id="card">
+<div class="card glass" id="card">
   <img src="logo.png" alt="">
   <div class="text"><div class="title" id="title"></div><div class="body" id="body"></div></div>
   <button class="x" id="x" aria-label="Dismiss">✕</button>

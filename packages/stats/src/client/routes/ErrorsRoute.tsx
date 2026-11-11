@@ -105,7 +105,7 @@ export function ErrorsRoute({ active, range, onRequestClick }: ErrorsRouteProps)
 				{nextStep !== null && (
 					<button
 						type="button"
-						className="btn"
+						className="btn glass-control"
 						data-size="sm"
 						disabled={errors.refreshing}
 						onClick={() => setStep(step + 1)}
@@ -350,7 +350,12 @@ function SignatureDetail({ group, onRequestClick }: { group: ErrorGroupView; onR
 					{formatTimestamp(group.lastSeen)}
 				</span>
 				{latestId !== undefined && (
-					<button type="button" className="btn" data-size="sm" onClick={() => onRequestClick(latestId)}>
+					<button
+						type="button"
+						className="btn glass-control"
+						data-size="sm"
+						onClick={() => onRequestClick(latestId)}
+					>
 						Open latest <ArrowUpRight size={13} />
 					</button>
 				)}

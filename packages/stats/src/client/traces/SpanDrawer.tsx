@@ -75,7 +75,13 @@ function InlineSpanDetail({ title, subtitle, actions, onClose, children }: Drawe
 					{subtitle !== undefined && <div className="drawer-subtitle">{subtitle}</div>}
 				</div>
 				{actions}
-				<button type="button" className="btn" data-icon="true" onClick={onClose} aria-label="Close span details">
+				<button
+					type="button"
+					className="btn glass-control"
+					data-icon="true"
+					onClick={onClose}
+					aria-label="Close span details"
+				>
 					<X size={16} />
 				</button>
 			</header>
@@ -200,7 +206,7 @@ export function SpanDrawer({
 			actions={
 				<button
 					type="button"
-					className="btn"
+					className="btn glass-control"
 					data-variant="ghost"
 					data-icon="true"
 					onClick={handleCopy}
@@ -217,7 +223,7 @@ export function SpanDrawer({
 					<div>
 						<button
 							type="button"
-							className="btn"
+							className="btn glass-control"
 							data-size="sm"
 							onClick={() => {
 								if (span.entryId) onNavigate(track.id, span.entryId);
@@ -247,7 +253,7 @@ export function SpanDrawer({
 							<div>
 								<button
 									type="button"
-									className="btn"
+									className="btn glass-control"
 									data-size="sm"
 									onClick={() => onOpenChildTrack(span.childTrackId ?? "")}
 								>

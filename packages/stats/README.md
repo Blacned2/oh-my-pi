@@ -82,6 +82,8 @@ Range queries read `message_rollup` / `tool_rollup` / `session_rollup`, maintain
 
 Pages: Overview, Models, Providers, Costs, Requests, Errors, Traces, Tools, Frustration, Projects and Gain. `1`–`6` pick the time range; `g` then a letter jumps to a page. Every page revalidates when the live data version moves, so there is no refresh button.
 
+Aurora chrome shares `src/client/glass.css` with collab-web. `desktop/build.rs` copies that canonical stylesheet into `desktop/ui/glass.css` for the packaged WebView. Use `.glass` for chrome panes, `.glass-control` for controls and `.glass-pill` for capsules; buttons receive the control recipe by default. Reading surfaces remain opaque. `data-material="opaque"` and reduced-transparency preferences remove blur, and reduced-motion preferences disable animations.
+
 ## License
 
 MIT

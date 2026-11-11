@@ -21,7 +21,7 @@
 	--tv-mono: var(--font-mono, ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace);
 
 	border: 1px solid var(--tv-border);
-	border-radius: 6px;
+	border-radius: var(--radius-control, 6px);
 	font-family: var(--tv-mono);
 	font-size: 12px;
 	line-height: 1.5;

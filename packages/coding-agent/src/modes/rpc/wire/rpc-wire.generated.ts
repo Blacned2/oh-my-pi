@@ -886,10 +886,12 @@ export interface LoginProvider {
 	authenticated: boolean;
 }
 
+/** `efforts` are the thinking efforts the model accepts as a `:level` suffix; empty when it has none. */
 export interface ModelCatalogModel {
 	id: string;
 	name: string;
 	scoped: boolean;
+	efforts: string[];
 }
 
 export interface ModelCatalogProvider {

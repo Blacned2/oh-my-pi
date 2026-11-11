@@ -1,7 +1,6 @@
 ﻿// Injected into every page of the main window (loading screen and the stats dashboard).
-// Draws flat top-right window buttons (minimize, maximize/restore, close) straight on the topbar and makes the top strip
-// draggable (double-click toggles maximize). Styled with the dashboard's own theme variables
-// (with fallbacks for the loading screen) inside a shadow root so page CSS cannot leak in or out.
+// Draws glass window controls beside Settings and makes the top strip draggable.
+// The shared control recipe is loaded inside the shadow root; theme tokens inherit from the page.
 (() => {
   if (window.top !== window || window.__kostompControls) return;
   window.__kostompControls = true;
@@ -20,39 +19,36 @@
 
   const mount = () => {
     const host = document.createElement("div");
-    // Flush with the topbar's top-right corner, full topbar height; the topbar gets matching
-    // right padding so its controls never sit under the buttons. Desktop-only, injected.
-    host.style.cssText = "position:fixed;top:0;right:0;z-index:2147483647;";
-    const pad = document.createElement("style");
-    pad.textContent = ".topbar{padding-right:144px !important}";
-    (document.head || document.documentElement).appendChild(pad);
+    const topbar = document.querySelector(".topbar");
+    host.style.cssText = topbar
+      ? "display:flex;flex:none;align-items:center;"
+      : "position:fixed;top:18px;right:24px;z-index:2147483647;";
 
     const root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `
+      <link rel="stylesheet" href="glass.css">
       <style>
-        :host { all: initial; }
+        :host { font:inherit; }
         .bar {
-          display: flex; align-items: stretch; height: ${STRIP_HEIGHT - 1}px;
-          opacity: .7; transition: opacity .15s ease;
-          user-select: none; -webkit-user-select: none;
+          display:flex; align-items:center; gap:8px;
+          user-select:none; -webkit-user-select:none;
         }
-        .bar:hover, .bar:focus-within { opacity: 1; }
-        button {
-          all: unset; box-sizing: border-box; display: grid; place-items: center;
-          width: 46px; height: 100%; border-radius: 0;
-          color: var(--ink-2, #a0a0a8); cursor: pointer;
-          transition: background .12s ease, color .12s ease;
+        button.glass-control {
+          box-sizing:border-box; display:grid; place-items:center; padding:0;
+          width:36px; height:36px; border-radius:10px;
+          color:var(--ink-2); cursor:pointer;
+          transition:transform 160ms var(--ease),opacity 160ms var(--ease);
         }
-        button:hover { background: var(--hover, rgba(255,255,255,.08)); color: var(--ink-1, #ededef); }
-        button:active { background: var(--press, rgba(255,255,255,.12)); }
-        button:focus-visible { outline: 2px solid var(--focus, #5ad8e6); outline-offset: -2px; }
-        button.close:hover { background: var(--bad-soft, rgba(255,97,102,.15)); color: var(--bad, #ff6166); }
+        button:hover { color:var(--ink-1); }
+        button:active { transform:scale(.97); }
+        button:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+        button.close:hover { background:var(--bad-soft); color:var(--bad); }
         svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; }
       </style>
       <div class="bar">
-        <button class="min" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 12 12"><path d="M2.5 6h7"/></svg></button>
-        <button class="max" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 12 12">${ICON_MAX}</svg></button>
-        <button class="close" title="Close" aria-label="Close"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
+        <button class="min glass-control" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 12 12"><path d="M2.5 6h7"/></svg></button>
+        <button class="max glass-control" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 12 12">${ICON_MAX}</svg></button>
+        <button class="close glass-control" title="Close" aria-label="Close"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
       </div>`;
 
     const maxBtn = root.querySelector(".max");
@@ -106,10 +102,10 @@
     }
     document.documentElement.appendChild(gripHost);
 
-    document.documentElement.appendChild(host);
+    (topbar || document.documentElement).appendChild(host);
     syncMaxIcon();
   };
 
-  if (document.documentElement) mount();
-  else document.addEventListener("DOMContentLoaded", mount, { once: true });
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once:true });
+  else mount();
 })();

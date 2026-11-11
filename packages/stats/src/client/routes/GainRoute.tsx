@@ -93,7 +93,7 @@ export function GainRoute({ active, range }: GainRouteProps) {
 				actions={
 					projectOptions.length > 0 && (
 						<select
-							className="input"
+							className="input glass-control"
 							aria-label="Project"
 							value={project ?? ""}
 							onChange={e => setProject(e.target.value || null)}

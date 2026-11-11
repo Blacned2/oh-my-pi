@@ -29,7 +29,10 @@ export const SessionTabs = memo(function SessionTabs({
 			{tabs.map(tab => {
 				const active = tab.link !== "" && tab.link === activeLink;
 				return (
-					<div key={tabKey(tab)} className={active ? "sh-tab sh-tab-active" : "sh-tab"}>
+					<div
+						key={tabKey(tab)}
+						className={active ? "sh-tab sh-tab-active glass-control" : "sh-tab glass-control"}
+					>
 						<button
 							type="button"
 							role="tab"

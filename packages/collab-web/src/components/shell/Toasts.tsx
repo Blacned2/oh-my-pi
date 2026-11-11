@@ -52,7 +52,7 @@ export function Toasts({ notices }: { notices: readonly Notice[] }): ReactNode {
 	return (
 		<div className="sh-toasts">
 			{visible.map(n => (
-				<div key={n.id} className={`sh-toast sh-toast-${n.level}`} role="status">
+				<div key={n.id} className={`sh-toast glass sh-toast-${n.level}`} role="status">
 					<span className="sh-toast-msg">{n.message}</span>
 					{n.level === "error" && (
 						<button

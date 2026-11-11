@@ -391,7 +391,7 @@ export function Chart({
 
 			{hover !== null && !layout.empty && (
 				<div
-					className="chart-tooltip"
+					className="chart-tooltip glass"
 					style={
 						cx(hover) > width / 2
 							? { right: width - cx(hover) + Math.min(slotW / 2, 24) + 8, top: PAD_TOP }

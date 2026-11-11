@@ -128,12 +128,12 @@
     }
 
     function pane(g) {
-      const p = el("section", "node pane");
+      const p = el("section", "node pane glass");
       p.dataset.gid = String(g.gid);
       p.dataset.sid = g.active;
       // The pill floats over the pane's top-right corner; the rest of the strip is inert.
       const head = el("div", "pane-head");
-      const pill = el("div", "pane-pill");
+      const pill = el("div", "pane-pill glass-pill");
       const tabs = el("div", "pane-tabs");
       tabs.setAttribute("role", "tablist");
       for (const sid of g.tabs) {

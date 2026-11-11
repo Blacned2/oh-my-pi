@@ -2,6 +2,7 @@
  * Model-scope and per-agent model settings for RPC hosts: the data behind the CLI's
  * `/models` scope editor and the `/agents` hub model chips, without the TUI.
  */
+import { getSupportedEfforts } from "@oh-my-pi/pi-catalog/model-thinking";
 import type { AgentsHubDeps } from "@oh-my-pi/pi-tui/overlays/agents-hub";
 import { getProjectDir } from "@oh-my-pi/pi-utils";
 import { filterAvailableModelsByEnabledPatterns } from "../../config/model-resolver";
@@ -13,6 +14,8 @@ export interface RpcModelCatalogModel {
 	id: string;
 	name: string;
 	scoped: boolean;
+	/** Thinking efforts valid as a `:level` suffix on this model; empty when none. */
+	efforts: string[];
 }
 
 export interface RpcModelCatalogProvider {
@@ -55,7 +58,12 @@ export async function getRpcModelCatalog(session: AgentSession): Promise<RpcMode
 			models = [];
 			byProvider.set(model.provider, models);
 		}
-		models.push({ id: model.id, name: model.name, scoped: scoped.has(`${model.provider}/${model.id}`) });
+		models.push({
+			id: model.id,
+			name: model.name,
+			scoped: scoped.has(`${model.provider}/${model.id}`),
+			efforts: [...getSupportedEfforts(model)],
+		});
 	}
 	const providers = [...byProvider.entries()]
 		.sort(([a], [b]) => a.localeCompare(b))

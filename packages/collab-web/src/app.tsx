@@ -336,7 +336,7 @@ function Session({
 				{railOpen && (
 					<>
 						<div className="sh-rail-backdrop" onClick={() => setRailOpen(false)} />
-						<aside className="sh-rail">
+						<aside className="sh-rail glass">
 							<AgentsPanel
 								agents={snap.agents}
 								progress={snap.progress}

@@ -514,7 +514,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 			{away && (
 				<button
 					type="button"
-					className="tr-bottom"
+					className="tr-bottom glass-pill"
 					aria-label={t("transcript.toBottom")}
 					title={t("transcript.toBottom")}
 					onClick={() => {

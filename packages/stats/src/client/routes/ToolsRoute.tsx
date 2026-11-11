@@ -229,7 +229,7 @@ export function ToolsRoute({ active, range }: ToolsRouteProps) {
 						{toolFilter !== null && (
 							<button
 								type="button"
-								className="btn"
+								className="btn glass-control"
 								data-size="sm"
 								data-variant="ghost"
 								data-icon="true"

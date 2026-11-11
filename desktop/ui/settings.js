@@ -18,6 +18,8 @@
       else if (k in n && k !== "list" && k !== "role") n[k] = v;
       else if (v !== false) n.setAttribute(k, v === true ? "" : String(v));
     }
+    if (n.matches("button:not(.switch),input:not([type=checkbox]):not([type=range]):not([type=color]),select,textarea,.tile")) n.classList.add("glass-control");
+    if (n.matches(".chip,.acct-on")) n.classList.add("glass-pill");
     for (const kid of kids.flat()) if (kid !== null && kid !== undefined && kid !== false) n.append(kid);
     return n;
   }
@@ -789,51 +791,88 @@
     }
     // Offer the scoped models; with no scope, every connected model.
     const choices = [];
+    const effortsOf = new Map();
     for (const p of catalog.providers) for (const m of p.models) {
       if (catalog.enabledModels.length && !m.scoped) continue;
-      choices.push(p.provider + "/" + m.id);
+      const id = p.provider + "/" + m.id;
+      choices.push(id);
+      effortsOf.set(id, Array.isArray(m.efforts) ? m.efforts : []);
     }
     const section = h("section", { class: "set-group" });
-    for (const a of agents) section.append(agentRow(a, choices));
+    for (const a of agents) section.append(agentRow(a, choices, effortsOf));
     body.append(section,
       h("p", { class: "set-foot", text: "Saved to your global omp config (task.agentModelOverrides), the same setting the CLI /agents hub edits." }));
   }
 
-  function agentRow(a, choices) {
+  // `task.agentModelOverrides` stores `provider/id[:effort]`; split off the effort when the model
+  // takes one. Multi-pattern or role-alias values are left whole (the select shows them as-is).
+  function splitEffort(value, effortsOf) {
+    const i = value.lastIndexOf(":");
+    if (i > 0) {
+      const base = value.slice(0, i), level = value.slice(i + 1);
+      if ((effortsOf.get(base) || []).includes(level)) return [base, level];
+    }
+    return [value, ""];
+  }
+
+  function agentRow(a, choices, effortsOf) {
     const err = h("div", { class: "row-err", hidden: true });
     const eff = h("div", { class: "key" });
     const showEff = (agent) => { eff.textContent = agent.effectiveModel ? "runs on " + agent.effectiveModel : "runs on the session model"; };
     showEff(a);
-    const cur = a.overrideModel || "";
+    const [curModel, curEffort] = splitEffort(a.overrideModel || "", effortsOf);
     const own = a.agentModel && a.agentModel.length ? a.agentModel.join(", ") : "";
-    const opts = [h("option", { value: "", text: own ? `Default (${own})` : "Default", selected: !cur })];
-    if (cur && !choices.includes(cur)) opts.push(h("option", { value: cur, text: cur, selected: true }));
-    for (const c of choices) opts.push(h("option", { value: c, text: c, selected: c === cur }));
+    const opts = [h("option", { value: "", text: own ? `Default (${own})` : "Default", selected: !curModel })];
+    if (curModel && !choices.includes(curModel)) opts.push(h("option", { value: curModel, text: curModel, selected: true }));
+    for (const c of choices) opts.push(h("option", { value: c, text: c, selected: c === curModel }));
     const sel = h("select", { class: "field", "aria-label": "Model for " + a.name }, opts);
-    let last = cur;
-    sel.addEventListener("change", async () => {
+    const effSel = h("select", { class: "field", "aria-label": "Effort for " + a.name });
+    // Effort options follow the chosen model; hidden when it takes none (or the model is Default).
+    const fillEffort = (model, effort) => {
+      const levels = effortsOf.get(model) || [];
+      effSel.replaceChildren(
+        h("option", { value: "", text: "effort default", selected: !effort }),
+        ...levels.map((l) => h("option", { value: l, text: "effort " + l, selected: l === effort })));
+      effSel.hidden = !levels.length;
+    };
+    fillEffort(curModel, curEffort);
+    let last = (a.overrideModel || "");
+    const save = async (value, revert) => {
       err.hidden = true;
-      const value = sel.value;
-      sel.disabled = true;
+      sel.disabled = effSel.disabled = true;
       try {
         await rpc("set_agent_model", { agent: a.name, model: value || null });
         last = value;
         const fresh = ((await rpc("get_agent_models")).agents || []).find((x) => x.name === a.name);
         if (fresh) showEff(fresh);
       } catch (x) {
-        sel.value = last;
+        revert();
         err.hidden = false;
         err.textContent = rpcErrorText(x);
       } finally {
-        sel.disabled = false;
+        sel.disabled = effSel.disabled = false;
       }
+    };
+    const revert = () => {
+      const [m, e] = splitEffort(last, effortsOf);
+      sel.value = m;
+      fillEffort(m, e);
+      effSel.value = e;
+    };
+    sel.addEventListener("change", () => {
+      const model = sel.value;
+      // Keep the effort only when the new model also supports it.
+      const keep = (effortsOf.get(model) || []).includes(effSel.value) ? effSel.value : "";
+      fillEffort(model, keep);
+      save(model && keep ? model + ":" + keep : model, revert);
     });
+    effSel.addEventListener("change", () => save(sel.value + (effSel.value ? ":" + effSel.value : ""), revert));
     return h("div", { class: "set-row" + (a.disabled ? " off" : "") },
       h("div", { class: "txt" },
         h("div", { class: "name" }, a.name, h("span", { class: "tag", text: a.disabled ? a.source + " · disabled" : a.source })),
         a.description && h("div", { class: "desc", text: a.description }),
         eff, err),
-      h("div", { class: "ctl" }, sel));
+      h("div", { class: "ctl" }, sel, effSel));
   }
 
   // ---- extensions page (get_extensions / set_extension_enabled / reconnect_mcp_server) ----

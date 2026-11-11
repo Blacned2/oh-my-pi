@@ -92,7 +92,7 @@ function AskEditor({ prefill, onSubmit }: AskEditorProps): ReactNode {
 	};
 
 	return (
-		<div className="sh-composer-inner">
+		<div className="sh-composer-inner glass">
 			<textarea
 				ref={taRef}
 				className="sh-composer-input"
@@ -108,7 +108,7 @@ function AskEditor({ prefill, onSubmit }: AskEditorProps): ReactNode {
 			<div className="sh-composer-actions">
 				<button
 					type="button"
-					className="sh-btn sh-btn-primary"
+					className="sh-btn sh-btn-primary glass-control"
 					onClick={() => onSubmit(draft)}
 					title={t("composer.submitTitle")}
 				>
@@ -236,13 +236,17 @@ export const Composer = memo(function Composer({
 					/>
 				)}
 				<div className="sh-composer-actions sh-ask-actions">
-					<button type="button" className="sh-btn" onClick={() => client.sendUiResponse(uiRequest.reqId)}>
+					<button
+						type="button"
+						className="sh-btn glass-control"
+						onClick={() => client.sendUiResponse(uiRequest.reqId)}
+					>
 						{t("composer.cancel")}
 					</button>
 					{busy && (
 						<button
 							type="button"
-							className="sh-btn sh-btn-stop"
+							className="sh-btn sh-btn-stop glass-control"
 							onClick={() => client.sendAbort()}
 							disabled={!live}
 							title={t("composer.stopTitle")}
@@ -257,7 +261,7 @@ export const Composer = memo(function Composer({
 
 	return (
 		<div className="sh-composer">
-			<div className={`sh-composer-inner${canPrompt ? "" : " sh-composer-inner-off"}`}>
+			<div className={`sh-composer-inner glass${canPrompt ? "" : " sh-composer-inner-off"}`}>
 				<textarea
 					ref={taRef}
 					className="sh-composer-input"
@@ -293,7 +297,7 @@ export const Composer = memo(function Composer({
 						{busy && !readOnly && (
 							<button
 								type="button"
-								className="sh-btn sh-btn-stop"
+								className="sh-btn sh-btn-stop glass-control"
 								onClick={() => client.sendAbort()}
 								disabled={!live}
 								title={t("composer.stopTitle")}
@@ -303,7 +307,7 @@ export const Composer = memo(function Composer({
 						)}
 						<button
 							type="button"
-							className="sh-btn sh-btn-send"
+							className="sh-btn sh-btn-send glass-control"
 							onClick={send}
 							disabled={!canSend}
 							title={t("composer.sendTitle")}

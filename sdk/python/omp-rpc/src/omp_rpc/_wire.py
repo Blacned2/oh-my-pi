@@ -1088,9 +1088,11 @@ class LoginProvider:
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class ModelCatalogModel:
+    """`efforts` are the thinking efforts the model accepts as a `:level` suffix; empty when it has none."""
     id: str
     name: str
     scoped: bool
+    efforts: tuple[str, ...]
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -2703,6 +2705,7 @@ def parse_model_catalog_model(value: object, path: str = "ModelCatalogModel") ->
         id=required(payload, "id", decode_str, path),
         name=required(payload, "name", decode_str, path),
         scoped=required(payload, "scoped", decode_bool, path),
+        efforts=required(payload, "efforts", array(decode_str), path),
     )
 
 

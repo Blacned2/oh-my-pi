@@ -117,10 +117,10 @@ textarea {
 
 @keyframes shimmer {
 	0% {
-		background-position: -200% 0;
+		opacity: 0.5;
 	}
 	100% {
-		background-position: 200% 0;
+		opacity: 1;
 	}
 }
 

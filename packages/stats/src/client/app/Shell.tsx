@@ -46,7 +46,7 @@ export function Shell({ section, onSectionChange, range, onRangeChange, children
 	return (
 		<>
 			<div className="shell-ambient" />
-			<header className="topbar" data-scrolled={scrolled}>
+			<header className="topbar glass" data-scrolled={scrolled}>
 				<button
 					type="button"
 					className="btn topbar-menu"
@@ -93,7 +93,7 @@ export function Shell({ section, onSectionChange, range, onRangeChange, children
 			</header>
 
 			{menuOpen && <div className="drawer-scrim" onClick={() => setMenuOpen(false)} role="presentation" />}
-			<nav className="sidebar" data-open={menuOpen} aria-label="Pages">
+			<nav className="sidebar glass" data-open={menuOpen} aria-label="Pages">
 				{NAV.map(group => (
 					<div key={group.heading} className="nav-group">
 						<div className="nav-heading">{group.heading}</div>

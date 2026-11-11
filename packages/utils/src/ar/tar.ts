@@ -945,12 +945,14 @@ function appendTarEntry(
 	if (!directory) appendPayload(parts, payload);
 }
 
-/** Encode files as a deterministic ustar archive, using PAX records for overflow paths. */
-export async function encodeTar(members: Iterable<readonly [string, Uint8Array]>): Promise<Uint8Array> {
-	const parts: Uint8Array[] = [];
+/** Stream a deterministic ustar archive, retaining only the current member's bytes. */
+export async function* streamTar(
+	members: Iterable<readonly [string, Uint8Array]> | AsyncIterable<readonly [string, Uint8Array]>,
+): AsyncGenerator<Uint8Array> {
 	const kinds = new Map<string, "directory" | "file">();
 	let sequence = 0;
-	for (const [rawPath, bytes] of members) {
+	for await (const [rawPath, bytes] of members) {
+		const parts: Uint8Array[] = [];
 		const directory = rawPath.endsWith("/") || rawPath.endsWith("\\");
 		const normalized = normalizeArchiveEntryPath(rawPath);
 		if (!normalized) throw new ArchiveError(`Invalid tar member path '${formatArchivePathForError(rawPath)}'`);
@@ -976,7 +978,14 @@ export async function encodeTar(members: Iterable<readonly [string, Uint8Array]>
 		}
 		kinds.set(normalized, directory ? "directory" : "file");
 		appendTarEntry(parts, normalized, bytes, directory, sequence++);
+		yield* parts;
 	}
-	parts.push(new Uint8Array(BLOCK_SIZE * 2));
+	yield new Uint8Array(BLOCK_SIZE * 2);
+}
+
+/** Encode files as a deterministic ustar archive, using PAX records for overflow paths. */
+export async function encodeTar(members: Iterable<readonly [string, Uint8Array]>): Promise<Uint8Array> {
+	const parts: Uint8Array[] = [];
+	for await (const chunk of streamTar(members)) parts.push(chunk);
 	return concatBytes(parts);
 }

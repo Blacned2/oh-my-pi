@@ -17,7 +17,7 @@ export function ErrorState({ error, onRetry }: { error: Error | string; onRetry?
 			<TriangleAlert size={15} />
 			<span className="error-state-message">{typeof error === "string" ? error : error.message}</span>
 			{onRetry && (
-				<button type="button" className="btn" data-size="sm" data-variant="ghost" onClick={onRetry}>
+				<button type="button" className="btn glass-control" data-size="sm" data-variant="ghost" onClick={onRetry}>
 					<RotateCw size={13} /> Retry
 				</button>
 			)}

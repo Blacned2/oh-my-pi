@@ -75,7 +75,7 @@ export function ConnectScreen({
 					/>
 				</div>
 			)}
-			<form className="sh-connect-card" onSubmit={submit}>
+			<form className="sh-connect-card glass" onSubmit={submit}>
 				<div className="sh-connect-head">
 					<h1 className="sh-connect-title">{t("connect.title")}</h1>
 					<p className="sh-connect-sub">{t("connect.sub")}</p>
@@ -83,7 +83,7 @@ export function ConnectScreen({
 				<label className="sh-field">
 					<span className="sh-field-label">{t("connect.link")}</span>
 					<input
-						className="sh-input sh-input-mono"
+						className="sh-input sh-input-mono glass-control"
 						type="text"
 						value={link}
 						onChange={e => setLink(e.target.value)}
@@ -97,7 +97,7 @@ export function ConnectScreen({
 				<label className="sh-field">
 					<span className="sh-field-label">{t("connect.name")}</span>
 					<input
-						className="sh-input"
+						className="sh-input glass-control"
 						type="text"
 						value={name}
 						onChange={e => setName(e.target.value)}
@@ -111,12 +111,12 @@ export function ConnectScreen({
 					<label className="sh-field">
 						<span className="sh-field-label">{t("connect.pair")}</span>
 						{pairToken ? (
-							<button type="button" className="sh-btn" onClick={() => onPairToken("")}>
+							<button type="button" className="sh-btn glass-control" onClick={() => onPairToken("")}>
 								{t("connect.pairForget")}
 							</button>
 						) : (
 							<input
-								className="sh-input sh-input-mono"
+								className="sh-input sh-input-mono glass-control"
 								type="password"
 								value={pairDraft}
 								onChange={e => setPairDraft(e.target.value)}
@@ -143,7 +143,7 @@ export function ConnectScreen({
 					</label>
 				)}
 				{shown && <div className="sh-connect-error">{shown}</div>}
-				<button className="sh-btn sh-btn-primary sh-connect-submit" type="submit">
+				<button className="sh-btn sh-btn-primary sh-connect-submit glass-control" type="submit">
 					{t("connect.submit")} <ArrowRight size={14} />
 				</button>
 				<div className="sh-connect-foot">

@@ -435,7 +435,10 @@ export const stateDefs = {
 		"A side-question topic: its first turn's fields plus follow-ups; the latest turn is the last follow-up, else the record.",
 	),
 	LoginProvider: { id: "string", name: "string", available: "boolean", authenticated: "boolean" },
-	ModelCatalogModel: { id: "string", name: "string", scoped: "boolean" },
+	ModelCatalogModel: doc(
+		{ id: "string", name: "string", scoped: "boolean", efforts: "string[]" },
+		"`efforts` are the thinking efforts the model accepts as a `:level` suffix; empty when it has none.",
+	),
 	ModelCatalogProvider: { provider: "string", models: "ModelCatalogModel[]" },
 	ModelCatalog: doc(
 		{ enabledModels: "string[]", providers: "ModelCatalogProvider[]" },

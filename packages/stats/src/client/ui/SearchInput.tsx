@@ -14,7 +14,7 @@ export function SearchInput({ value, onChange, placeholder = "Filter…", label 
 		<label className="search">
 			<Search size={14} />
 			<input
-				className="input"
+				className="input glass-control"
 				type="search"
 				aria-label={label}
 				value={value}

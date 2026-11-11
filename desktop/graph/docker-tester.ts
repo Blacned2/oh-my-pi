@@ -93,6 +93,10 @@ export async function testCandidateInDocker(
 	if (imageConfig.Volumes && Object.keys(imageConfig.Volumes).length !== 0)
 		throw new Error("Graph test image declares volumes");
 	const archive = await workspace.testSnapshot(candidate, run.join("candidate.tar"), runSignal);
+	// /work's tmpfs pages count against the container memory limit.
+	const snapshotMiB = Math.ceil(archive.size / (1024 * 1024));
+	const workspaceMiB = Math.max(384, snapshotMiB + Math.max(128, Math.ceil(snapshotMiB / 2)));
+	const memoryMiB = workspaceMiB + 384;
 	const name = `kostomp-graph-${crypto.randomUUID()}`;
 	let id: string | undefined;
 	const removeContainer = async () => {
@@ -121,12 +125,12 @@ export async function testCandidateInDocker(
 				"--user=65532:65532",
 				"--no-healthcheck",
 				"--log-driver=none",
-				"--memory=768m",
-				"--memory-swap=768m",
+				`--memory=${memoryMiB}m`,
+				`--memory-swap=${memoryMiB}m`,
 				"--cpus=1",
 				"--pids-limit=128",
 				"--env=HOME=/tmp",
-				"--tmpfs=/work:rw,exec,nosuid,nodev,size=384m,uid=65532,gid=65532,mode=0700",
+				`--tmpfs=/work:rw,exec,nosuid,nodev,size=${workspaceMiB}m,uid=65532,gid=65532,mode=0700`,
 				"--tmpfs=/tmp:rw,nosuid,nodev,size=64m,mode=1777",
 				"--entrypoint=/bin/sh",
 				image,

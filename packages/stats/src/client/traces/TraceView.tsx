@@ -51,7 +51,7 @@ export function TraceView({ file, active, onBack }: TraceViewProps) {
 	return (
 		<div className="stack traces-view">
 			<div>
-				<button type="button" className="btn" data-variant="ghost" data-size="sm" onClick={onBack}>
+				<button type="button" className="btn glass-control" data-variant="ghost" data-size="sm" onClick={onBack}>
 					<ArrowLeft size={14} aria-hidden="true" />
 					Sessions
 				</button>
@@ -62,7 +62,7 @@ export function TraceView({ file, active, onBack }: TraceViewProps) {
 				actions={
 					<button
 						type="button"
-						className="btn"
+						className="btn glass-control"
 						data-variant="ghost"
 						data-icon="true"
 						onClick={query.refetch}
@@ -284,7 +284,7 @@ export function SessionTraceView({
 					<>
 						<button
 							type="button"
-							className="btn"
+							className="btn glass-control"
 							data-variant="ghost"
 							data-size="sm"
 							onClick={() => collapseAll(false)}
@@ -293,7 +293,7 @@ export function SessionTraceView({
 						</button>
 						<button
 							type="button"
-							className="btn"
+							className="btn glass-control"
 							data-variant="ghost"
 							data-size="sm"
 							onClick={() => collapseAll(true)}
@@ -336,7 +336,7 @@ export function SessionTraceView({
 									</span>
 									<button
 										type="button"
-										className="btn"
+										className="btn glass-control"
 										data-variant="ghost"
 										data-size="sm"
 										data-icon="true"
@@ -348,7 +348,7 @@ export function SessionTraceView({
 									</button>
 									<button
 										type="button"
-										className="btn"
+										className="btn glass-control"
 										data-variant="ghost"
 										data-size="sm"
 										data-icon="true"

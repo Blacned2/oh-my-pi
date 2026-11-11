@@ -3766,11 +3766,13 @@ pub struct LoginProvider {
 	pub authenticated: bool,
 }
 
+/// `efforts` are the thinking efforts the model accepts as a `:level` suffix; empty when it has none.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelCatalogModel {
 	pub id: String,
 	pub name: String,
 	pub scoped: bool,
+	pub efforts: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

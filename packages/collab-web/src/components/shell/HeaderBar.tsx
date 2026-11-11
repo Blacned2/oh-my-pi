@@ -63,7 +63,7 @@ export const HeaderBar = memo(function HeaderBar({
 	}
 
 	return (
-		<header className="sh-header">
+		<header className="sh-header glass">
 			<div className="sh-tabbar">
 				<span className="sh-brand" aria-label={t("brand.aria")}>
 					<OmpMark />
@@ -93,14 +93,21 @@ export const HeaderBar = memo(function HeaderBar({
 					<SettingsMenu tabs={tabs} activeLink={activeLink} onSelectTab={onSelectTab} onCloseTab={onCloseTab} />
 					<button
 						type="button"
-						className={railOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
+						className={
+							railOpen ? "sh-btn sh-btn-icon sh-btn-on glass-control" : "sh-btn sh-btn-icon glass-control"
+						}
 						onClick={onToggleRail}
 						title={railOpen ? t("header.hideAgents") : t("header.showAgents")}
 					>
 						<PanelRight size={14} />
 						{subCount > 0 && <span className="sh-badge">{subCount}</span>}
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onLeave} title={t("header.leave")}>
+					<button
+						type="button"
+						className="sh-btn sh-btn-icon glass-control"
+						onClick={onLeave}
+						title={t("header.leave")}
+					>
 						<LogOut size={14} />
 					</button>
 				</div>
@@ -118,22 +125,22 @@ export const HeaderBar = memo(function HeaderBar({
 				</div>
 				<div className="sh-info-right">
 					<span
-						className={`sh-status sh-status-${phase}`}
+						className={`sh-status sh-status-${phase} glass-pill`}
 						title={t("header.connection", { phase: t(PHASE_LABEL[phase]) })}
 					>
 						<span className={`sh-dot sh-dot-${phase}`} />
 						{t(PHASE_LABEL[phase])}
 					</span>
 					{readOnly && (
-						<span className="sh-chip" title={t("header.readOnlyHint")}>
+						<span className="sh-chip glass-pill" title={t("header.readOnlyHint")}>
 							{t("header.readOnly")}
 						</span>
 					)}
-					{state?.model && <span className="sh-chip sh-chip-meta">{state.model.name}</span>}
-					{state?.thinkingLevel && <span className="sh-chip sh-chip-meta">{state.thinkingLevel}</span>}
+					{state?.model && <span className="sh-chip sh-chip-meta glass-pill">{state.model.name}</span>}
+					{state?.thinkingLevel && <span className="sh-chip sh-chip-meta glass-pill">{state.thinkingLevel}</span>}
 					{pct != null && (
 						<span
-							className={pct > 80 ? "sh-gauge sh-gauge-warn" : "sh-gauge"}
+							className={pct > 80 ? "sh-gauge sh-gauge-warn glass-pill" : "sh-gauge glass-pill"}
 							title={t("header.context", { percent: fmtPercent(pct) })}
 						>
 							<span className="sh-gauge-track">

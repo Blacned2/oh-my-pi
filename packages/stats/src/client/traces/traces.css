@@ -172,19 +172,16 @@
 	color: var(--ink-3);
 }
 
+.traces-tooltip.glass,
 .traces-tooltip {
 	position: fixed;
 	z-index: 60;
 	max-width: 300px;
 	pointer-events: none;
-	background: var(--overlay);
-	backdrop-filter: blur(12px);
-	border: 1px solid var(--line-3);
 	border-radius: var(--r-control);
 	padding: 8px 10px;
 	font-size: 12px;
 	line-height: 1.5;
-	box-shadow: var(--shadow-2);
 }
 
 .traces-tooltip-title {

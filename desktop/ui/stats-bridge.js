@@ -39,11 +39,11 @@
   const MAT_KEY = "kostomp-material";
   let glassStyle = null;
   const setGlass = (glass) => {
+    document.documentElement.dataset.material = glass ? "glass" : "opaque";
     if (glass && !glassStyle) {
       glassStyle = document.createElement("style");
       glassStyle.textContent =
-        "html,body{background:transparent !important}" +
-        ".shell-panel{background:color-mix(in srgb,var(--panel) 62%,transparent) !important}";
+        "html,body{background:transparent !important}";
       (document.head || document.documentElement).appendChild(glassStyle);
     } else if (!glass && glassStyle) {
       glassStyle.remove();
@@ -58,6 +58,7 @@
   });
 
   const hideToggle = () => {
+    document.documentElement.classList.add("kostomp-frame");
     setGlass(localStorage.getItem(MAT_KEY) === "glass");
     const style = document.createElement("style");
     style.textContent = 'button[aria-label$="theme (click to switch)"]{display:none !important}';

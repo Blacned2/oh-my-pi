@@ -1,9 +1,8 @@
 import type { VcsGitRepo } from "@oh-my-pi/pi-natives";
+import { streamTar } from "@oh-my-pi/pi-utils/ar/tar";
 import { repoPathPrefixes } from "./repo-path";
 
 const maxFiles = 16_384;
-const maxMiB = 256;
-const maxBytes = maxMiB * 1024 * 1024;
 const indexHeaderBytes = 12;
 const indexEntryPrefixBytes = 62;
 const sha1Bytes = 20;
@@ -59,19 +58,28 @@ export async function buildTestSnapshot(
 	signal?: AbortSignal,
 ): Promise<Bun.BunFile> {
 	const index = Buffer.from(await Bun.file(indexPath).arrayBuffer());
-	const files: [string, Buffer | string][] = [];
-	const executable: string[] = [];
-	let remaining = maxBytes;
-	for (const entry of snapshotEntries(index)) {
-		signal?.throwIfAborted();
-		const { data, truncated } = await repo.showBlob(entry.blobId, remaining + 1, signal);
-		remaining -= data.byteLength;
-		if (truncated || remaining < 0) throw new Error(`Graph snapshot exceeds ${maxMiB} MiB`);
-		files.push([`project/${entry.path}`, data]);
-		if (entry.executable) executable.push(`./${entry.path}\0`);
+	const entries = snapshotEntries(index);
+	async function* members(): AsyncGenerator<readonly [string, Uint8Array]> {
+		const executable: string[] = [];
+		for (const entry of entries) {
+			signal?.throwIfAborted();
+			const { data, truncated } = await repo.showBlob(entry.blobId, undefined, signal);
+			if (truncated) throw new Error(`Graph snapshot blob was truncated: ${entry.path}`);
+			yield [`project/${entry.path}`, data];
+			if (entry.executable) executable.push(`./${entry.path}\0`);
+		}
+		yield ["graph-executables", new TextEncoder().encode(executable.join(""))];
 	}
-	files.push(["graph-executables", executable.join("")]);
-	await Bun.Archive.write(archivePath, Object.fromEntries(files));
+	const writer = Bun.file(archivePath).writer();
+	try {
+		for await (const chunk of streamTar(members())) {
+			signal?.throwIfAborted();
+			writer.write(chunk);
+			await writer.flush();
+		}
+	} finally {
+		await writer.end();
+	}
 	signal?.throwIfAborted();
 	return Bun.file(archivePath);
 }

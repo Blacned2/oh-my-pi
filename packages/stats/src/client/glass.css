@@ -1,0 +1,85 @@
+/* Aurora material: canonical source; desktop/build.rs copies it into the WebView assets. */
+:root:root {
+  color-scheme: dark;
+  --bg:#120e26; --panel:#1b1638; --raised:#272050; --overlay:rgba(24,19,50,.92);
+  --line-1:rgba(190,175,255,.12); --line-2:rgba(190,175,255,.2); --line-3:rgba(190,175,255,.32);
+  --ink-1:#f1eeff; --ink-2:#b4abdc; --ink-3:#b4abdc; --ink-inverse:#140f2e;
+  --accent:#a99bff; --focus:var(--accent); --ok:#3be0b5; --warn:#ffc233; --bad:#ff6b78;
+  --c-violet:var(--accent); --c-coral:#ff8a7a; --c-mint:#3be0b5; --c-sun:#ffc233; --c-sky:#6ea8ff;
+  --ease:cubic-bezier(.23,1,.32,1);
+  --glass-a:.72; --glass-rgb:18 14 38; --glass-sheen-a:.16; --glass-rim-a:.55;
+  --glass-grain-a:.03; --glass-pane-blur:28px; --glass-sat:1.8; --glow-a:.3;
+  --glass-blur:var(--glass-pane-blur);
+  --glass-tint:rgb(var(--glass-rgb) / var(--glass-a));
+  --glass-sheen:rgb(255 255 255 / var(--glass-sheen-a));
+  --glass-rim:rgb(255 255 255 / var(--glass-rim-a));
+  --glass-shadow:0 24px 60px -20px rgb(8 4 30 / .6);
+  --radius-pane:26px; --radius-control:14px; --radius-pill:999px;
+}
+:root:root[data-theme="light"] {
+  color-scheme:light;
+  --bg:#f5f1ff; --panel:#fff; --raised:color-mix(in srgb,var(--panel) 94%,var(--accent)); --overlay:rgba(255,255,255,.94);
+  --line-1:rgba(60,40,140,.1); --line-2:rgba(60,40,140,.18); --line-3:rgba(60,40,140,.3);
+  --ink-1:#231a4a; --ink-2:#5b5088; --ink-3:#5b5088; --ink-inverse:#fff;
+  --accent:#6d4aff; --ok:#08795f; --warn:#7d5600; --bad:#b8321f;
+  --c-violet:#6d4aff; --c-coral:#b8321f; --c-mint:#08795f; --c-sun:#ffc233; --c-sky:#6d4aff;
+  --glass-rgb:245 241 255; --glass-a:.8; --glass-sheen-a:.42; --glass-rim-a:.7; --glow-a:.18;
+  --glass-shadow:0 24px 60px -20px rgb(74 47 208 / .18);
+}
+@media (prefers-color-scheme:light) {
+  :root:root:not([data-theme]) {
+    color-scheme:light;
+    --bg:#f5f1ff; --panel:#fff; --raised:color-mix(in srgb,var(--panel) 94%,var(--accent)); --overlay:rgba(255,255,255,.94);
+    --line-1:rgba(60,40,140,.1); --line-2:rgba(60,40,140,.18); --line-3:rgba(60,40,140,.3);
+    --ink-1:#231a4a; --ink-2:#5b5088; --ink-3:#5b5088; --ink-inverse:#fff;
+    --accent:#6d4aff; --ok:#08795f; --warn:#7d5600; --bad:#b8321f;
+    --c-violet:#6d4aff; --c-coral:#b8321f; --c-mint:#08795f; --c-sun:#ffc233; --c-sky:#6d4aff;
+    --glass-rgb:245 241 255; --glass-a:.8; --glass-sheen-a:.42; --glass-rim-a:.7; --glow-a:.18;
+    --glass-shadow:0 24px 60px -20px rgb(74 47 208 / .18);
+  }
+}
+/* Controls and pills get the same light and tint, never an additional blur. */
+.glass.glass, .glass-control.glass-control, .glass-pill.glass-pill, button:not(.turn-tick) {
+  background:linear-gradient(160deg,var(--glass-sheen),transparent 45%,var(--hover,transparent)),var(--glass-tint);
+  border:1px solid var(--line-2);
+  border-radius:var(--radius-pane);
+  box-shadow:inset 0 1px 0 var(--glass-rim),var(--glass-shadow);
+}
+.glass-control.glass-control, button:not(.turn-tick) { border-radius:var(--radius-control); box-shadow:inset 0 1px 0 var(--glass-rim); }
+.glass-pill.glass-pill { border-radius:var(--radius-pill); box-shadow:inset 0 1px 0 var(--glass-sheen); }
+.glass.glass { position:relative; backdrop-filter:blur(var(--glass-blur)) saturate(clamp(1.6,var(--glass-sat),1.8)); }
+.glass::before {
+  content:""; position:absolute; inset:0; border-radius:inherit; padding:1px; pointer-events:none;
+  background:linear-gradient(135deg,var(--glass-rim),transparent 35%,transparent 60%,var(--glass-sheen));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor; mask-composite:exclude;
+}
+.glass .glass { backdrop-filter:none; background:var(--overlay); }
+:root:root[data-material="opaque"] { --glass-tint:var(--panel); }
+:root[data-material="opaque"] .glass { backdrop-filter:none; background:var(--panel); }
+@media (prefers-reduced-transparency:reduce) {
+  :root:root { --glass-tint:var(--panel); }
+  .glass.glass { backdrop-filter:none; background:var(--panel); }
+}
+@supports not (backdrop-filter:blur(1px)) {
+  .glass.glass { background:var(--panel); }
+}
+:is(button,[role="button"],[role="tab"],summary,a[href]) {
+  transition:transform 160ms var(--ease),opacity 160ms var(--ease);
+}
+:is(button,[role="button"],[role="tab"],summary,a[href]):not(:disabled):active { transform:scale(.97); }
+:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+@keyframes glass-enter { from { transform:scale(.96); opacity:0; } to { transform:scale(1); opacity:1; } }
+@media (prefers-reduced-motion:reduce) {
+  *,*::before,*::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
+}
+/* Keyboard-opened commands appear immediately; pointer menus retain their entrance. */
+.glass:has(:focus-visible){animation:none}
+/* Material motion is composited; layout, blur and colors never tween. */
+@media(prefers-reduced-motion:no-preference){
+  *,*::before,*::after{transition-property:transform,opacity !important}
+  :is(button,[role="button"],[role="tab"],[role="option"],summary,a[href]){transition:transform 160ms var(--ease),opacity 160ms var(--ease) !important}
+}
+@media(prefers-reduced-motion:no-preference) and (hover:hover){
+  :is(button,[role="button"],[role="tab"],[role="option"],summary,a[href]):not(:disabled):hover:not(:active){transform:translateY(-1px) scale(1.01)}
+}

@@ -901,7 +901,7 @@
   rail.className = "turn-rail";
   rail.hidden = true;
   const railCard = document.createElement("div");
-  railCard.className = "turn-card";
+  railCard.className = "turn-card glass";
   railCard.hidden = true;
   const railTitle = document.createElement("div");
   railTitle.className = "turn-card-title";
@@ -993,15 +993,16 @@
   // ---- jump-to-latest: floating button shown while the user has scrolled away from the tail ----
   const toBottom = document.createElement("button");
   toBottom.type = "button";
-  toBottom.className = "to-bottom";
+  toBottom.className = "to-bottom glass-control";
   toBottom.hidden = true;
   toBottom.title = "Scroll to latest";
   toBottom.setAttribute("aria-label", "Scroll to latest message");
   messagesWrap.append(toBottom);
   toBottom.addEventListener("click", () => {
-    pinned = true;
+    // Re-pin on arrival; instant tail-following must not interrupt the animation.
+    pinned = false;
     toBottom.hidden = true;
-    scrollDown();
+    el.messages.scrollTo({ top: el.messages.scrollHeight, behavior: "smooth" });
     el.input?.focus({ preventScroll: true });
   });
   el.messages.addEventListener("scroll", () => (toBottom.hidden = pinned), { passive: true });
@@ -1293,6 +1294,7 @@
       const root = document.createElement("details");
       root.className = "tool";
       const sum = document.createElement("summary");
+      sum.className = "glass-pill";
       const name = span("name", str(ev.toolName) || "tool");
       const arg = span("arg");
       const intent = span("intent");
@@ -1667,7 +1669,7 @@
   function renderQueue() {
     const chips = [];
     const add = (text, kind, i) => {
-      const c = span("chip " + kind);
+      const c = span("chip glass-pill " + kind);
       c.append(span("q-kind", kind === "steering" ? "steer" : "queued"));
       const t = span("q-text", clip(oneLine(text), 90));
       t.title = text;
@@ -1793,7 +1795,7 @@
     scriptCards.replaceChildren();
     const cards = scriptKey() ? loadScripts() : [];
     for (const card of cards) {
-      const item = span("chip");
+      const item = span("chip glass-pill");
       const run = linkBtn(card.name, card.command, () => runUserBash("!" + card.command));
       const remove = linkBtn("×", "Remove " + card.name, () => {
         try {
@@ -2012,7 +2014,7 @@
     const open = stackOrder.includes(kind);
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "stack-pill" + (open ? " on" : "");
+    b.className = "stack-pill glass-pill" + (open ? " on" : "");
     b.setAttribute("aria-pressed", String(open));
     b.title = open ? `Hide ${label}` : `Show ${label}`;
     if (open && stackOrder.length > 1) b.append(span("ord", String(stackOrder.indexOf(kind) + 1)));
@@ -2024,7 +2026,7 @@
   }
   function stackPanel(kind, title, running, done, rows) {
     const panel = document.createElement("div");
-    panel.className = "stack-panel";
+    panel.className = "stack-panel glass";
     panel.dataset.kind = kind;
     panel.setAttribute("role", "region");
     panel.setAttribute("aria-label", title);
@@ -2175,6 +2177,7 @@
     const root = document.createElement("details");
     root.className = "tool";
     const sum = document.createElement("summary");
+    sum.className = "glass-pill";
     const c = { root, toolName: str(call.name) || "tool", args: isObj(call.arguments) ? call.arguments : {}, result: undefined, isError: false, done: false, expanded: new Set() };
     const arg = toolArg(c.toolName, c.args);
     const argEl = span("arg", clip(arg, 160));
@@ -3025,7 +3028,7 @@
   }
   function openPickMenu(sel, btn) {
     const menu = document.createElement("div");
-    menu.className = "pick-menu";
+    menu.className = "pick-menu glass";
     menu.setAttribute("role", "menu");
     menu.owner = btn;
     for (const o of sel.options) {
@@ -3177,6 +3180,7 @@
   // Each call gets its own id; the matching response frame settles its promise.
   const pending = new Map();
   let nextReq = 0;
+  const frameDecoder = new window.KostompRpcDecoder();
   let readyGate = null;
   function resetReady() {
     let open;
@@ -3283,6 +3287,10 @@
   /** A frame whose handler throws loses only itself; the error is kept for "Show logs" instead of vanishing in the webview console. */
   function onFrame(frame) {
     try {
+      // A new process cannot continue an old process's partial chunk sequence.
+      if (frame?.type === "ready") frameDecoder.reset();
+      frame = frameDecoder.push(frame);
+      if (!frame) return;
       handleFrame(frame);
     } catch (e) {
       logFrameIssue(`${frame?.type ?? "frame"} handler threw: ${e?.stack ?? e}`);
@@ -3292,6 +3300,9 @@
   function handleFrame(frame) {
     switch (frame.type) {
       case "ready":
+        if (frame.supportedProtocolVersions?.includes(2)) {
+          send({ id: "protocol", type: "negotiate_protocol", protocolVersion: 2 });
+        }
         hlAskers.set(sid, request);
         setBusy(false);
         alive = true;
@@ -4417,7 +4428,7 @@
   function openFolderMenu() {
     closeFolderMenu();
     const menu = document.createElement("div");
-    menu.className = "folder-menu";
+    menu.className = "folder-menu glass";
     menu.setAttribute("role", "menu");
     const item = (label, title, onClick, cls) => {
       const b = document.createElement("button");
@@ -4480,6 +4491,7 @@
     },
     /** The omp process ended (crash or stop): say so in the transcript. */
     onExit() {
+      frameDecoder.reset();
       alive = false;
       hlAskers.delete(sid);
       setBusy(false);

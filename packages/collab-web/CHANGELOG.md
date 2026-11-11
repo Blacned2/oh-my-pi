@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Added Aurora liquid-glass chrome and controls, with light/dark themes, opaque reading surfaces and reduced-transparency/motion support
+
 ### Added
 
 - Transcript shows a back-to-bottom button while scrolled up from the tail; clicking it scrolls smoothly to the latest message

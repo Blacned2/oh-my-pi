@@ -160,7 +160,7 @@ export function Table<T>({
 					{sorted.length > shown && (
 						<button
 							type="button"
-							className="btn"
+							className="btn glass-control"
 							data-size="sm"
 							data-variant="ghost"
 							onClick={() => setShown(n => n + limit * 4)}
@@ -171,7 +171,7 @@ export function Table<T>({
 					{shown > limit && (
 						<button
 							type="button"
-							className="btn"
+							className="btn glass-control"
 							data-size="sm"
 							data-variant="ghost"
 							onClick={() => setShown(limit)}

@@ -27,7 +27,7 @@ export function ThemeToggle() {
 	return (
 		<button
 			type="button"
-			className="btn"
+			className="btn glass-control"
 			data-variant="ghost"
 			data-icon="true"
 			onClick={() => setPreference(NEXT_PREFERENCE[preference])}

@@ -25,7 +25,13 @@ export function CloseButton() {
 
 	if (!closable) return null;
 	return (
-		<button type="button" className="btn" data-variant="ghost" onClick={close} title="Close the dashboard (Esc)">
+		<button
+			type="button"
+			className="btn glass-control"
+			data-variant="ghost"
+			onClick={close}
+			title="Close the dashboard (Esc)"
+		>
 			<X size={15} />
 			Close
 			<span className="kbd">Esc</span>

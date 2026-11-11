@@ -56,7 +56,7 @@ export function SettingsMenu({ tabs = [], activeLink = null, onSelectTab, onClos
 				<Settings size={16} />
 			</button>
 			{open && (
-				<div className="sh-settings-pop" role="dialog" aria-label={t("settings.title")}>
+				<div className="sh-settings-pop glass" role="dialog" aria-label={t("settings.title")}>
 					<div className="sh-settings-head">
 						<span className="sh-settings-title">{t("settings.title")}</span>
 						<button
@@ -72,7 +72,7 @@ export function SettingsMenu({ tabs = [], activeLink = null, onSelectTab, onClos
 
 					<div className="sh-settings-group">
 						<span className="sh-settings-label">{t("settings.language")}</span>
-						<div className="sh-seg" role="radiogroup" aria-label={t("settings.language")}>
+						<div className="sh-seg glass-pill" role="radiogroup" aria-label={t("settings.language")}>
 							{LOCALES.map(code => (
 								<button
 									key={code}
@@ -90,7 +90,7 @@ export function SettingsMenu({ tabs = [], activeLink = null, onSelectTab, onClos
 
 					<div className="sh-settings-group">
 						<span className="sh-settings-label">{t("theme.label")}</span>
-						<div className="sh-seg" role="radiogroup" aria-label={t("theme.label")}>
+						<div className="sh-seg glass-pill" role="radiogroup" aria-label={t("theme.label")}>
 							{THEMES.map(({ value, icon: Icon, label }) => (
 								<button
 									key={value}
@@ -129,7 +129,7 @@ export function SettingsMenu({ tabs = [], activeLink = null, onSelectTab, onClos
 											{!active && onSelectTab && (
 												<button
 													type="button"
-													className="sh-btn sh-sess-btn"
+													className="sh-btn sh-sess-btn glass-control"
 													onClick={() => {
 														setOpen(false);
 														onSelectTab(tab);
@@ -141,7 +141,7 @@ export function SettingsMenu({ tabs = [], activeLink = null, onSelectTab, onClos
 											{onCloseTab && (
 												<button
 													type="button"
-													className="sh-btn sh-sess-btn"
+													className="sh-btn sh-sess-btn glass-control"
 													onClick={() => onCloseTab(tab)}
 													aria-label={`${t("settings.sessionRemove")}: ${tab.title}`}
 												>

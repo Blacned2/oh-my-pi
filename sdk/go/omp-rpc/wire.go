@@ -3802,10 +3802,12 @@ func (v *LoginProvider) decodeFrom(raw map[string]json.RawMessage) error {
 	return nil
 }
 
+// `efforts` are the thinking efforts the model accepts as a `:level` suffix; empty when it has none.
 type ModelCatalogModel struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Scoped bool   `json:"scoped"`
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Scoped  bool     `json:"scoped"`
+	Efforts []string `json:"efforts"`
 }
 
 func (v *ModelCatalogModel) UnmarshalJSON(data []byte) error {
@@ -3818,6 +3820,7 @@ func (v *ModelCatalogModel) decodeFrom(raw map[string]json.RawMessage) error {
 	d.required("id", &out.ID)
 	d.required("name", &out.Name)
 	d.required("scoped", &out.Scoped)
+	d.required("efforts", &out.Efforts)
 	if d.err != nil {
 		return d.err
 	}

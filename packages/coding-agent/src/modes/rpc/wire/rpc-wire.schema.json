@@ -4131,13 +4131,21 @@
 				},
 				"scoped": {
 					"type": "boolean"
+				},
+				"efforts": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
 				}
 			},
 			"required": [
 				"id",
 				"name",
-				"scoped"
-			]
+				"scoped",
+				"efforts"
+			],
+			"description": "`efforts` are the thinking efforts the model accepts as a `:level` suffix; empty when it has none."
 		},
 		"ModelCatalogProvider": {
 			"type": "object",

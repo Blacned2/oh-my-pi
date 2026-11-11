@@ -140,7 +140,7 @@ export function AgentDrawer(props: {
 			: null;
 
 	return (
-		<aside className="ag-drawer" role="dialog" aria-label={agent.displayName}>
+		<aside className="ag-drawer glass" role="dialog" aria-label={agent.displayName}>
 			<header className="ag-drawer-head">
 				<div className="ag-drawer-title">
 					<span className="ag-drawer-name">{agent.displayName}</span>
@@ -151,7 +151,7 @@ export function AgentDrawer(props: {
 					{agent.status === "running" && !readOnly ? (
 						<button
 							type="button"
-							className="ag-btn ag-btn--danger"
+							className="ag-btn ag-btn--danger glass-control"
 							onClick={() => client.sendAgentCmd("kill", agent.id)}
 						>
 							<OctagonX size={13} aria-hidden />
@@ -159,7 +159,11 @@ export function AgentDrawer(props: {
 						</button>
 					) : null}
 					{(agent.status === "parked" || agent.status === "aborted") && !readOnly ? (
-						<button type="button" className="ag-btn" onClick={() => client.sendAgentCmd("revive", agent.id)}>
+						<button
+							type="button"
+							className="ag-btn glass-control"
+							onClick={() => client.sendAgentCmd("revive", agent.id)}
+						>
 							<RotateCcw size={13} aria-hidden />
 							revive
 						</button>

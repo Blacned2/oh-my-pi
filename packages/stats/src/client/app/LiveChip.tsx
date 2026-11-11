@@ -63,7 +63,7 @@ export function LiveChip() {
 	return (
 		<button
 			type="button"
-			className="live-chip"
+			className="live-chip glass-pill"
 			onClick={requestSync}
 			disabled={sync.phase === "syncing"}
 			title={title}

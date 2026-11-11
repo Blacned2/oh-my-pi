@@ -286,7 +286,7 @@ function JudgePanel({ active, range, judgeAvailable, job, onRunStarted, onRunCha
 			actions={
 				<button
 					type="button"
-					className="btn"
+					className="btn glass-control"
 					data-variant="accent"
 					data-size="sm"
 					onClick={openEstimate}
@@ -399,7 +399,7 @@ function JudgeProgress({
 				<span className="frustration-spacer" />
 				<button
 					type="button"
-					className="btn"
+					className="btn glass-control"
 					data-variant="danger"
 					data-size="sm"
 					onClick={onCancel}

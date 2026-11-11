@@ -157,15 +157,15 @@ The last packaged checks covered the proposed plan, approval, parallel Coders, D
 
 `testCandidateInDocker()` uses the local Docker Desktop Linux engine on Windows. A host-approved profile supplies a preloaded image ID, an absolute container command and a timeout. The image needs `/bin/sh`, `tar`, `xargs` and the project's test runtime. The host never pulls an image during a test. Images with declared volumes are rejected.
 
-The host reads a fresh private Git index for the candidate's file modes, writes a temporary archive, and streams it to the container over standard input. The snapshot accepts up to 16,384 regular tracked files and 256 MiB of file data. It rejects symlinks and submodules, including unchanged entries. Tests run with a 384 MiB temporary workspace, a read-only container root, and no network or host mounts. The host binds the container exit code to the tested tree and removes the container before reporting evidence. [Docker run reference](https://docs.docker.com/reference/cli/docker/container/run/) · [Git index format](https://git-scm.com/docs/gitformat-index)
+The host reads a fresh private Git index for the candidate's file modes and streams one Git blob at a time into a temporary tar archive, then streams the archive to the container over standard input. The snapshot accepts up to 16,384 regular tracked files, without a fixed total byte limit; host memory use still depends on the largest individual blob. It rejects symlinks and submodules, including unchanged entries. The temporary workspace grows with the uncompressed archive: at least 384 MiB, with at least 128 MiB or 50% extra space, whichever is larger. The container memory limit is the workspace size plus 384 MiB because the workspace is a memory-backed tmpfs; the Docker VM must have enough RAM for the extracted project and test runtime. The container root stays read-only, with no network or host mounts. The host binds the container exit code to the tested tree and removes the container before reporting evidence. [Docker run reference](https://docs.docker.com/reference/cli/docker/container/run/) · [Git index format](https://git-scm.com/docs/gitformat-index)
 
-Run the standalone smoke probe with the ID of a suitable local image.
+Run the standalone smoke probe with the ID of a suitable local image that also provides `sha256sum`.
 
 ```powershell
 bun desktop/graph/smoke/docker-tester.ts sha256:<local-image-id>
 ```
 
-The probe exercises an executable tracked file, attempted access to disposable source and other-run files, a nonzero exit, release gating and cancellation of a live container. It requires access to the local Docker Desktop named pipe.
+The probe exercises an executable tracked file, attempted access to disposable source and other-run files, a nonzero exit, release gating and cancellation of a live container. It also tests a 400 MiB tracked asset snapshot, exceeding both the former 256 MiB snapshot limit and 384 MiB workspace, and verifies every asset's SHA-256 inside the container. It requires access to the local Docker Desktop named pipe.
 
 ## Scope boundaries
 

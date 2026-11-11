@@ -83,7 +83,7 @@ export function RequestsRoute({ active, range, onRequestClick }: RequestsRoutePr
 		nextStep !== null ? (
 			<button
 				type="button"
-				className="btn"
+				className="btn glass-control"
 				data-size="sm"
 				disabled={log.refreshing}
 				onClick={() => setStep(step + 1)}

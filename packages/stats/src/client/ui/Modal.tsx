@@ -64,14 +64,14 @@ export function Modal({ open, title, onClose, primaryAction, cancelLabel = "Canc
 
 	return createPortal(
 		<div className="modal-overlay" onClick={handleOverlayClick} role="presentation">
-			<div className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+			<div className="modal glass" role="dialog" aria-modal="true" aria-labelledby="modal-title">
 				<div className="modal-header">
 					<h2 id="modal-title" className="modal-title">
 						{title}
 					</h2>
 					<button
 						type="button"
-						className="btn"
+						className="btn glass-control"
 						data-variant="ghost"
 						data-icon="true"
 						data-size="sm"
@@ -83,14 +83,14 @@ export function Modal({ open, title, onClose, primaryAction, cancelLabel = "Canc
 				</div>
 				<div className="modal-body">{children}</div>
 				<div className="modal-footer">
-					<button ref={cancelRef} type="button" className="btn" onClick={onClose}>
+					<button ref={cancelRef} type="button" className="btn glass-control" onClick={onClose}>
 						{cancelLabel}
 					</button>
 					{primaryAction && (
 						<button
 							ref={primaryRef}
 							type="button"
-							className="btn"
+							className="btn glass-control"
 							data-variant="primary"
 							onClick={primaryAction.onClick}
 							disabled={primaryAction.disabled}

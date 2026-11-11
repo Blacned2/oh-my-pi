@@ -254,7 +254,7 @@ export function OverviewRoute({ active, range, onRequestClick }: OverviewRoutePr
 				}
 				description="Most recent model calls across every session"
 				actions={
-					<a className="btn" data-size="sm" data-variant="ghost" href={`#/requests?range=${range}`}>
+					<a className="btn glass-control" data-size="sm" data-variant="ghost" href={`#/requests?range=${range}`}>
 						All requests <ArrowRight size={13} />
 					</a>
 				}

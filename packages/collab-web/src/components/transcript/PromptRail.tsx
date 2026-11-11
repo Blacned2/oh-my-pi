@@ -46,7 +46,7 @@ export function PromptRail({ prompts, activeId, onJump }: PromptRailProps): Reac
 				))}
 			</div>
 			{hover !== null && hovered !== undefined && (
-				<div className="tr-rail-card" style={{ top: hover.top }}>
+				<div className="tr-rail-card glass-control" style={{ top: hover.top }}>
 					{hovered.text}
 				</div>
 			)}
