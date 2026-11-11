@@ -6,6 +6,11 @@
 
 - Transcript shows a back-to-bottom button while scrolled up from the tail; clicking it scrolls smoothly to the latest message
 - Transcript shows a left-edge prompt rail: one tick per user prompt, hover previews the prompt, click jumps to it (including prompts above the mounted window)
+## [18.18.8] - 2026-11-11
+
+### Changed
+
+- Ask result cards render saved notes beneath their matching selected answers ([#18779](https://github.com/can1357/oh-my-pi/pull/18779) by [@Shadorain](https://github.com/Shadorain))
 
 ## [18.18.3] - 2026-11-09
 
