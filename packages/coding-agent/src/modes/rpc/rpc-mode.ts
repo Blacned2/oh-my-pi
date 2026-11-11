@@ -2895,6 +2895,27 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				return success(id, "rename_session", { title });
 			}
 
+			case "delete_session": {
+				if (typeof command.path !== "string" || !command.path) {
+					return error(id, "delete_session", "path must be a non-empty string");
+				}
+				const target = path.resolve(command.path);
+				const current = session.sessionFile;
+				if (current && path.resolve(current) === target) {
+					return error(id, "delete_session", "Cannot delete the current session");
+				}
+				try {
+					await SessionManager.deleteSavedSession(target);
+				} catch (err) {
+					return error(
+						id,
+						"delete_session",
+						`Failed to delete session: ${err instanceof Error ? err.message : String(err)}`,
+					);
+				}
+				return success(id, "delete_session");
+			}
+
 			case "highlight_code": {
 				if (typeof command.code !== "string" || (command.lang !== undefined && typeof command.lang !== "string")) {
 					return error(id, "highlight_code", "code must be a string and lang, when given, a string");

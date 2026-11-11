@@ -154,6 +154,25 @@ const server = Bun.serve({
 					{ patch: owned === backend && !repairedBackend ? initialBackendPatch : patches[owned] },
 				],
 			];
+			if (owned === backend && !repairedBackend) {
+				const invalidPatches = [
+					{
+						patch: initialBackendPatch.replace(/^@@ -\d+(?:,\d+)? /m, "@@ -1,2 "),
+						error: /hunk count mismatch/,
+					},
+					{
+						patch: initialBackendPatch.replace("\n-initial backend\n", "\n-stale backend\n"),
+						error: /hunk at line .* does not apply/,
+					},
+					{ patch: patches["src/frontend.txt"], error: /only approved files/ },
+				];
+				for (const [index, { patch, error }] of invalidPatches.entries()) {
+					const rejected = responses[index + 1];
+					if (rejected && !error.test(JSON.stringify(rejected.content)))
+						throw new Error(`Coder did not receive the patch rejection: ${error}`);
+					steps.splice(index + 1, 0, ["kostomp_graph_submit_patch", { patch }]);
+				}
+			}
 			if (responses.length === 0 && owned !== "src/api.txt") {
 				coderStarts.push(owned);
 				if (new Set(coderStarts).size === 2) parallel.resolve();

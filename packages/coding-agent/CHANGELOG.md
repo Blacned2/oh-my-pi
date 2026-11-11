@@ -7,13 +7,19 @@
 - RPC hosts can enter, leave, and read plan mode with the new `plan` command; the agent's plan is approved through a `select` dialog, and the desktop UI gains `/plan [prompt]` with a plan-mode chip
 - RPC hosts can list background jobs with `get_async_jobs` and cancel one with `cancel_async_job`; the desktop UI shows subagents and background jobs as independent toggles at the top right of the chat
 - RPC `get_async_jobs` now lists services the session started with `bash name=…` (dev servers, watchers), and `cancel_async_job` stops them, so the desktop Background panel shows them
+- RPC mode adds `delete_session` (`path`), which permanently deletes a closed saved session and its artifacts; it refuses the current session and sessions another omp process owns
 
 ### Changed
 
 - `ask` prompts show their position (`(2/3)`) when a form has several questions; the desktop UI renders it as a "Question 2 of 3" header with progress dots and stacked option cards
+- Desktop session status now glows and pulses around the initial avatar instead of a right-side badge; close buttons sit at the far right
 
 ### Fixed
 
+- Desktop transparent windows no longer flash the opaque theme background when returning from another application
+- Desktop Claude account selection now slides smoothly between accounts without interrupting the animation when the account list refreshes
+- Desktop `!+ <command>` now asks for a name and saves a clickable command card instead of executing the `+` as Bash; cards are kept per session in the desktop workspace.
+- Desktop turn navigation stays in place when the prompt input grows or shrinks
 - A steered message now stays in the queue list until it appears in the transcript, instead of vanishing while the next model request is prepared
 
 ## [18.18.4] - 2026-11-09

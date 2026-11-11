@@ -132,6 +132,7 @@ import {
 } from "../eval/judgment-batch-events";
 import { onDownloadActivity } from "../downloads/activity";
 import { DownloadActivityHud, JudgmentBatchProgressHud } from "./progress-hud";
+import { SCRIPT_CARD_CUSTOM_TYPE, ScriptCardsHud } from "./script-cards";
 import { autosaveApprovedPlan, planSaveFileName } from "../plan-mode/plan-autosave";
 import { resolvePlanModelTransition } from "../plan-mode/model-transition";
 import guidedGoalInterviewPrompt from "../prompts/goals/guided-goal-interview.md" with { type: "text" };
@@ -1468,6 +1469,15 @@ export class InteractiveMode implements InteractiveModeContext {
 	#composerStatusPersistTimer: NodeJS.Timeout | undefined;
 	readonly #judgmentBatchProgressHud = new JudgmentBatchProgressHud();
 	readonly #downloadActivityHud = new DownloadActivityHud(() => this.ui.requestRender());
+	readonly #scriptCardsHud = new ScriptCardsHud({
+		entries: () => this.sessionManager.getBranchView(),
+		cwd: () => this.sessionManager.getCwd(),
+		append: data => {
+			this.sessionManager.appendCustomEntry(SCRIPT_CARD_CUSTOM_TYPE, data);
+		},
+		requestRender: () => this.ui.requestRender(),
+		showError: message => this.showError(message),
+	});
 	readonly #judgmentBatchProgressClearTimers = new Map<string, NodeJS.Timeout>();
 	#nextAppearanceRequestToken = 1;
 	#appearanceRefreshRequest: { token: TerminalAppearanceRequestToken; deadline: number } | undefined;
@@ -2213,6 +2223,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.progressHudContainer = new AnchoredLiveContainer();
 		this.progressHudContainer.addChild(this.#judgmentBatchProgressHud);
 		this.progressHudContainer.addChild(this.#downloadActivityHud);
+		this.progressHudContainer.addChild(this.#scriptCardsHud);
 		this.#eventBusUnsubscribers.push(onDownloadActivity(activity => this.#downloadActivityHud.update(activity)));
 		this.statusContainer = new StatusHudContainer(this);
 		this.todoContainer = new TodoHudContainer(this);
@@ -8195,6 +8206,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#liveCommandController.dispose();
 		this.#clearJudgmentBatchProgress();
 		this.#downloadActivityHud.dispose();
+		this.#scriptCardsHud.dispose();
 		this.#cancelTodoAutoClearTimer();
 		this.#cancelObserverUiSyncTimer();
 		this.#cancelGoalContinuation();
@@ -9508,6 +9520,16 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	handleBashCommand(command: string, excludeFromContext?: boolean): Promise<void> {
 		return this.#commandController.handleBashCommand(command, excludeFromContext);
+	}
+
+	/** `!+ <command>`: names the command and pins it as a session script card. */
+	async handleScriptCardCommand(command: string): Promise<boolean> {
+		const answer = await this.showHookInput("Script name", "e.g. build");
+		const name = answer?.trim();
+		if (!name) return false;
+		this.#scriptCardsHud.add(name, command);
+		this.showStatus(`Script card "${name}" added. Click it to run.`);
+		return true;
 	}
 
 	handlePythonCommand(code: string, excludeFromContext?: boolean): Promise<void> {

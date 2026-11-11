@@ -171,6 +171,7 @@ export type RpcCommand =
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
 	| { id?: string; type: "rename_session"; path: string; name: string }
+	| { id?: string; type: "delete_session"; path: string }
 	| { id?: string; type: "highlight_code"; code: string; lang?: string }
 	| { id?: string; type: "handoff"; customInstructions?: string }
 
@@ -737,6 +738,7 @@ export type RpcResponse =
 	  }
 	| { id?: string; type: "response"; command: "set_session_name"; success: true }
 	| { id?: string; type: "response"; command: "rename_session"; success: true; data: { title: string } }
+	| { id?: string; type: "response"; command: "delete_session"; success: true }
 	| {
 			id?: string;
 			type: "response";

@@ -20,6 +20,8 @@ export interface OmpWorkerOptions {
 	signal?: AbortSignal;
 	/** Receives one line per tool call, tool result and assistant reply, also when the attempt fails. */
 	transcript?: string[];
+	/** Called after each line is added to `transcript`, so a caller can show the attempt while it runs. */
+	onTranscript?: () => void;
 }
 
 const clip = (text: string, limit: number) => (text.length > limit ? `${text.slice(0, limit)} …` : text);
@@ -97,11 +99,13 @@ export async function runOmpWorker(options: OmpWorkerOptions): Promise<void> {
 	const unsubscribe = client.onPromptResult(result => {
 		completed = result.status === "completed";
 	});
-	const { transcript } = options;
+	const { transcript, onTranscript } = options;
 	const unsubscribeEvents = transcript
 		? client.onEvent(event => {
 				const line = describeEvent(event);
-				if (line) transcript.push(line);
+				if (!line) return;
+				transcript.push(line);
+				onTranscript?.();
 			})
 		: undefined;
 	try {
@@ -119,10 +123,11 @@ export async function runOmpWorker(options: OmpWorkerOptions): Promise<void> {
 			}
 			signal.throwIfAborted();
 			phase = "waiting for the prompt result";
-			await client.promptAndWait(prompt);
+			// The RpcClient default (60 s) would cut a multi-turn attempt short; `signal` already enforces the attempt deadline.
+			await client.promptAndWait(prompt, undefined, timeoutMs);
 			if (!completed) throw new Error("Graph worker prompt did not complete");
 			phase = "waiting for the session to settle";
-			await client.waitForSettled();
+			await client.waitForSettled(timeoutMs);
 		});
 	} catch (cause) {
 		if (options.signal?.aborted) options.signal.throwIfAborted();

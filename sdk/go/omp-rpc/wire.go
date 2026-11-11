@@ -9494,6 +9494,16 @@ func (c Commands) RenameSession(ctx context.Context, p RenameSessionCommand) (st
 	return out.Title, err
 }
 
+// DeleteSessionCommand holds the parameters of "delete_session".
+type DeleteSessionCommand struct {
+	Path string `json:"path"`
+}
+
+// DeleteSession sends "delete_session": Permanently delete a saved session file and its artifacts by path. Fails for this process's current session, for a session another omp process owns, and when the file is missing.
+func (c Commands) DeleteSession(ctx context.Context, p DeleteSessionCommand) error {
+	return c.call(ctx, "delete_session", p, 0, nil)
+}
+
 // HighlightCodeCommand holds the parameters of "highlight_code".
 type HighlightCodeCommand struct {
 	Code string  `json:"code"`

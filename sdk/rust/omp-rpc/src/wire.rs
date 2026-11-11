@@ -6039,6 +6039,11 @@ pub struct RenameSessionResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeleteSessionParams {
+	pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HighlightCodeParams {
 	pub code: String,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
@@ -8066,6 +8071,23 @@ impl Command for RenameSessionCommand {
 
 	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
 		serde_json::from_value::<RenameSessionResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.title)
+	}
+}
+
+/// Permanently delete a saved session file and its artifacts by path. Fails for this process's current session, for a session another omp process owns, and when the file is missing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeleteSessionCommand {
+	pub path: String,
+}
+
+impl Command for DeleteSessionCommand {
+	const NAME: &'static str = "delete_session";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = ();
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		let _ = data;
+		Ok(())
 	}
 }
 

@@ -57,6 +57,8 @@ function spawnRpc(temp: TempDir, extensionPath: string) {
 				XDG_DATA_HOME: temp.join("data"),
 				XDG_CACHE_HOME: temp.join("cache"),
 				CI: "true",
+				// Leases are keyed by this dir; the child must share the test process's.
+				PI_TEST_SESSION_OWNERS_DIR: Bun.env.PI_TEST_SESSION_OWNERS_DIR,
 				PI_NO_TITLE: "1",
 			},
 			stdin: "pipe",
@@ -174,5 +176,67 @@ describe("RPC login_cancel and rename_session", () => {
 		} finally {
 			await reopened.close();
 		}
+	}, 30_000);
+
+	it("deletes a closed session with artifacts and refuses leased or missing ones", async () => {
+		await using temp = await TempDir.create("@rpc-delete-session-");
+		const extensionPath = temp.join("none.mjs");
+		await Bun.write(extensionPath, "export default function() {}\n");
+		const otherDir = temp.join("other");
+		const make = async (text: string) => {
+			const manager = SessionManager.create(otherDir, otherDir, new FileSessionStorage());
+			await manager.ensureOnDisk();
+			manager.appendMessage({ role: "user", content: text, timestamp: Date.now() });
+			const file = manager.getSessionFile();
+			if (!file) throw new Error("Expected session file");
+			const id = manager.getSessionId();
+			await manager.close();
+			return { file, id };
+		};
+		const closed = await make("closed");
+		const leased = await make("leased");
+		const artifacts = closed.file.replace(/\.jsonl$/, "");
+		await Bun.write(path.join(artifacts, "note.txt"), "artifact");
+		const release = new FileSessionStorage().claimSession(leased.id, leased.file);
+		if (!release) throw new Error("Expected to claim lease");
+
+		const child = spawnRpc(temp, extensionPath);
+		const stdout = new Response(child.stdout).body;
+		if (!stdout) throw new Error("RPC fixture did not expose stdout");
+		const stderr = new Response(child.stderr).text();
+		const send = async (frame: object) => {
+			child.stdin.write(`${JSON.stringify(frame)}\n`);
+			await child.stdin.flush();
+		};
+		const responses = new Map<string, unknown>();
+		const steps = [
+			{ id: "closed", path: closed.file },
+			{ id: "leased", path: leased.file },
+			{ id: "missing", path: closed.file },
+		];
+		try {
+			await send({ type: "delete_session", ...steps[0] });
+			for await (const frame of readJsonl<unknown>(stdout)) {
+				if (!isRecord(frame) || frame.type !== "response" || typeof frame.id !== "string") continue;
+				responses.set(frame.id, frame);
+				const next = steps[responses.size];
+				if (!next) break;
+				await send({ type: "delete_session", ...next });
+			}
+		} finally {
+			release();
+			child.stdin.end();
+			child.kill();
+			await child.exited;
+		}
+
+		if (responses.size < steps.length) throw new Error(`RPC delete fixture did not finish: ${await stderr}`);
+		await stderr;
+		expect(responses.get("closed")).toMatchObject({ command: "delete_session", success: true });
+		expect(responses.get("leased")).toMatchObject({ command: "delete_session", success: false });
+		expect(responses.get("missing")).toMatchObject({ command: "delete_session", success: false });
+		expect(await Bun.file(closed.file).exists()).toBe(false);
+		expect(await Bun.file(path.join(artifacts, "note.txt")).exists()).toBe(false);
+		expect(await Bun.file(leased.file).exists()).toBe(true);
 	}, 30_000);
 });

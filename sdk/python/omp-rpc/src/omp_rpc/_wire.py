@@ -4214,6 +4214,12 @@ class WireClient:
         params["name"] = name
         return required(expect_object(self._command("rename_session", params), "rename_session"), "title", decode_str, "rename_session")
 
+    def delete_session(self, path: str) -> None:
+        """Permanently delete a saved session file and its artifacts by path. Fails for this process's current session, for a session another omp process owns, and when the file is missing."""
+        params: dict[str, object] = {}
+        params["path"] = path
+        self._command("delete_session", params)
+
     def highlight_code(self, code: str, *, lang: str | None = None) -> tuple[HighlightToken, ...]:
         """Syntax-highlight `code` with the native highlighter. `lang` is a language name, alias or file extension; an unknown one yields a single plain token. Joining the token texts gives back `code`. Results are cached."""
         params: dict[str, object] = {}

@@ -47,11 +47,15 @@ const requestSchema = type({
 	.or({ op: "'plan'", input: approvedGraphInputSchema })
 	.or({ op: "'approve'", input: draftSelection })
 	.or({ op: "'edit'", input: draftSelection.and({ plan: "unknown" }) })
-	.or({ op: "'open' | 'retry' | 'log'", input: "string" });
+	.or({ op: "'open' | 'retry' | 'log' | 'delete'", input: "string" });
 
 interface Job {
 	controller: AbortController;
 	job: Promise<void>;
+}
+
+interface PlanningJob extends Job {
+	input: ApprovedGraphInput;
 }
 
 interface ActiveRun extends Job {
@@ -76,7 +80,8 @@ if (!lease) throw new Error("Another Graph sidecar owns this data directory");
 using store = new GraphRunStore(path.join(dataRoot, "runs.sqlite"));
 const profilePath = path.join(dataRoot, "profile.json");
 let active: ActiveRun | undefined;
-let planning: Job | undefined;
+let planning: PlanningJob | undefined;
+let planningLog = "";
 let planError = store.latestPlanning()?.error;
 let selected: string | undefined = store.draft() || planError ? undefined : store.recent()[0]?.id;
 let failure: { id: string; message: string } | undefined;
@@ -129,7 +134,7 @@ function buildProfile(profile: GraphProfile): LoadedProfile {
 				home: path.join(dataRoot, "profile-home"),
 				provider,
 				model,
-				timeoutMs: 120_000,
+				timeoutMs: 600_000,
 			},
 			{ dockerPath, imageId, timeoutMs, command: [command, ...args] },
 		),
@@ -205,12 +210,14 @@ async function proposePlan(input: ApprovedGraphInput) {
 	planError = undefined;
 	selected = undefined;
 	const job = (async () => {
+		planningLog = "";
 		let log = "";
 		try {
 			await using workspace = await GraphWorkspace.pin(sourceRoot, { signal: controller.signal, allowDirty });
 			if (workspace.baseSha !== baseSha) throw new Error("The source changed while planning");
 			const plan = await proposeGraphPlan(workspace, scoped, profile.executors, controller.signal, text => {
 				log = cleanDiagnostic(text);
+				planningLog = log;
 			});
 			controller.signal.throwIfAborted();
 			store.recordPlanning(
@@ -231,9 +238,10 @@ async function proposePlan(input: ApprovedGraphInput) {
 			}
 		} finally {
 			planning = undefined;
+			planningLog = "";
 		}
 	})();
-	planning = { controller, job };
+	planning = { controller, job, input: scoped };
 }
 
 function selectedDraft({ draft: id, hash }: typeof draftSelection.infer) {
@@ -312,6 +320,19 @@ async function handle(request: typeof requestSchema.infer) {
 		selected = request.input;
 		return null;
 	}
+	if (request.op === "delete") {
+		if (!store.get(request.input)) throw new Error("Unknown Graph run");
+		if (active?.id === request.input) {
+			// Wait for the executor and workspace to finish so nothing can write the run after it is removed.
+			active.controller.abort();
+			await active.job;
+		}
+		store.delete(request.input);
+		if (selected === request.input) selected = undefined;
+		if (failure?.id === request.input) failure = undefined;
+		staleRuns.delete(request.input);
+		return null;
+	}
 	if (request.op === "plan") {
 		assertIdle();
 		await proposePlan(request.input);
@@ -337,7 +358,9 @@ async function handle(request: typeof requestSchema.infer) {
 		const log = run
 			? store.log(run, request.input)
 			: request.input === "planner"
-				? store.latestPlanning()?.log
+				? planning
+					? planningLog
+					: store.latestPlanning()?.log
 				: undefined;
 		if (!log) throw new Error("This Graph step has no log");
 		return log;
@@ -380,7 +403,7 @@ async function handle(request: typeof requestSchema.infer) {
 	const idle = !active && !planning;
 	const draft = store.draft() ?? undefined;
 	const proposal = {
-		planning: !!planning,
+		planning: planning && { objective: planning.input.objective, source: planning.input.source },
 		planError,
 		draft: draft && {
 			id: draft.id,
@@ -389,11 +412,17 @@ async function handle(request: typeof requestSchema.infer) {
 			objective: draft.input.objective,
 			baseSha: draft.baseSha,
 			tasks: draft.plan.tasks,
+			nodes: graphPlanForTasks(draft.plan).nodes,
 		},
 	};
 	if (!run) {
 		const latest = store.latestPlanning();
-		return { busy: !idle, ...proposal, ...(latest?.log && { logs: ["planner"], plannerLogId: latest.id }) };
+		const plannerLog = planning ? planningLog : latest?.log;
+		return {
+			busy: !idle,
+			...proposal,
+			...(plannerLog && { logs: ["planner"], plannerLogId: planning ? "live" : latest?.id }),
+		};
 	}
 	const status = staleRuns.has(run.id) ? "stale_base" : release?.status;
 	return {

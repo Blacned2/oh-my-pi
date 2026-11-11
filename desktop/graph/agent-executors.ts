@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { RpcClientCustomTool } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
-import { getAgentDbPath, isEnoent, prompt, TempDir } from "@oh-my-pi/pi-utils";
+import { getAgentDbPath, isEnoent, prompt, TempDir, toError } from "@oh-my-pi/pi-utils";
 import { type DockerTestProfile, testCandidateInDocker } from "./docker-tester";
 import { type OmpWorkerOptions, runOmpWorker } from "./omp-worker";
 import coderPrompt from "./prompts/coder.md" with { type: "text" };
@@ -87,6 +87,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 				signal,
 				tools,
 				transcript,
+				onTranscript: () => log?.(transcript.join("\n")),
 				prompt: prompt.render(template, context),
 			});
 		} finally {
@@ -141,7 +142,8 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 			return accepted;
 		},
 		async code(view, task, work, signal, log, repair, context) {
-			let patch: string | undefined;
+			let submission: Promise<string> | undefined;
+			let rejection: Error | undefined;
 			await run(
 				coderPrompt,
 				{
@@ -160,7 +162,7 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 					{
 						name: "kostomp_graph_submit_patch",
 						label: "Submit Graph patch",
-						description: "Submit a Git unified diff.",
+						description: "Validate and submit a Git unified diff. Correct and resubmit any rejected patch.",
 						loadMode: "essential",
 						parameters: {
 							type: "object",
@@ -168,25 +170,28 @@ export function createApprovedGraphExecutors(worker: WorkerProfile, tester: Dock
 							required: ["patch"],
 							additionalProperties: false,
 						},
-						execute(params) {
-							if (
-								patch ||
-								typeof params.patch !== "string" ||
-								!params.patch.trim() ||
-								Buffer.byteLength(params.patch) > 512 * 1024
-							) {
-								throw new Error("Submit one nonempty Graph patch up to 512 KiB");
+						async execute({ patch }, { signal }) {
+							if (submission) throw new Error("A Graph patch is already being validated or accepted");
+							if (typeof patch !== "string" || !patch.trim() || Buffer.byteLength(patch) > 512 * 1024) {
+								throw new Error("Submit a nonempty Graph patch up to 512 KiB");
 							}
-							patch = params.patch;
-							return "Patch recorded for host validation";
+							submission = view.validatePatch(patch, signal).then(() => patch);
+							try {
+								await submission;
+							} catch (error) {
+								submission = undefined;
+								rejection = toError(error);
+								throw rejection;
+							}
+							return "Patch validated against the pinned base and approved files";
 						},
 					},
 				],
 				signal,
 				log,
 			);
-			if (!patch) throw new Error("Coder did not submit a Graph patch");
-			return patch;
+			if (!submission) throw rejection ?? new Error("Coder did not submit a Graph patch");
+			return await submission;
 		},
 		test: (workspace, candidate, signal) => testCandidateInDocker(workspace, candidate, tester, signal),
 		async review(workspace, candidate, work, signal, log) {

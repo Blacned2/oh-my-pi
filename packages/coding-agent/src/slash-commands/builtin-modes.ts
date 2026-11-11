@@ -473,9 +473,14 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 			const selector = command.args.trim();
 			if (!selector) {
 				const model = runtime.session.model;
-				await runtime.output(
-					model ? `Current model: ${model.provider}/${model.id}` : "No model is currently selected.",
-				);
+				const scoped = runtime.session.scopedModels.map(entry => entry.model);
+				const choices = scoped.length > 0 ? scoped : runtime.session.getAvailableModels();
+				const lines = [model ? `Current model: ${model.provider}/${model.id}` : "No model is currently selected."];
+				if (choices.length > 0) {
+					lines.push("Available models (use /switch <provider/id>):");
+					for (const choice of choices) lines.push(`  ${formatModelString(choice)}`);
+				}
+				await runtime.output(lines.join("\n"));
 				return commandConsumed();
 			}
 			const resolved = resolveSessionModelSelector(selector, runtime.session, runtime.settings);

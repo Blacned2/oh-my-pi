@@ -232,6 +232,19 @@ export class GraphRunStore implements Disposable {
 			});
 	}
 
+	/** Permanently remove a run and everything keyed to it. Drafts and planning records are not run data. */
+	delete(runId: string): void {
+		this.#db
+			.transaction(() => {
+				if (!this.get(runId)) throw new Error("Unknown Graph run");
+				for (const table of ["graph_events", "graph_artifacts", "graph_logs", "graph_test_observations"]) {
+					this.#db.run(`DELETE FROM ${table} WHERE run_id = ?`, [runId]);
+				}
+				this.#db.run("DELETE FROM graph_runs WHERE id = ?", [runId]);
+			})
+			.immediate();
+	}
+
 	readyNodes(run: GraphRun): string[] {
 		return run.cancelled ? [] : this.#walk(run).ready.map(([node]) => node.id);
 	}

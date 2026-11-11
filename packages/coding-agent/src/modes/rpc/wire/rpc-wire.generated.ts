@@ -2097,6 +2097,10 @@ export interface RenameSessionResult {
 	title: string;
 }
 
+export interface DeleteSessionParams {
+	path: string;
+}
+
 export interface HighlightCodeParams {
 	code: string;
 	lang?: string;
@@ -2297,6 +2301,7 @@ export interface RpcWireCommands {
 	get_last_assistant_text: { params: undefined; result: GetLastAssistantTextResult };
 	set_session_name: { params: SetSessionNameParams; result: undefined };
 	rename_session: { params: RenameSessionParams; result: RenameSessionResult };
+	delete_session: { params: DeleteSessionParams; result: undefined };
 	highlight_code: { params: HighlightCodeParams; result: HighlightCodeResult };
 	handoff: { params: HandoffParams; result: HandoffResult | null };
 	get_messages: { params: undefined; result: GetMessagesResult };

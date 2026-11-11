@@ -1,4 +1,6 @@
-Complete your task within your owned files. Use kostomp_graph_read_file to inspect the repository (an empty path or a path ending in / lists a directory); you see the pinned base plus any changes from the tasks you depend on. Submit a single Git unified diff using kostomp_graph_submit_patch. Include Git diff headers and repository-relative paths. Change only your owned files. The host validates the diff and applies it to a private index.
+Complete your task within your owned files. Use kostomp_graph_read_file to inspect the repository (an empty path or a path ending in / lists a directory). You see the pinned base plus any changes from the tasks you depend on. Submit your complete Git unified diff using kostomp_graph_submit_patch. Include Git diff headers and repository-relative paths. Change only your owned files and copy hunk context exactly from the files you read. Count context and removed lines for the old hunk size and context and added lines for the new hunk size.
+
+The tool checks the diff against the pinned base and your owned files. If it rejects a submission, read the affected files again, fix the reported problem and resubmit the complete diff. Finish after the tool confirms validation.
 
 Task:
 {{{title}}}

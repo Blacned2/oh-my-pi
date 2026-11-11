@@ -3542,6 +3542,29 @@ export class SessionManager {
 	}
 
 	/**
+	 * Permanently delete a saved session file and its artifacts directory.
+	 * Claims the cross-process ownership lease first, so a session another
+	 * live omp process (or this one) owns is refused rather than deleted from
+	 * under its writer. Throws when the file is missing or owned elsewhere.
+	 */
+	static async deleteSavedSession(sessionPath: string): Promise<void> {
+		const storage = new FileSessionStorage();
+		const sessionId = await readSessionHeaderId(sessionPath);
+		if (sessionId === undefined) {
+			throw new Error(`Session not found or unreadable: ${sessionPath}`);
+		}
+		const release = storage.claimSession(sessionId, sessionPath);
+		if (!release) {
+			throw new Error("Session is currently in use by another omp process");
+		}
+		try {
+			await storage.deleteSessionWithArtifacts(sessionPath);
+		} finally {
+			release();
+		}
+	}
+
+	/**
 	 * Journal an idle recap for this session in history.db. Recaps never enter
 	 * the session file or LLM context; in-memory sessions are not journaled.
 	 */

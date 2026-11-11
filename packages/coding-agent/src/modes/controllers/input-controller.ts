@@ -1312,6 +1312,21 @@ export class InputController {
 				}
 			}
 
+			// `!+ <command>` names the command and pins it as a script card instead of running it.
+			if (text.startsWith("!+")) {
+				const command = text.slice(2).trim();
+				if (command) {
+					this.ctx.editor.addToHistory(text);
+					if (!(await this.ctx.handleScriptCardCommand(command))) {
+						this.ctx.editor.setText(text);
+						return;
+					}
+					this.ctx.isBashMode = false;
+					this.ctx.updateEditorBorderColor();
+					return;
+				}
+			}
+
 			// Handle bash command (! for normal, !! for excluded from context)
 			if (text.startsWith("!")) {
 				const isExcluded = text.startsWith("!!");

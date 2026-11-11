@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { TempDir, untilAborted } from "@oh-my-pi/pi-utils";
 import { type GraphNode, parseGraphPlan } from "../plan";
-import { GraphRunStore } from "../run-store";
+import { type GraphDraft, GraphRunStore } from "../run-store";
 import { driveGraphRun } from "../scheduler";
 import { graphPlanForTasks } from "../task-plan";
 
@@ -266,4 +266,61 @@ test("a log from an interrupted attempt is rejected and never shown for the node
 	const run = store.get(id)!;
 	expect(store.log(run, "test")).toBe("current output");
 	expect(store.loggedNodes(run)).toEqual(["test"]);
+});
+
+test("deleting a run removes all its data permanently and leaves other runs, drafts and planning untouched", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-delete-db-");
+	const db = temp.join("graph.sqlite");
+	const plan = { version: 1, nodes: [node("test", "tester")] };
+	const draft: GraphDraft = {
+		id: "draft", hash: "hash", plannerLog: "plan",
+		input: { objective: "Keep this proposal", source: temp.join("source") },
+		baseSha: "0".repeat(40), profileHash: "profile",
+		plan: { version: 1, tasks: [{ id: "task", title: "Task", brief: "Change a file", files: ["file.txt"], dependsOn: [] }] },
+	};
+	const planning = { id: "planning", log: "planning" };
+	let doomed: string;
+	let kept: string;
+	{
+		using store = new GraphRunStore(db);
+		const seed = (id: string) => {
+			const [attempt] = store.claimReady(id, 1);
+			expect(store.recordLog(attempt, `log ${id}`)).toBe(true);
+			store.recordTestObservation(attempt, {
+				status: "unavailable", reason: "missing_credentials", questionVersion: 1, model: "fixture", elapsedMs: 0,
+			});
+			expect(store.complete(attempt, `artifact ${id}`)).toBe(true);
+			return attempt;
+		};
+		doomed = store.create(plan).id;
+		kept = store.create(plan).id;
+		const doomedAttempt = seed(doomed);
+		seed(kept);
+		store.saveDraft(draft);
+		store.recordPlanning(planning);
+		const artifactId = new Bun.CryptoHasher("sha256").update(`artifact ${doomed}`).digest("hex");
+		expect(store.artifact(doomed, artifactId)).not.toBeNull();
+
+		store.delete(doomed);
+		expect(store.get(doomed)).toBeNull();
+		expect(store.recent().map(run => run.id)).toEqual([kept]);
+		expect(store.events(doomed, 0)).toEqual([]);
+		expect(store.artifact(doomed, artifactId)).toBeNull();
+		expect(() => store.cancel(doomed)).toThrow(/Unknown Graph run/);
+		expect(() => store.claimReady(doomed, 1)).toThrow(/Unknown Graph run/);
+		expect(() => store.delete(doomed)).toThrow(/Unknown Graph run/);
+		// Late writes cannot recreate the deleted run's rows.
+		expect(store.recordLog(doomedAttempt, "late")).toBe(false);
+		expect(() => store.complete(doomedAttempt, "late")).toThrow(/Unknown Graph run/);
+	}
+	using reopened = new GraphRunStore(db);
+	expect(reopened.get(doomed)).toBeNull();
+	expect(reopened.recent().map(run => run.id)).toEqual([kept]);
+	expect(reopened.events(doomed, 0)).toEqual([]);
+	const keptRun = reopened.get(kept)!;
+	expect(reopened.log(keptRun, "test")).toBe(`log ${kept}`);
+	expect(reopened.events(kept, 0).map(event => event.kind)).toEqual(["created", "claimed", "succeeded"]);
+	expect(reopened.testObservation(keptRun)).toMatchObject({ status: "unavailable", reason: "missing_credentials" });
+	expect(reopened.draft()).toEqual(draft);
+	expect(reopened.latestPlanning()).toEqual(planning);
 });

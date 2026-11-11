@@ -254,7 +254,11 @@ correlate it via `id`. Ordering across concurrent commands is not guaranteed
 - `{ id?, type: "get_branch_messages" }`
 - `{ id?, type: "get_last_assistant_text" }`
 - `{ id?, type: "set_session_name", name: string }`
+- `{ id?, type: "rename_session", path: string, name: string }`
+- `{ id?, type: "delete_session", path: string }`
 - `{ id?, type: "handoff", customInstructions?: string }`
+
+`delete_session` permanently removes a saved session file and its artifacts directory. It fails (with an error response) for this process's current session, for a session whose ownership lease another omp process holds, and when the file is missing; `rename_session` likewise fails while another process owns the session.
 
 `handoff` fails while a response is streaming. On success, its payload is `{ savedPath? }` or `null` when no handoff was produced. Session transitions (`new_session`, `switch_session`, `branch`, `fork`, `open_session`) report cancellation when an extension prevents the transition.
 

@@ -8,6 +8,36 @@
   let layout = null; // set up below; showView() runs before that
   const sessions = new Map(); // sid -> { sid, api, tab, cwd, status: { text, kind } }
   const focusChat = () => sessions.get(layout?.focused)?.api.focus();
+
+  window.kostompConfirmDelete = async (title, detail) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "delete-confirm";
+    dialog.setAttribute("aria-label", title);
+    const heading = document.createElement("h2");
+    heading.textContent = title;
+    const description = document.createElement("p");
+    description.textContent = detail;
+    const form = document.createElement("form");
+    form.method = "dialog";
+    const cancel = document.createElement("button");
+    cancel.value = "cancel";
+    cancel.textContent = "Cancel";
+    cancel.autofocus = true;
+    const confirm = document.createElement("button");
+    confirm.value = "delete";
+    confirm.className = "bad";
+    confirm.textContent = "Delete permanently";
+    form.append(cancel, confirm);
+    dialog.append(heading, description, form);
+    const result = Promise.withResolvers();
+    dialog.addEventListener("close", () => {
+      result.resolve(dialog.returnValue === "delete");
+      dialog.remove();
+    }, { once: true });
+    document.body.append(dialog);
+    dialog.showModal();
+    return result.promise;
+  };
   // ---- tabs: Chat | Stats | Settings (settings.js fills the last). Graph lives inside Chat: its pane and
   // runs share the chat sidebar (graph.js). --------
   const VIEW_KEY = "kostomp-view";
@@ -159,26 +189,36 @@
   // The sessions list is a pseudo-session in the layout: it can be a tab, split off, dragged and saved
   // like any chat. Detached here; the layout mounts it into whichever pane shows it.
   const LIST_SID = "sessions";
+  const GRAPHS_SID = "graphs";
   const savedEl = $("saved");
+  const graphsEl = $("graphs-panel");
   savedEl.remove();
   savedEl.hidden = false;
-  let lastChatSid = null; // the chat that last had focus (the list pane has none)
-  const isTab = (sid) => sid === LIST_SID || sessions.has(sid);
+  graphsEl.remove();
+  graphsEl.hidden = false;
+  // graph.js loads after this detaches the panel, so document lookups would miss it.
+  window.KostompGraphsPanel = graphsEl;
+  let lastChatSid = null; // the chat that last had focus (the list panes have none)
+  const isPanel = (sid) => sid === LIST_SID || sid === GRAPHS_SID;
+  const isTab = (sid) => isPanel(sid) || sessions.has(sid);
 
   layout = createLayout($("workspace"), {
-    sessionEl: (sid) => (sid === LIST_SID ? savedEl : sessions.get(sid)?.api.el),
+    sessionEl: (sid) => (sid === LIST_SID ? savedEl : sid === GRAPHS_SID ? graphsEl : sessions.get(sid)?.api.el),
     onFocus: () => {
       document.dispatchEvent(new CustomEvent("kostomp-chat-shown"));
       if (sessions.has(layout.focused)) lastChatSid = layout.focused;
       paintTabs();
       paintTopStatus();
       $("sessions-open").classList.toggle("active", layout.focused === LIST_SID);
+      $("graphs-toggle").classList.toggle("active", layout.focused === GRAPHS_SID);
     },
     onChange: () => { paintTabs(); save(); },
     split: (sid, zone) => newSession(sid, zone),
-    pinned: (sid) => sid === LIST_SID,
+    pinned: isPanel,
   });
   layout.setMeta(LIST_SID, { title: "Sessions" });
+  layout.setMeta(GRAPHS_SID, { title: "Graphs" });
+  $("graphs-toggle").addEventListener("click", () => layout.show(GRAPHS_SID));
   $("sessions-open").addEventListener("click", () => {
     layout.show(LIST_SID);
     refreshSaved();
@@ -186,8 +226,8 @@
   });
   /** Bring a chat into view; from the list pane it opens beside the list instead of replacing it. */
   function placeChat(sid) {
-    if (layout.has(sid) || layout.focused !== LIST_SID) layout.show(sid);
-    else layout.drop(sid, LIST_SID, "right");
+    if (layout.has(sid) || !isPanel(layout.focused)) layout.show(sid);
+    else layout.drop(sid, layout.focused, "right");
   }
 
   const baseName = (p) => (p ? p.split(/[\\/]/).filter(Boolean).pop() || p : "session");
@@ -261,6 +301,7 @@
           const k = head.dataset.key;
           if (!k) return;
           if (collapsed.has(k)) setCollapsed(k, false);
+          if (openBlank(k)) return;
           const entry = addSession({ cwd: k, resume: false });
           placeChat(entry.sid);
           entry.api.focus();
@@ -286,27 +327,31 @@
     statusBox.textContent = s ? s.status.text : "";
     statusBox.className = "status" + (s?.status.kind ? " " + s.status.kind : "");
   }
-  /** Sidebar badge: coral while a question waits for an answer, amber while working, green for a finished turn not yet visited, red on error, none otherwise. */
-  function paintDot(s) {
+  /** Avatar border: coral for a waiting question, amber while working, green for an unseen reply, red on error. */
+  function paintSessionStatus(s) {
     const kind = s.status.kind;
     const state = s.asking !== null ? "ask" : kind === "busy" ? "busy" : kind === "bad" ? "bad" : s.unseen ? "ok" : "idle";
-    s.dot.className = "dot " + state;
-    s.tab.classList.toggle("asking", s.asking !== null);
+    s.avatar.dataset.state = state;
+    s.avatar.title = s.asking ?? s.status.text;
   }
   function paintTabs() {
-    const shown = new Set(layout.visible());
+    const showingGraph = $("chat").classList.contains("graph-mode");
+    const focused = showingGraph ? null : layout.focused;
+    const shown = new Set(showingGraph ? [] : layout.visible());
     for (const s of sessions.values()) {
-      s.tab.classList.toggle("active", s.sid === layout.focused);
-      if (s.sid === layout.focused && s.unseen) {
+      const selected = s.sid === focused;
+      s.tab.classList.toggle("active", selected);
+      if (selected && s.unseen) {
         s.unseen = false;
-        paintDot(s);
+        paintSessionStatus(s);
       }
       s.tab.classList.toggle("shown", shown.has(s.sid));
-      s.tab.setAttribute("aria-selected", String(s.sid === layout.focused));
-      if (s.sid === layout.focused) s.tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+      s.tab.setAttribute("aria-selected", String(selected));
+      if (selected) s.tab.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     strip.classList.toggle("single", sessions.size === 1);
   }
+  document.addEventListener("kostomp-graph-mode", paintTabs);
 
   function addSession(opts) {
     const sid = opts.sid ?? "s" + ++nextSid;
@@ -314,8 +359,6 @@
     tab.className = "stab";
     tab.setAttribute("role", "tab");
     tab.tabIndex = 0;
-    const dot = document.createElement("span");
-    dot.className = "dot idle";
     const label = document.createElement("span");
     label.className = "stab-label";
     const close = document.createElement("button");
@@ -323,12 +366,22 @@
     close.className = "stab-close";
     close.textContent = "×";
     close.setAttribute("aria-label", "Close session");
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "stab-delete";
+    del.textContent = "⌫";
+    del.title = "Delete session permanently";
+    del.setAttribute("aria-label", del.title);
+    del.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void deleteChat(entry.api.sessionFile ?? entry.sessionFile, entry.title, entry);
+    });
     const avatar = document.createElement("span");
     avatar.className = "stab-av";
     avatar.style.setProperty("--c", AVATAR_COLORS[avatarSeq++ % AVATAR_COLORS.length]);
     avatar.setAttribute("aria-hidden", "true");
-    tab.append(avatar, label, dot, close);
-    const entry = { sid, tab, label, avatar, dot, cwd: null, title: "session", name: opts.name ?? null, autoTitle: null, sessionFile: opts.sessionFile ?? null, status: { text: "starting…" }, unseen: false, asking: null, api: null };
+    tab.append(avatar, label, del, close);
+    const entry = { sid, tab, label, avatar, cwd: null, title: "session", name: opts.name ?? null, autoTitle: null, sessionFile: opts.sessionFile ?? null, fresh: opts.resume === false, status: { text: "starting…" }, unseen: false, asking: null, api: null };
     sessions.set(sid, entry);
     strip.insertBefore(tab, $("session-add"));
     entry.api = createSession(sid, {
@@ -337,8 +390,7 @@
         entry.status = { text, kind };
         if (wasBusy && kind !== "busy" && layout.focused !== sid) entry.unseen = true;
         if (layout.focused === sid) entry.unseen = false;
-        paintDot(entry);
-        tab.classList.toggle("busy", kind === "busy");
+        paintSessionStatus(entry);
         layout.setMeta(sid, { status: kind });
         if (layout.focused === sid) paintTopStatus();
         if (wasBusy && kind !== "busy") {
@@ -351,7 +403,7 @@
       asking(text) {
         const was = entry.asking !== null;
         entry.asking = text;
-        paintDot(entry);
+        paintSessionStatus(entry);
         if (text !== null && !was) notifyQuestion(entry, text);
       },
       cwd(cwd) {
@@ -384,11 +436,12 @@
     }, opts);
     layout.makeDraggable(tab, sid);
     tab.addEventListener("click", (e) => {
-      if (e.target === close) return;
+      if (e.target.closest("button")) return;
       layout.show(sid);
       entry.api.focus();
     });
     tab.addEventListener("keydown", (e) => {
+      if (e.target !== tab) return;
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); layout.show(sid); entry.api.focus(); }
     });
     tab.addEventListener("auxclick", (e) => {
@@ -397,7 +450,7 @@
       close.click();
     });
     tab.addEventListener("dblclick", (e) => {
-      if (e.target === close) return;
+      if (e.target.closest("button")) return;
       const input = document.createElement("input");
       input.className = "stab-input";
       input.value = entry.title;
@@ -445,12 +498,12 @@
     return entry;
   }
 
-  function closeSession(sid) {
+  function closeSession(sid, stopped = false) {
     const entry = sessions.get(sid);
     if (!entry || sessions.size === 1) return; // the last session stays: the app always has a chat
     const order = [...sessions.keys()];
     const next = order[order.indexOf(sid) + 1] ?? order[order.indexOf(sid) - 1];
-    invoke("rpc_stop", { id: sid }).catch(() => {});
+    if (!stopped) invoke("rpc_stop", { id: sid }).catch(() => {});
     entry.api.dispose();
     sessions.delete(sid);
     entry.tab.remove();
@@ -468,9 +521,22 @@
   function newSession(from, zone) {
     const at = from ?? layout.focused;
     const src = sessions.get(at) ?? sessions.get(lastChatSid);
-    const entry = addSession({ cwd: src?.api.cwd ?? null, resume: false });
+    const cwd = src?.api.cwd ?? null;
+    if (!zone) {
+      const blank = openBlank(cwd);
+      if (blank) return blank;
+    }
+    const entry = addSession({ cwd, resume: false });
     if (zone && isTab(at)) layout.drop(entry.sid, at, zone);
     else placeChat(entry.sid);
+    entry.api.focus();
+    return entry;
+  }
+  /** An already-open empty chat in `cwd` is shown instead of opening a second one. */
+  function openBlank(cwd) {
+    const entry = [...sessions.values()].find((s) => s.fresh && s.api.cwd === cwd && s.api.blank);
+    if (!entry) return null;
+    placeChat(entry.sid);
     entry.api.focus();
     return entry;
   }
@@ -758,6 +824,15 @@
   const acctBox = $("side-accounts");
   const acctList = $("side-accounts-list");
   let acctBusy = false;
+  let acctSwitchPending = false;
+  const acctPill = document.createElement("span"); // sliding "switch" highlight behind the connected row
+  acctPill.className = "sacct-pill";
+  function placePill(row) {
+    if (!row) { acctPill.style.opacity = "0"; return; }
+    acctPill.style.height = row.offsetHeight + "px";
+    acctPill.style.transform = "translateY(" + row.offsetTop + "px)";
+    acctPill.style.opacity = "1";
+  }
   let acctRetry = 0;
   async function refreshAccounts() {
     if (acctBusy) return;
@@ -771,8 +846,12 @@
       const canPin = !!sess && Array.isArray(sess.accounts);
       const activeId = canPin ? (sess.accounts.find((s) => s && s.active) || {}).credentialId : null;
       const list = (Array.isArray(res) ? res : res && Array.isArray(res.accounts) ? res.accounts : [])
-        .filter((a) => a && Number.isInteger(a.credentialId) && a.type !== "api_key");
-      acctList.replaceChildren();
+        .filter((a) => a && Number.isInteger(a.credentialId) && a.type !== "api_key")
+        .sort((a, b) => a.credentialId - b.credentialId);
+      // Keep the highlight mounted so an RPC refresh cannot interrupt its transition.
+      if (acctPill.parentNode !== acctList) acctList.append(acctPill);
+      for (const row of acctList.querySelectorAll(".sacct")) row.remove();
+      let onRow = null;
       acctBox.hidden = list.length === 0;
       for (const a of list) {
         const inUse = canPin ? a.credentialId === activeId : !!a.active;
@@ -781,6 +860,7 @@
         const row = document.createElement("button");
         row.type = "button";
         row.className = "sacct" + (inUse ? " on" : "");
+        if (inUse) onRow = row;
         row.title = label + (inUse ? " (connected)" : canPin ? " (click to connect)" : "");
         const av = document.createElement("span");
         av.className = "sacct-av";
@@ -796,14 +876,21 @@
           row.append(tag);
         }
         row.addEventListener("click", async () => {
-          if (!canPin || inUse) return;
-          row.disabled = true;
+          if (!canPin || inUse || acctSwitchPending) return;
+          acctSwitchPending = true;
+          for (const button of acctList.querySelectorAll(".sacct")) button.disabled = true;
+          placePill(row);
           try { await current().api.request("pin_session_account", { credentialId: a.credentialId, providerId: "anthropic" }); }
           catch { /* e.g. a response is streaming; the list below shows the real state */ }
+          finally {
+            acctSwitchPending = false;
+            for (const button of acctList.querySelectorAll(".sacct")) button.disabled = false;
+          }
           refreshAccounts();
         });
         acctList.append(row);
       }
+      placePill(onRow);
       acctRetry = 0;
     } catch {
       // omp not ready yet (or no Claude login): try again a few times, then wait for an explicit refresh.
@@ -954,6 +1041,7 @@
     };
     if (!open && !held) act("↗", "Open in a new tab", () => openSavedInTab(s));
     if (!held) act("✎", "Rename", () => renameSaved(row, text, open, title, s.path));
+    if (!held) act("⌫", "Delete session permanently", () => void deleteChat(s.path, title));
     const activate = async () => {
       if (open) {
         layout.show(open.sid);
@@ -980,6 +1068,44 @@
     placeChat(entry.sid);
     entry.api.focus();
     refreshSavedSoon();
+  }
+
+  const deletingChats = new Set();
+  async function deleteChat(path, title, entry) {
+    const key = path ?? entry?.sid;
+    if (!key || deletingChats.has(key)) return;
+    deletingChats.add(key);
+    try {
+      if (!await window.kostompConfirmDelete(`Delete "${title}"?`,
+        "This permanently removes the conversation and its saved artifacts. Any running turn in this chat will be stopped. This cannot be undone.")) return;
+      path = entry?.api.sessionFile ?? entry?.sessionFile ?? path;
+      const matches = [...sessions.values()].filter(s => path
+        ? samePath(s.api.sessionFile ?? s.sessionFile, path) : s === entry);
+      if (matches.length === sessions.size) {
+        const replacement = addSession({ cwd: matches[0]?.api.cwd ?? null, resume: false });
+        // request() waits for the new process's initial state before sending.
+        await replacement.api.request("get_state");
+      }
+      for (const s of matches) {
+        await invoke("rpc_stop", { id: s.sid });
+        closeSession(s.sid, true);
+      }
+      if (path) {
+        const source = readySession() ?? current();
+        if (!source) throw new Error("No chat is available to delete the saved session");
+        await source.api.request("delete_session", { path });
+      }
+      await refreshSaved();
+    } catch (error) {
+      const message = document.createElement("div");
+      message.className = "saved-empty";
+      message.setAttribute("role", "alert");
+      message.textContent = "Could not delete session: " + String(error?.message ?? error);
+      layout.show(LIST_SID);
+      savedList.prepend(message);
+    } finally {
+      deletingChats.delete(key);
+    }
   }
   /** Rename a saved session: through its tab when open, else `rename_session` on its file. */
   async function renameSessionFile(path, name) {

@@ -588,6 +588,7 @@ export interface InteractiveModeContext {
 	handleDeleteCommand(): Promise<void>;
 	handleForkCommand(placement?: "pane" | "window"): Promise<void>;
 	handleBashCommand(command: string, excludeFromContext?: boolean): Promise<void>;
+	handleScriptCardCommand(command: string): Promise<boolean>;
 	handlePythonCommand(code: string, excludeFromContext?: boolean): Promise<void>;
 	handleMCPCommand(text: string): Promise<void>;
 	handleSSHCommand(text: string): Promise<void>;

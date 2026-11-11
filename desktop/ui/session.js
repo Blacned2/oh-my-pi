@@ -911,7 +911,9 @@
   const messagesWrap = document.createElement("div");
   messagesWrap.className = "messages-wrap";
   el.messages.replaceWith(messagesWrap);
-  messagesWrap.append(el.messages, rail, railCard);
+  messagesWrap.append(el.messages);
+  // Anchor navigation to the pane, not the transcript that shrinks as the composer grows.
+  root.append(rail, railCard);
   let railTurns = []; // { node, tick } per user message, in transcript order
   let railActive = -1;
   const userPrompt = (node) => (node.querySelector(".bubble") ?? node).textContent.trim();
@@ -936,7 +938,7 @@
     railBody.textContent = turnReply(t.node);
     railBody.hidden = !railBody.textContent;
     railCard.hidden = false;
-    const wrapBox = messagesWrap.getBoundingClientRect();
+    const wrapBox = root.getBoundingClientRect();
     const tickBox = t.tick.getBoundingClientRect();
     const mid = tickBox.top - wrapBox.top + tickBox.height / 2;
     const half = railCard.offsetHeight / 2;
@@ -988,6 +990,21 @@
     });
   }, { passive: true });
   new MutationObserver(rebuildRail).observe(el.messages, { childList: true });
+  // ---- jump-to-latest: floating button shown while the user has scrolled away from the tail ----
+  const toBottom = document.createElement("button");
+  toBottom.type = "button";
+  toBottom.className = "to-bottom";
+  toBottom.hidden = true;
+  toBottom.title = "Scroll to latest";
+  toBottom.setAttribute("aria-label", "Scroll to latest message");
+  messagesWrap.append(toBottom);
+  toBottom.addEventListener("click", () => {
+    pinned = true;
+    toBottom.hidden = true;
+    scrollDown();
+    el.input?.focus({ preventScroll: true });
+  });
+  el.messages.addEventListener("scroll", () => (toBottom.hidden = pinned), { passive: true });
   function note(text, error, kind = "note") {
     const n = document.createElement("div");
     n.className = "msg " + kind + (error ? " error" : "");
@@ -1145,25 +1162,28 @@
       userText.set(node, textOf(message.content));
       node.append(userActions(node));
     } else {
+      node.classList.add("split");
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
       const content = Array.isArray(message.content) ? message.content : [];
       content.forEach((block, bi) => {
         if (!isObj(block)) return;
         if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking) {
-          node.append(thinkingBlock(id + ":" + bi, block.thinking));
+          bubble.append(thinkingBlock(id + ":" + bi, block.thinking));
         } else if (block.type === "text" && typeof block.text === "string" && block.text) {
-          node.append(markdown(block.text, note));
+          bubble.append(markdown(block.text, note));
         }
       });
       const images = imagesOf(content.filter((b) => isObj(b) && b.type === "image"));
-      if (images.length) node.append(imageRow(images, "Image"));
+      if (images.length) bubble.append(imageRow(images, "Image"));
       if (message.errorMessage) {
         const e = document.createElement("div");
         e.className = "error";
         e.textContent = message.errorMessage;
-        node.append(e);
+        bubble.append(e);
       }
-      if (!node.childNodes.length) node.hidden = true;
-      else node.hidden = false;
+      node.hidden = !bubble.childNodes.length;
+      node.append(bubble);
       // Copy the answer as markdown, once it stopped streaming (re-rendered on every delta until then).
       const answer = content
         .filter((b) => isObj(b) && b.type === "text" && typeof b.text === "string" && b.text)
@@ -1747,6 +1767,90 @@
       if (!busy) el.stop.hidden = bashRunning === 0;
       scrollDown();
     }
+  }
+
+  // Desktop script cards are stored per saved session in this webview's workspace.
+  const scriptCards = document.createElement("div");
+  scriptCards.className = "chips script-cards";
+  scriptCards.hidden = true;
+  el.composer.before(scriptCards);
+  const scriptKey = () => sessionFile ? "kostomp-script-cards:" + sessionFile : null;
+  function loadScripts() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(scriptKey()) || "[]");
+      return Array.isArray(saved) ? saved.filter((s) => s && typeof s.name === "string" && typeof s.command === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  function storeScripts(cards) {
+    const key = scriptKey();
+    if (!key) throw new Error("Wait for the session to finish starting.");
+    localStorage.setItem(key, JSON.stringify(cards));
+    renderScripts();
+  }
+  function renderScripts() {
+    scriptCards.replaceChildren();
+    const cards = scriptKey() ? loadScripts() : [];
+    for (const card of cards) {
+      const item = span("chip");
+      const run = linkBtn(card.name, card.command, () => runUserBash("!" + card.command));
+      const remove = linkBtn("×", "Remove " + card.name, () => {
+        try {
+          storeScripts(loadScripts().filter((s) => s.id !== card.id));
+        } catch (e) {
+          note("Could not remove script: " + errText(e), true);
+        }
+      });
+      item.append(run, remove);
+      scriptCards.append(item);
+    }
+    scriptCards.hidden = cards.length === 0;
+  }
+  function saveScript(raw) {
+    const command = raw.slice(2).trim();
+    const restore = () => {
+      if (!el.input.value) setInput(raw);
+      el.input.focus();
+    };
+    if (!command || !scriptKey()) {
+      note(command ? "Wait for the session to finish starting." : "Usage: !+ <command>", true);
+      restore();
+      return;
+    }
+    closeDialog();
+    const h = document.createElement("h4");
+    h.textContent = "Script name";
+    const input = document.createElement("input");
+    input.placeholder = "e.g. build";
+    input.setAttribute("aria-label", "Script name");
+    const preview = document.createElement("pre");
+    preview.textContent = command;
+    const row = document.createElement("div");
+    row.className = "row";
+    const key = scriptKey();
+    const save = () => {
+      const name = input.value.trim();
+      if (!name) return input.focus();
+      try {
+        if (scriptKey() !== key) throw new Error("The active session changed.");
+        storeScripts([...loadScripts(), { id: crypto.randomUUID(), name, command }]);
+        localDone = null;
+        closeDialog();
+        el.input.focus();
+      } catch (e) {
+        note("Could not save script: " + errText(e), true);
+      }
+    };
+    localDone = restore;
+    row.append(btn("Save", save), btn("Cancel", closeDialog));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); save(); }
+      if (e.key === "Escape") { e.preventDefault(); closeDialog(); }
+    });
+    el.dialog.append(h, input, preview, row);
+    el.dialog.hidden = false;
+    input.focus();
   }
 
   // ---- todo list (get_state.todoPhases; re-read after the `todo` tool) -------
@@ -3133,6 +3237,7 @@
       renderModels();
       loadThinkingLevels();
       sessionFile = typeof data.sessionFile === "string" ? data.sessionFile : null;
+      renderScripts();
       hooks.sessionFile?.(sessionFile);
       hooks.title?.(typeof data.sessionName === "string" ? data.sessionName : null, true);
       setWarnings(data.configWarnings);
@@ -3153,6 +3258,7 @@
       }
     } else if (frame.id === "sfile") {
       sessionFile = typeof data.sessionFile === "string" ? data.sessionFile : null;
+      renderScripts();
       hooks.sessionFile?.(sessionFile);
     } else if (frame.id === "models") {
       availableModels = data.models || [];
@@ -3473,6 +3579,10 @@
     el.input.style.height = "";
     el.composer.classList.remove("shell");
     if (message) rememberPrompt(message);
+    if (message.startsWith("!+")) {
+      saveScript(message); // saving never executes the command or consumes staged images
+      return;
+    }
     if (message.startsWith("!")) {
       runUserBash(message); // staged images stay for the next message
       return;
@@ -4399,6 +4509,10 @@
     /** `set_session_name` on the current session; resolves true when omp accepted it. */
     rename,
     get sessionFile() { return sessionFile; },
+    /** Nothing typed or said yet (same test as the welcome card's visibility): a second "new chat" is pointless. */
+    get blank() {
+      return alive && !busy && el.input.value === "" && ![...el.messages.children].some((n) => n !== el.welcome && !n.classList.contains("note"));
+    },
     get cwd() { return cwd; },
     get busy() { return busy; },
     get alive() { return alive; },

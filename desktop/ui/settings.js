@@ -25,7 +25,7 @@
   // ---- window material --------------------------------------------------
   // State: { settings: { material, glassType, blur, tint, tintColor, sheen, rim, grain, paneBlur,
   // saturation, glow, accent, opaqueWhenUnfocused, followSystem }, glass, systemTransparency }.
-  const { TYPES, paint } = window.kostompMaterial;
+  const { TYPES } = window.kostompMaterial;
   let material = window.__KOSTOMP_MATERIAL__ || null;
   let wanted = material ? { ...material.settings } : null; // last settings sent, ahead of the echo
   const statsFrame = $("stats-frame");
@@ -41,13 +41,15 @@
 
   function applyMaterial(state) {
     if (!state) return;
-    material = state;
+    material = window.kostompMaterial.apply(state);
     if (!wanted) wanted = { ...state.settings };
-    root.dataset.material = state.glass ? "glass" : "opaque";
-    paint(state.settings);
     postStatsMaterial();
     syncWindowPage();
   }
+  window.addEventListener("kostomp-material-change", (e) => {
+    material = e.detail;
+    postStatsMaterial();
+  });
   listen("window-material", (e) => applyMaterial(e.payload));
   invoke("window_style_get").then(applyMaterial);
 

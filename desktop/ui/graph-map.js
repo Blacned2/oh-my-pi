@@ -18,6 +18,9 @@
     needs_input: ["Needs input", "warning"],
     stale_base: ["Base changed", "warning"],
   };
+  const minZoom = 0.1;
+  const maxZoom = 2;
+  const zoomStep = 1.2;
 
   function textElement(tag, text, className) {
     const element = document.createElement(tag);
@@ -26,14 +29,21 @@
     return element;
   }
 
-  function createFlowMap(section, { showLog, retry }) {
+  function createFlowMap(section, { retry, onSelect }) {
     const scroll = section.querySelector(".graph-flow-scroll");
     const canvas = section.querySelector(".graph-flow-canvas");
     const stages = section.querySelector(".graph-flow-stages");
     const wires = section.querySelector(".graph-flow-wires g");
     const count = section.querySelector("#graph-flow-count");
+    const zoomOut = section.querySelector("#graph-flow-zoom-out");
+    const zoomLevel = section.querySelector("#graph-flow-zoom-level");
+    const zoomIn = section.querySelector("#graph-flow-zoom-in");
+    const fitButton = section.querySelector("#graph-flow-fit");
+    const inspector = section.querySelector("#graph-inspector");
+    const inspectorToggle = section.querySelector("#graph-inspector-toggle");
+    const inspectorClose = section.querySelector("#graph-inspector-close");
     const details = section.querySelector("#graph-step-details");
-    const logButton = section.querySelector("#graph-step-log");
+    let picked = false;
     const retryButton = section.querySelector("#graph-step-retry");
     const items = new Map();
     const routes = [];
@@ -41,19 +51,105 @@
     let snapshot;
     let selected;
     let updateKey;
+    let zoom = 1;
+    let fitted = true;
+    let panX = 0;
+    let panY = 0;
+    let drag;
+    let suppressClick = false;
+
+    function positionCanvas() {
+      canvas.style.translate = `${panX / zoom}px ${panY / zoom}px`;
+    }
+
+    scroll.addEventListener("pointerdown", event => {
+      if (event.button !== 0 || !event.isPrimary || drag) return;
+      suppressClick = false;
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, panX, panY, moved: false };
+    });
+    window.addEventListener("pointermove", event => {
+      if (!drag || event.pointerId !== drag.id) return;
+      const dx = event.clientX - drag.x;
+      const dy = event.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+      if (!drag.moved) {
+        drag.moved = true;
+        fitted = false;
+        scroll.setPointerCapture(event.pointerId);
+        scroll.classList.add("is-panning");
+      }
+      panX = drag.panX + dx;
+      panY = drag.panY + dy;
+      positionCanvas();
+      event.preventDefault();
+    });
+    function endDrag(event) {
+      if (!drag || event.pointerId !== drag.id) return;
+      suppressClick = drag.moved;
+      drag = undefined;
+      scroll.classList.remove("is-panning");
+      if (scroll.hasPointerCapture(event.pointerId)) scroll.releasePointerCapture(event.pointerId);
+    }
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    scroll.addEventListener("lostpointercapture", endDrag);
+    scroll.addEventListener("click", event => {
+      if (!suppressClick || event.detail === 0) return;
+      suppressClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
+
+    function setZoom(scale) {
+      if (scale === zoom) return;
+      zoom = scale;
+      canvas.style.zoom = String(zoom);
+      positionCanvas();
+      zoomLevel.value = `${Math.round(zoom * 100)}%`;
+      zoomOut.disabled = zoom <= minZoom;
+      zoomIn.disabled = zoom >= maxZoom;
+    }
+
+    function fitDiagram() {
+      if (!scroll.clientWidth || !scroll.clientHeight || !canvas.offsetWidth || !canvas.offsetHeight) return;
+      panX = 0;
+      panY = 0;
+      positionCanvas();
+      const scale = Math.min(1, scroll.clientWidth / canvas.offsetWidth, scroll.clientHeight / canvas.offsetHeight);
+      setZoom(Math.max(0.01, Math.floor(scale * 100) / 100));
+      scroll.scrollTo(0, 0);
+    }
+
+    function changeZoom(factor) {
+      fitted = false;
+      const scale = Math.min(maxZoom, Math.max(minZoom, zoom * factor));
+      const ratio = scale / zoom;
+      const x = scroll.scrollLeft + scroll.clientWidth / 2;
+      const y = scroll.scrollTop + scroll.clientHeight / 2;
+      setZoom(scale);
+      scroll.scrollTo(x * ratio - scroll.clientWidth / 2, y * ratio - scroll.clientHeight / 2);
+    }
+
+    zoomOut.addEventListener("click", () => changeZoom(1 / zoomStep));
+    zoomIn.addEventListener("click", () => changeZoom(zoomStep));
+    fitButton.addEventListener("click", () => {
+      fitted = true;
+      fitDiagram();
+    });
 
     function drawWires() {
       if (!canvas.clientWidth) return;
       const origin = canvas.getBoundingClientRect();
-      const railTop = stages.getBoundingClientRect().bottom - origin.top;
+      // The SVG uses canvas units while the measured button boxes include zoom.
+      const railTop = (stages.getBoundingClientRect().bottom - origin.top) / zoom;
       const boxes = new Map([...items].map(([id, item]) => [id, item.button.getBoundingClientRect()]));
       const paths = routes.map(({ from, to, lane }) => {
         const start = boxes.get(from);
         const end = boxes.get(to);
-        const x1 = start.right - origin.left + 1;
-        const y1 = start.top + start.height / 2 - origin.top;
-        const x2 = end.left - origin.left - 1;
-        const y2 = end.top + end.height / 2 - origin.top;
+        const x1 = (start.right - origin.left) / zoom + 1;
+        const y1 = (start.top + start.height / 2 - origin.top) / zoom;
+        const x2 = (end.left - origin.left) / zoom - 1;
+        const y2 = (end.top + end.height / 2 - origin.top) / zoom;
         const middle = (x1 + x2) / 2;
         const rail = railTop + 11 + (lane ?? 0) * 8;
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -66,7 +162,11 @@
       wires.replaceChildren(...paths);
     }
 
-    const resize = new ResizeObserver(drawWires);
+    const resize = new ResizeObserver(() => requestAnimationFrame(() => {
+      if (fitted) fitDiagram();
+      drawWires();
+    }));
+    resize.observe(scroll);
     resize.observe(canvas);
 
     function build(run) {
@@ -124,8 +224,6 @@
       canvas.style.setProperty("--graph-flow-rail-space", `${lanes.size * 8}px`);
       stages.replaceChildren(...columns);
       count.textContent = `${items.size} ${items.size === 1 ? "step" : "steps"}`;
-      scroll.scrollLeft = 0;
-      scroll.scrollTop = 0;
     }
 
     function phaseFor(node) {
@@ -162,10 +260,8 @@
       details.replaceChildren(roleLabel, heading, meta);
       if (message) details.append(textElement("p", message, "graph-flow-message"));
       if (fields.childElementCount) details.append(fields);
-      logButton.hidden = !snapshot.logs?.includes(selected);
       retryButton.hidden = !snapshot.retryable?.includes(selected);
       if (retryButton.hidden && document.activeElement === retryButton) button.focus();
-      if (logButton.hidden && document.activeElement === logButton) button.focus();
     }
 
     function select(id) {
@@ -174,17 +270,40 @@
       items.get(selected).button.setAttribute("aria-pressed", "true");
     }
 
+    function showInspector(open) {
+      inspector.hidden = !open;
+      inspectorToggle.setAttribute("aria-expanded", String(open));
+    }
+
+    function closeInspector() {
+      showInspector(false);
+      inspectorToggle.focus();
+    }
+
+    inspectorToggle.addEventListener("click", () => showInspector(inspector.hidden));
+    inspectorClose.addEventListener("click", closeInspector);
+    inspector.addEventListener("keydown", event => {
+      if (event.key === "Escape") closeInspector();
+    });
+
     stages.addEventListener("click", event => {
       const id = event.target.closest("button[data-node]")?.dataset.node;
-      if (!id || id === selected) return;
-      select(id);
-      renderDetails();
-      drawWires();
+      if (!id) return;
+      const opening = inspector.hidden;
+      showInspector(true);
+      picked = true;
+      if (id !== selected) {
+        select(id);
+        onSelect();
+        renderDetails();
+        drawWires();
+      }
+      if (opening) inspectorClose.focus({ preventScroll: true });
     });
-    logButton.addEventListener("click", () => showLog(selected));
     retryButton.addEventListener("click", () => retry(runId, selected));
 
     return {
+      selected: () => selected,
       render(next) {
         const run = next?.run;
         section.hidden = !run;
@@ -197,13 +316,20 @@
         if (newRun) {
           runId = run.id;
           updateKey = undefined;
+          picked = false;
+          fitted = true;
           build(run);
           const initial = (next.status && run.plan.nodes.find(node => node.role === "gate")) ||
             run.plan.nodes.find(node => ["failed", "interrupted", "running"].includes(run.nodes[node.id].status)) ||
             run.plan.nodes[0];
           select(initial.id);
         }
-        const key = JSON.stringify([run.sequence, next.status, next.reason, next.logs, next.retryable]);
+        // A step the user has not chosen follows whichever step is working.
+        if (!picked) {
+          const live = run.plan.nodes.find(node => run.nodes[node.id].status === "running");
+          if (live && live.id !== selected) select(live.id);
+        }
+        const key = JSON.stringify([run.sequence, next.status, next.reason, next.logs, next.retryable, selected]);
         if (key === updateKey) return;
         updateKey = key;
         for (const [id, { node, button, phase, attempt }] of items) {
@@ -214,13 +340,8 @@
           attempt.textContent = number ? `#${number}` : "";
         }
         renderDetails();
+        if (newRun) fitDiagram();
         drawWires();
-        if (newRun) {
-          const viewport = scroll.getBoundingClientRect();
-          const node = items.get(selected).button.getBoundingClientRect();
-          scroll.scrollLeft = Math.max(0, node.right - viewport.left - scroll.clientWidth + 10);
-          scroll.scrollTop = Math.max(0, node.bottom - viewport.top - scroll.clientHeight + 10);
-        }
       },
     };
   }

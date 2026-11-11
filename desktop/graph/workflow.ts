@@ -58,6 +58,7 @@ export function graphWork(context: GraphRunContext): GraphWork {
 export interface GraphFileView {
 	read(file: string, signal: AbortSignal): Promise<{ data: Uint8Array }>;
 	list(directory: string): string[];
+	validatePatch(patch: string, signal: AbortSignal): Promise<void>;
 }
 
 /** Receives an attempt's display log. Text is sanitized and stored only while the attempt is live. */
@@ -223,10 +224,20 @@ export async function runApprovedGraph(
 				upstream: upstream.map(({ nodeId, changes }) => ({ nodeId, files: changes.map(change => change.path) })),
 			};
 			const view = upstream.length > 0 ? await workspace.compose(scopes, upstream, attemptSignal) : undefined;
+			let validated: { patch: string; changes: GraphChangeSet } | undefined;
 			const files: GraphFileView = {
 				read: (file, readSignal) =>
 					view ? workspace.readCandidateFile(view, file, readSignal) : workspace.readBaseFile(file, readSignal),
 				list: directory => workspace.list(directory, view),
+				async validatePatch(patch, signal) {
+					const changes = await workspace.captureChangeSet(
+						nodeId,
+						task.files,
+						patch,
+						AbortSignal.any([attemptSignal, signal]),
+					);
+					validated = { patch, changes };
+				},
 			};
 			const repair = attempt.repair && {
 				feedback: attempt.repair.feedback,
@@ -235,7 +246,10 @@ export async function runApprovedGraph(
 				).slice(0, 12_000),
 			};
 			const patch = await executors.code(files, task, work, attemptSignal, log, repair, context);
-			const changes = await workspace.captureChangeSet(nodeId, task.files, patch, attemptSignal);
+			const changes =
+				validated?.patch === patch
+					? validated.changes
+					: await workspace.captureChangeSet(nodeId, task.files, patch, attemptSignal);
 			const proposed = await workspace.compose(scopes, [...upstream, changes], attemptSignal);
 			return JSON.stringify({ ...proposed, changes } satisfies CodeArtifact);
 		}

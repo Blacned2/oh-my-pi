@@ -43,5 +43,26 @@
     }
   }
 
-  window.kostompMaterial = { TYPES, paint, rgbOf };
+  let state = null;
+  function apply(next) {
+    state = next;
+    const s = state.settings;
+    const glass = s.material === "glass"
+      && !(s.followSystem && !state.systemTransparency)
+      && !(s.opaqueWhenUnfocused && !document.hasFocus());
+    paint(s, glass);
+    return { ...state, glass };
+  }
+
+  // Paint in the WebView's focus task, without waiting for native IPC (or the registry query).
+  // Recompute from document focus even for native events queued before the last activation.
+  for (const event of ["focus", "blur"]) {
+    window.addEventListener(event, () => {
+      if (!state) return;
+      const current = apply(state);
+      window.dispatchEvent(new CustomEvent("kostomp-material-change", { detail: current }));
+    });
+  }
+
+  window.kostompMaterial = { TYPES, paint, apply, rgbOf };
 })();
