@@ -223,6 +223,32 @@ describe("session picker incremental search", () => {
 		harness.selector.dispose();
 	});
 
+	it("keeps history-only matches and selection when the search cursor moves", () => {
+		const harness = makeHarness([makeSession("metadata", { firstMessage: "needle" }), makeSession("history")], () => [
+			"history",
+		]);
+		try {
+			harness.type("needle");
+			vi.runAllTimers();
+			expect(ids(harness.filtered())).toEqual(["history", "metadata"]);
+
+			const list = harness.selector.getSessionList();
+			list.selectSession("history.jsonl");
+			list.handleInput("\x1b[D");
+			list.handleInput("\x1b[C");
+
+			let selected: string | undefined;
+			list.onSelect = session => {
+				selected = session.id;
+			};
+			list.resumeSelected();
+			expect(selected).toBe("history");
+			expect(ids(harness.filtered())).toEqual(["history", "metadata"]);
+		} finally {
+			harness.selector.dispose();
+		}
+	});
+
 	it("skips the history merge after the user moves the selection", () => {
 		const sessions = makeCorpus();
 		const calls: string[] = [];

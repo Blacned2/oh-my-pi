@@ -5,6 +5,8 @@
 ### Changed
 
 - Added shared Aurora liquid-glass chrome and controls while keeping charts and tables opaque for reading.
+- Glass panels no longer blur what is behind them, so the dashboard stops redrawing a backdrop blur on every frame and uses far less GPU.
+- The live status dot is now a static halo instead of an endless ping, so an open dashboard no longer redraws on every display refresh.
 
 ## [18.18.4] - 2026-11-09
 

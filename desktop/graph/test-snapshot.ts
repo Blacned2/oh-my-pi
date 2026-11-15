@@ -7,7 +7,7 @@ const indexHeaderBytes = 12;
 const indexEntryPrefixBytes = 62;
 const sha1Bytes = 20;
 
-interface IndexFile {
+export interface IndexFile {
 	path: string;
 	blobId: string;
 	executable: boolean;
@@ -50,6 +50,11 @@ function snapshotEntries(index: Buffer): IndexFile[] {
 	return entries;
 }
 
+/** Parse an index written by readTree, rejecting trees the Tester cannot package. */
+export async function readSnapshotEntries(indexPath: string): Promise<IndexFile[]> {
+	return snapshotEntries(Buffer.from(await Bun.file(indexPath).arrayBuffer()));
+}
+
 /** Package only committed candidate bytes. The control file is outside the project prefix. */
 export async function buildTestSnapshot(
 	repo: VcsGitRepo,
@@ -57,8 +62,7 @@ export async function buildTestSnapshot(
 	archivePath: string,
 	signal?: AbortSignal,
 ): Promise<Bun.BunFile> {
-	const index = Buffer.from(await Bun.file(indexPath).arrayBuffer());
-	const entries = snapshotEntries(index);
+	const entries = await readSnapshotEntries(indexPath);
 	async function* members(): AsyncGenerator<readonly [string, Uint8Array]> {
 		const executable: string[] = [];
 		for (const entry of entries) {

@@ -1,5 +1,20 @@
-// WebView adapter for docs/rpc.md protocol v2. One decoder per omp process.
+// WebView side of docs/rpc.md: serialised omp process start/stop per session, and the
+// protocol v2 frame decoder (one per omp process).
 (() => {
+  const { invoke } = window.__TAURI__.core;
+  // Per id, each call waits for the previous one to settle, so a restart cannot overtake a stop.
+  const tails = new Map();
+  const enqueue = (id, command, args) => {
+    const run = (tails.get(id) ?? Promise.resolve()).then(() => invoke(command, args));
+    const tail = run.then(() => {}, () => {});
+    tails.set(id, tail);
+    tail.then(() => { if (tails.get(id) === tail) tails.delete(id); });
+    return run;
+  };
+  window.KostompRpcLifecycle = {
+    start: (args) => enqueue(args.id, "rpc_start", args),
+    stop: (id) => enqueue(id, "rpc_stop", { id }),
+  };
   const MAX_BYTES = 64 * 1024 * 1024;
   const CHUNK_BYTES = 256 * 1024;
   const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);

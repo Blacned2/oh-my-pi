@@ -1447,8 +1447,10 @@ class SessionList<T extends SessionSelectorEntry> implements Component {
 			return;
 		}
 		// Pass everything else to search input
+		const before = this.#searchInput.getValue();
 		this.#searchInput.handleInput(keyData);
-		this.#filterSessions(this.#searchInput.getValue());
+		const query = this.#searchInput.getValue();
+		if (query !== before) this.#filterSessions(query);
 	}
 }
 

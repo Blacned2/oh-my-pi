@@ -25,18 +25,36 @@ export interface GraphCoderContext {
 	upstream: { nodeId: string; files: string[] }[];
 }
 
+/** Case- and mark-folded terms, so `İstek`, `istek` and `ISTEK` are one word. */
 function words(text: string): Set<string> {
 	return new Set(
 		text
 			.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+			.normalize("NFKD")
+			.replace(/\p{M}/gu, "")
 			.toLowerCase()
 			.match(/[\p{L}\p{N}]{3,}/gu),
 	);
 }
 
+interface SourceLine {
+	line: number;
+	text: string;
+	words: Set<string>;
+}
+
+interface RankedReference extends GraphContextReference {
+	/** Own-text matches first; path matches and ownership only break ties. */
+	rank: [matches: number, pathMatches: number, owned: number];
+}
+
+function compareRank(a: RankedReference, b: RankedReference): number {
+	return b.rank[0] - a.rank[0] || b.rank[1] - a.rank[1] || b.rank[2] - a.rank[2];
+}
+
 /** Rank pinned source references. Files written by another Coder are read from the live prerequisite view instead. */
 export async function buildGraphContext(
-	workspace: GraphWorkspace,
+	workspace: Pick<GraphWorkspace, "baseSha" | "files" | "readBaseFile">,
 	work: GraphWork,
 	signal: AbortSignal,
 ): Promise<GraphContextManifest> {
@@ -51,13 +69,17 @@ export async function buildGraphContext(
 		.sort((a, b) => b.score - a.score || (a.file < b.file ? -1 : 1))
 		.slice(0, maxHintFiles)
 		.map(({ file }) => file);
-	const sources = new Map<string, string[]>();
+	const sources = new Map<string, { words: Set<string>; lines: SourceLine[] }>();
 	for (const file of [...owners.keys(), ...hints]) {
 		signal.throwIfAborted();
 		try {
 			const { data } = await workspace.readBaseFile(file, signal);
 			if (data.byteLength > maxFileBytes || data.includes(0)) continue;
-			sources.set(file, new TextDecoder("utf-8", { fatal: true }).decode(data).split(/\r?\n/));
+			const lines = new TextDecoder("utf-8", { fatal: true })
+				.decode(data)
+				.split(/\r?\n/)
+				.flatMap((text, index) => (text.trim() ? [{ line: index + 1, text, words: words(text) }] : []));
+			sources.set(file, { words: words(file), lines });
 		} catch {
 			// A new, binary, oversized or otherwise unreadable file supplies no hint.
 			signal.throwIfAborted();
@@ -67,20 +89,26 @@ export async function buildGraphContext(
 	for (const task of work.tasks) {
 		signal.throwIfAborted();
 		const terms = words(`${task.title} ${task.brief} ${work.objective}`);
-		const countMatches = (text: string) => [...words(text)].filter(word => terms.has(word)).length;
-		const ranked: (GraphContextReference & { score: number })[] = [];
-		for (const [file, lines] of sources) {
+		const countMatches = (found: Set<string>) => {
+			let count = 0;
+			for (const word of found) if (terms.has(word)) count++;
+			return count;
+		};
+		const ranked: RankedReference[] = [];
+		for (const [file, source] of sources) {
 			const owner = owners.get(file);
 			if (owner && owner !== task.nodeId) continue;
-			const pathScore = countMatches(file);
-			for (const [index, text] of lines.entries()) {
-				if (!text.trim()) continue;
-				const score = countMatches(text) * 2 + pathScore + (owner === task.nodeId ? 1 : 0);
-				if (score === 0 || (ranked.length === maxReferences && score <= ranked.at(-1)!.score)) continue;
-				const excerpt = truncate(cleanDiagnostic(text), maxExcerptChars);
-				if (!excerpt) continue;
-				ranked.push({ file, line: index + 1, excerpt, score });
-				ranked.sort((a, b) => b.score - a.score);
+			const pathMatches = countMatches(source.words);
+			const owned = owner === task.nodeId ? 1 : 0;
+			for (const { line, text, words: lineWords } of source.lines) {
+				const matches = countMatches(lineWords);
+				if (matches === 0) continue;
+				const candidate: RankedReference = { file, line, excerpt: "", rank: [matches, pathMatches, owned] };
+				if (ranked.length === maxReferences && compareRank(candidate, ranked.at(-1)!) >= 0) continue;
+				candidate.excerpt = truncate(cleanDiagnostic(text), maxExcerptChars);
+				if (!candidate.excerpt) continue;
+				ranked.push(candidate);
+				ranked.sort(compareRank);
 				if (ranked.length > maxReferences) ranked.pop();
 			}
 		}

@@ -14,12 +14,14 @@ import { formatDoubleTap, formatKeyHint, type KeybindingsManager } from "../app-
 import { theme } from "../theme/theme";
 
 /** Stable hint ids; persisted as usage-counter keys, so never rename one. */
-export type ComposerHintId = "agents" | "effort";
+export type ComposerHintId = "agents" | "effort" | "queue";
 
 /** Live state that hint conditions read. Built by the host on every render of the empty composer. */
 export interface ComposerHintContext {
 	/** Subagents currently running in the background. */
 	runningAgents: number;
+	/** The viewed session is mid-turn, so Enter steers and the follow-up key queues. */
+	streaming: boolean;
 	/** The view is focused on a subagent session instead of the main one. */
 	focusedOnAgent: boolean;
 	/** The viewed session already has messages. */
@@ -51,6 +53,18 @@ export const COMPOSER_HINTS: readonly ComposerHint[] = [
 				key: formatDoubleTap("left"),
 				label: `to see ${ctx.runningAgents} running ${ctx.runningAgents === 1 ? "agent" : "agents"}`,
 			};
+		},
+	},
+	{
+		// Mid-turn, plain Enter steers; the follow-up key queues behind the turn.
+		id: "queue",
+		learnedAfter: 3,
+		resolve: ctx => {
+			if (!ctx.streaming) return undefined;
+			const key = ctx.keybindings.getKeys("app.message.followUp")[0];
+			return key
+				? { key: formatKeyHint("enter"), label: `steer · ${formatKeyHint(key)} queue` }
+				: { key: formatKeyHint("enter"), label: "steer" };
 		},
 	},
 	{

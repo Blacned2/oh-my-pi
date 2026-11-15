@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { TempDir, untilAborted } from "@oh-my-pi/pi-utils";
 import { type GraphNode, parseGraphPlan } from "../plan";
 import { type GraphDraft, GraphRunStore } from "../run-store";
-import { driveGraphRun } from "../scheduler";
+import { driveGraphRun, GRAPH_SHUTDOWN } from "../scheduler";
 import { graphPlanForTasks } from "../task-plan";
 
 function node(id: string, role: GraphNode["role"], dependsOn: string[] = [], maxAttempts = 2): GraphNode {
@@ -140,11 +140,93 @@ test("an oversized artifact fails the attempt and is never passed to a dependent
 	const dispatched: string[] = [];
 	await driveGraphRun(store, id, 1, async attempt => {
 		dispatched.push(attempt.nodeId);
-		return "é".repeat(600_000);
+		// Over 4 MiB of UTF-8: the limit leaves room for a JSON-escaped 1 MiB patch, not for this.
+		return "é".repeat(2_200_000);
 	});
 	expect(dispatched).toEqual(["code"]);
-	expect(store.get(id)?.nodes.code).toMatchObject({ status: "failed", error: "Graph artifact exceeds 1 MiB" });
+	expect(store.get(id)?.nodes.code).toMatchObject({ status: "failed", error: "Graph artifact exceeds 4 MiB" });
 	expect(store.currentArtifacts(id).size).toBe(0);
+});
+
+/** Runs `code` until its signal aborts, then returns the settled driver. */
+async function abortWhileRunning(store: GraphRunStore, runId: string, reason?: string): Promise<void> {
+	const controller = new AbortController();
+	const started = Promise.withResolvers<void>();
+	const running = driveGraphRun(
+		store,
+		runId,
+		1,
+		async (_attempt, signal) => {
+			started.resolve();
+			await untilAborted(signal, Promise.withResolvers<void>().promise);
+			return "unused";
+		},
+		controller.signal,
+	);
+	await Promise.race([started.promise, running]);
+	controller.abort(reason);
+	await running;
+}
+
+test("app shutdown interrupts the live attempt instead of cancelling, and the run resumes after restart", async () => {
+	using store = new GraphRunStore(":memory:");
+	const { id } = store.create({ version: 1, nodes: [node("code", "coder", [], 1), node("test", "tester", ["code"])] });
+	await abortWhileRunning(store, id, GRAPH_SHUTDOWN);
+	const run = store.get(id)!;
+	expect(run.cancelled).toBe(false);
+	expect(run.nodes.code.status).toBe("interrupted");
+	expect(store.resumableNodes(run)).toEqual(["code"]);
+	// A single-attempt node can only rerun when the interrupted attempt was not charged.
+	expect(store.resume(id)).toBe(true);
+	await driveGraphRun(store, id, 1, async attempt => attempt.nodeId);
+	expect([...store.currentArtifacts(id).keys()]).toEqual(["code", "test"]);
+});
+
+test("cancelling a run after its work finished keeps its result and retryable steps", async () => {
+	using store = new GraphRunStore(":memory:");
+	const { id } = store.create({ version: 1, nodes: [node("code", "coder"), node("test", "tester", ["code"])] });
+	await driveGraphRun(store, id, 1, async attempt => attempt.nodeId);
+	const artifacts = store.currentArtifacts(id);
+	const retryable = store.retryableNodes(store.get(id)!);
+	expect(retryable).toEqual(["code", "test"]);
+	store.cancel(id);
+	expect(store.currentArtifacts(id)).toEqual(artifacts);
+	expect(store.retryableNodes(store.get(id)!)).toEqual(retryable);
+	expect(store.get(id)!.cancelled).toBe(false);
+});
+
+test("a cancelled run resumes to completion and the cancelled attempt does not spend the node's budget", async () => {
+	using store = new GraphRunStore(":memory:");
+	const { id } = store.create({
+		version: 1,
+		nodes: [node("code", "coder", [], 1), node("test", "tester", ["code"], 1)],
+	});
+	await abortWhileRunning(store, id);
+	expect(store.get(id)!.cancelled).toBe(true);
+	expect(store.retryableNodes(store.get(id)!)).toEqual([]);
+	expect(store.resume(id)).toBe(true);
+	await driveGraphRun(store, id, 1, async attempt => attempt.nodeId);
+	const run = store.get(id)!;
+	expect(run.cancelled).toBe(false);
+	expect([run.nodes.code.status, run.nodes.test.status]).toEqual(["succeeded", "succeeded"]);
+	expect(run.nodes.code.usedAttempts).toBe(1);
+	expect([...store.currentArtifacts(id).keys()]).toEqual(["code", "test"]);
+});
+
+test("resume re-runs an interrupted node and then its queued dependents", async () => {
+	using store = new GraphRunStore(":memory:");
+	const { id } = store.create({ version: 1, nodes: [node("code", "coder"), node("test", "tester", ["code"])] });
+	store.claimReady(id, 1);
+	store.recoverInterrupted(id);
+	// Without resume, an interrupted node is only reachable through per-node retry.
+	expect(store.readyNodes(store.get(id)!)).toEqual([]);
+	expect(store.resume(id)).toBe(true);
+	const rerun: string[] = [];
+	await driveGraphRun(store, id, 1, async attempt => {
+		rerun.push(attempt.nodeId);
+		return attempt.nodeId;
+	});
+	expect(rerun).toEqual(["code", "test"]);
 });
 
 function taskRun(store: GraphRunStore, tasks: { id: string; files: string[]; dependsOn?: string[] }[]): string {
@@ -303,7 +385,7 @@ test("deleting a run removes all its data permanently and leaves other runs, dra
 
 		store.delete(doomed);
 		expect(store.get(doomed)).toBeNull();
-		expect(store.recent().map(run => run.id)).toEqual([kept]);
+		expect(store.recent().runs.map(run => run.id)).toEqual([kept]);
 		expect(store.events(doomed, 0)).toEqual([]);
 		expect(store.artifact(doomed, artifactId)).toBeNull();
 		expect(() => store.cancel(doomed)).toThrow(/Unknown Graph run/);
@@ -315,7 +397,7 @@ test("deleting a run removes all its data permanently and leaves other runs, dra
 	}
 	using reopened = new GraphRunStore(db);
 	expect(reopened.get(doomed)).toBeNull();
-	expect(reopened.recent().map(run => run.id)).toEqual([kept]);
+	expect(reopened.recent().runs.map(run => run.id)).toEqual([kept]);
 	expect(reopened.events(doomed, 0)).toEqual([]);
 	const keptRun = reopened.get(kept)!;
 	expect(reopened.log(keptRun, "test")).toBe(`log ${kept}`);
@@ -323,4 +405,23 @@ test("deleting a run removes all its data permanently and leaves other runs, dra
 	expect(reopened.testObservation(keptRun)).toMatchObject({ status: "unavailable", reason: "missing_credentials" });
 	expect(reopened.draft()).toEqual(draft);
 	expect(reopened.latestPlanning()).toEqual(planning);
+});
+
+test("runs page newest first by 50 without repeating or skipping one, and an unknown cursor is rejected", () => {
+	using store = new GraphRunStore(":memory:");
+	const created = Array.from({ length: 120 }, () => store.create({ version: 1, nodes: [node("test", "tester")] }).id);
+	const pages: { runs: string[]; more: boolean }[] = [];
+	let after: string | undefined;
+	do {
+		const page = store.recent(after);
+		pages.push({ runs: page.runs.map(run => run.id), more: page.more });
+		after = page.runs.at(-1)?.id;
+	} while (pages.at(-1)!.more);
+	expect(pages.map(page => [page.runs.length, page.more])).toEqual([
+		[50, true],
+		[50, true],
+		[20, false],
+	]);
+	expect(pages.flatMap(page => page.runs)).toEqual(created.toReversed());
+	expect(() => store.recent("no-such-run")).toThrow(/Unknown Graph run/);
 });

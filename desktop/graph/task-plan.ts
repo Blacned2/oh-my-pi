@@ -4,6 +4,7 @@ import { repoPathPrefixes, writablePathKey } from "./repo-path";
 
 const MAX_TASKS = 16;
 const MAX_TASK_FILES = 32;
+const MAX_FILE_CHARS = 260;
 
 const taskSchema = type({
 	id: /^[a-z][a-z0-9-]{0,31}$/,
@@ -87,8 +88,12 @@ export function parseTaskPlan(value: unknown): GraphTaskPlan {
 			throw new Error(`Graph task ${task.id} must own 1–${MAX_TASK_FILES} files`);
 		}
 		for (const file of task.files) {
+			if (file.length > MAX_FILE_CHARS) {
+				throw new Error(`Graph task ${task.id} lists a path longer than ${MAX_FILE_CHARS} characters`);
+			}
 			const [key] = writablePathKey(file);
 			const owner = owners.get(key);
+			if (owner === task.id) throw new Error(`Graph task ${task.id} lists ${file} twice`);
 			if (owner !== undefined) throw new Error(`Graph tasks ${owner} and ${task.id} both write ${file}`);
 			const prefixes = repoPathPrefixes(file);
 			const parent = prefixes.slice(0, -1).find(([prefix]) => owners.has(prefix));
@@ -148,7 +153,8 @@ export function graphPlanForTasks(plan: GraphTaskPlan): GraphPlan {
 					contextNodeId,
 					...plan.tasks.filter(other => closure.get(task.id)!.has(other.id)).map(other => coderNodeId(other.id)),
 				],
-				maxAttempts: 3,
+				// One attempt, two automatic repairs, and room for a manual retry with evidence.
+				maxAttempts: 5,
 			})),
 			{ id: "test", role: "tester", dependsOn: coders, maxAttempts: 3 },
 			{ id: "review", role: "reviewer", dependsOn: [...coders, "test"], maxAttempts: 3 },

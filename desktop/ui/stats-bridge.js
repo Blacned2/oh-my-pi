@@ -57,6 +57,22 @@
     setGlass(glass);
   });
 
+  // The frame stays loaded while another shell view is open, so its own document.hidden never turns
+  // true and the dashboard keeps polling. Fold the shell's view into document.hidden: the dashboard's
+  // polling already skips while it is true.
+  const realHidden = Object.getOwnPropertyDescriptor(Document.prototype, "hidden").get;
+  const realState = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState").get;
+  let shown = true;
+  Object.defineProperty(document, "hidden", { configurable: true, get() { return !shown || realHidden.call(this); } });
+  Object.defineProperty(document, "visibilityState", { configurable: true, get() { return shown ? realState.call(this) : "hidden"; } });
+  window.addEventListener("message", (e) => {
+    if (e.source !== window.parent || !e.data || e.data.type !== "kostomp-visible") return;
+    const next = e.data.visible === true;
+    if (next === shown) return;
+    shown = next;
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
   const hideToggle = () => {
     document.documentElement.classList.add("kostomp-frame");
     setGlass(localStorage.getItem(MAT_KEY) === "glass");

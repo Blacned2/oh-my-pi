@@ -22,7 +22,13 @@ export interface OmpWorkerOptions {
 	transcript?: string[];
 	/** Called after each line is added to `transcript`, so a caller can show the attempt while it runs. */
 	onTranscript?: () => void;
+	/** Whether the worker has delivered its result; checked each time a prompt completes. */
+	isDone?: () => boolean;
+	/** Sent as a follow-up prompt, at most twice within the same deadline, while `isDone` reports false. */
+	reminder?: string;
 }
+
+const maxReminders = 2;
 
 const clip = (text: string, limit: number) => (text.length > limit ? `${text.slice(0, limit)} …` : text);
 
@@ -57,12 +63,14 @@ function describeEvent(event: AgentEvent): string | undefined {
 
 /** Run one headless OMP attempt. Tool exposure is not an OS sandbox. */
 export async function runOmpWorker(options: OmpWorkerOptions): Promise<void> {
-	const { bunPath, cliPath, cwd, home, provider, model, prompt, tools, timeoutMs } = options;
+	const { bunPath, cliPath, cwd, home, provider, model, prompt, tools, timeoutMs, isDone, reminder } = options;
 	if (!prompt.trim() || prompt.trimStart().startsWith("/")) {
 		throw new Error("Graph workers require a prompt, not a slash command");
 	}
 	const deadline = AbortSignal.timeout(timeoutMs);
-	const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+	// Aborted when the worker runs a tool the host did not register.
+	const guard = new AbortController();
+	const signal = AbortSignal.any(options.signal ? [options.signal, deadline, guard.signal] : [deadline, guard.signal]);
 	signal.throwIfAborted();
 	if ((await fs.readdir(cwd)).length !== 0) throw new Error("Graph worker directory must be empty");
 	const env = {
@@ -100,14 +108,19 @@ export async function runOmpWorker(options: OmpWorkerOptions): Promise<void> {
 		completed = result.status === "completed";
 	});
 	const { transcript, onTranscript } = options;
-	const unsubscribeEvents = transcript
-		? client.onEvent(event => {
-				const line = describeEvent(event);
-				if (!line) return;
-				transcript.push(line);
-				onTranscript?.();
-			})
-		: undefined;
+	const approved = new Set(tools.map(tool => tool.name));
+	const unsubscribeEvents = client.onEvent(event => {
+		const lines = [describeEvent(event)];
+		if (event.type === "tool_execution_start" && !approved.has(event.toolName) && !guard.signal.aborted) {
+			const message = `Graph worker ran an unapproved tool: ${event.toolName}`;
+			lines.push(message);
+			guard.abort(new Error(message));
+		}
+		const added = lines.filter(line => line !== undefined);
+		if (!transcript || added.length === 0) return;
+		transcript.push(...added);
+		onTranscript?.();
+	});
 	try {
 		await untilAborted(signal, async () => {
 			await client.start();
@@ -122,21 +135,28 @@ export async function runOmpWorker(options: OmpWorkerOptions): Promise<void> {
 				throw new Error("Graph worker did not register the requested tools");
 			}
 			signal.throwIfAborted();
-			phase = "waiting for the prompt result";
-			// The RpcClient default (60 s) would cut a multi-turn attempt short; `signal` already enforces the attempt deadline.
-			await client.promptAndWait(prompt, undefined, timeoutMs);
-			if (!completed) throw new Error("Graph worker prompt did not complete");
-			phase = "waiting for the session to settle";
-			await client.waitForSettled(timeoutMs);
+			let message = prompt;
+			for (let reminders = 0; ; reminders++) {
+				phase = reminders === 0 ? "waiting for the prompt result" : "waiting for the reminder result";
+				completed = false;
+				// The RpcClient default (60 s) would cut a multi-turn attempt short; `signal` already enforces the attempt deadline.
+				await client.promptAndWait(message, undefined, timeoutMs);
+				if (!completed) throw new Error("Graph worker prompt did not complete");
+				phase = "waiting for the session to settle";
+				await client.waitForSettled(timeoutMs);
+				if (!isDone || !reminder || isDone() || reminders === maxReminders) break;
+				message = reminder;
+			}
 		});
 	} catch (cause) {
 		if (options.signal?.aborted) options.signal.throwIfAborted();
+		if (guard.signal.aborted) throw guard.signal.reason;
 		const reason = cause instanceof Error ? cause.message : String(cause);
 		transcript?.push(`Failed while ${phase}: ${reason}`);
 		throw new Error(`Graph worker failed while ${phase}: ${reason}`, { cause });
 	} finally {
 		unsubscribe();
-		unsubscribeEvents?.();
+		unsubscribeEvents();
 		await client.stop();
 	}
 }

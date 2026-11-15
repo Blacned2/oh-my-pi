@@ -2132,6 +2132,7 @@ export class InputController {
 
 	/** Send editor text as a follow-up message (queued behind current stream). */
 	async handleFollowUp(): Promise<void> {
+		if (this.ctx.viewSession.isStreaming) hintUsage.record("queue");
 		let text = this.#compactDraftImages(this.ctx.editor.getExpandedText().trim());
 		let images = this.ctx.editor.pendingImages.length > 0 ? [...this.ctx.editor.pendingImages] : undefined;
 		let imageLinks =

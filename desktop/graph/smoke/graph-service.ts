@@ -383,8 +383,9 @@ try {
 	strictEqual(await source.isDirty(), false);
 	await stopService?.();
 	request = startService();
-	const saved = await request<{ id: string }[]>({ op: "list" });
-	strictEqual(saved[0]?.id, id);
+	const saved = await request<{ runs: { id: string }[]; more: boolean }>({ op: "list" });
+	strictEqual(saved.runs[0]?.id, id);
+	strictEqual(saved.more, false);
 	strictEqual((await settle()).draft, undefined, "An approved proposal does not return after a restart");
 	await rejects(request(approveDraft), /plan changed/);
 	await request({ op: "open", input: id });

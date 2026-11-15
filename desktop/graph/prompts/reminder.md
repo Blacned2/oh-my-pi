@@ -1,0 +1,1 @@
+Your turn ended without a successful {{tool}} call, so the host has no result from you. Finish the task now by calling {{tool}}. If the tool rejected your last call, fix the reported problem and call it again.

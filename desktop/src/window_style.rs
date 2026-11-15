@@ -30,7 +30,8 @@ pub struct WindowSettings {
     /// Glass type id picked in the UI ("frosted", "clear", ... or "custom"); the values below are
     /// the truth, this only remembers which preset tile to highlight.
     pub glass_type: String,
-    /// System backdrop: 0 = none (clear), 1 = Mica, 2 = Acrylic, 3 = Mica Alt (tabbed).
+    /// System backdrop: 0 = none (clear), 1 = Mica, 2 = Acrylic, 3 = Mica Alt (tabbed). Mica is the
+    /// default: Acrylic re-blurs whatever is behind the window on every frame the page draws.
     pub blur: u8,
     /// Opacity of the page's tint over the glass, in percent.
     pub tint: u8,
@@ -40,10 +41,6 @@ pub struct WindowSettings {
     pub sheen: u8,
     pub rim: u8,
     pub grain: u8,
-    /// Blur of floating panes over the glass, in px.
-    pub pane_blur: u8,
-    /// Colour saturation of what shows through floating panes, in percent (100 = unchanged).
-    pub saturation: u8,
     /// Opacity of the ambient colour glow behind the glass, in percent.
     pub glow: u8,
     /// Accent colour as `#rrggbb`; empty follows the theme.
@@ -57,14 +54,12 @@ impl Default for WindowSettings {
         Self {
             material: Material::Glass,
             glass_type: "frosted".into(),
-            blur: 2,
+            blur: 1,
             tint: 38,
             tint_color: String::new(),
             sheen: 7,
             rim: 14,
             grain: 10,
-            pane_blur: 20,
-            saturation: 150,
             glow: 28,
             accent: String::new(),
             opaque_when_unfocused: true,
@@ -86,8 +81,6 @@ impl WindowSettings {
         self.sheen = self.sheen.min(100);
         self.rim = self.rim.min(100);
         self.grain = self.grain.min(100);
-        self.pane_blur = self.pane_blur.min(40);
-        self.saturation = self.saturation.clamp(50, 250);
         self.glow = self.glow.min(100);
         self.tint_color = clean_color(&self.tint_color);
         self.accent = clean_color(&self.accent);

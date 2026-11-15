@@ -186,12 +186,169 @@ describe("StatusLineComponent PR segment across branch switches", () => {
 		try {
 			const pending = Promise.withResolvers<typeof PR_7>();
 			run.mockReturnValueOnce(pending.promise);
-			component.invalidate();
+			component.invalidateGitCaches();
 			expect(component.getTopBorder(120).content).toContain("#7");
-			pending.resolve(PR_7);
+			pending.resolve(PR_8);
 			await flush();
+			expect(component.getTopBorder(120).content).toContain("#8");
 		} finally {
 			component.dispose();
 		}
+	});
+});
+
+const PR_8 = { exitCode: 0, stdout: '{"number":8,"url":"https://example.test/x/8"}', stderr: "" };
+const PR_REFRESH_MS = 15_000;
+
+interface FakeTimer {
+	run(): void;
+	cancelled: boolean;
+	unref(): void;
+}
+
+/**
+ * Controls the wall clock and captures long (>= 1s) timers so the trailing PR
+ * refresh can be fired deterministically; short timers pass through untouched.
+ */
+function controlTime() {
+	let now = 1_700_000_000_000;
+	vi.spyOn(Date, "now").mockImplementation(() => now);
+	const timers: FakeTimer[] = [];
+	const realSetTimeout = globalThis.setTimeout;
+	const realClearTimeout = globalThis.clearTimeout;
+	vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, delay?: number, ...args: unknown[]) => {
+		if (typeof delay === "number" && delay >= 1_000) {
+			const timer: FakeTimer = { run: () => fn(), cancelled: false, unref() {} };
+			timers.push(timer);
+			return timer as unknown as NodeJS.Timeout;
+		}
+		return realSetTimeout(fn, delay, ...args);
+	}) as unknown as typeof setTimeout);
+	vi.spyOn(globalThis, "clearTimeout").mockImplementation(((handle?: unknown) => {
+		if (handle && typeof handle === "object" && "run" in handle) {
+			(handle as FakeTimer).cancelled = true;
+			return;
+		}
+		realClearTimeout(handle as NodeJS.Timeout);
+	}) as unknown as typeof clearTimeout);
+	return {
+		advance(ms: number) {
+			now += ms;
+		},
+		/** Live (uncancelled) captured timers. */
+		pending: () => timers.filter(t => !t.cancelled),
+		fire(timer: FakeTimer) {
+			timer.cancelled = true;
+			timer.run();
+		},
+	};
+}
+
+async function startWithPr(first: typeof PR_7 | typeof NO_PR) {
+	const clock = controlTime();
+	const checkout = mockCheckout(branch("feature/x"));
+	const run = vi.spyOn(github, "run").mockResolvedValueOnce(first);
+	const repaint = vi.fn();
+	const component = new StatusLineComponent(makeSession(), statusLineHost);
+	component.updateSettings(settings);
+	component.watchBranch(repaint);
+	component.getTopBorder(120);
+	await flush();
+	component.getTopBorder(120);
+	repaint.mockClear();
+	return { clock, checkout, run, repaint, component };
+}
+
+describe("StatusLineComponent PR refresh on ordinary activity", () => {
+	it("keeps the PR on repaints and reflects a PR change after the trailing refresh", async () => {
+		const { clock, run, repaint, component } = await startWithPr(PR_7);
+		try {
+			expect(component.getTopBorder(120).content).toContain("#7");
+			for (let i = 0; i < 5; i++) {
+				component.invalidate();
+				expect(component.getTopBorder(120).content).toContain("#7");
+			}
+			await flush();
+			expect(run).toHaveBeenCalledTimes(1);
+			expect(clock.pending()).toHaveLength(1);
+
+			run.mockResolvedValueOnce(PR_8);
+			clock.advance(PR_REFRESH_MS);
+			clock.fire(clock.pending()[0]!);
+			expect(repaint).toHaveBeenCalledTimes(1);
+			component.getTopBorder(120);
+			await flush();
+			expect(run).toHaveBeenCalledTimes(2);
+			expect(component.getTopBorder(120).content).toContain("#8");
+		} finally {
+			component.dispose();
+		}
+	});
+
+	it("discovers a newly created PR after the interval when none was cached", async () => {
+		const { clock, run, component } = await startWithPr(NO_PR);
+		try {
+			expect(component.getTopBorder(120).content).not.toContain("#7");
+			component.invalidate();
+			component.getTopBorder(120);
+			await flush();
+			expect(run).toHaveBeenCalledTimes(1);
+
+			run.mockResolvedValueOnce(PR_7);
+			clock.advance(PR_REFRESH_MS);
+			clock.fire(clock.pending()[0]!);
+			component.getTopBorder(120);
+			await flush();
+			expect(run).toHaveBeenCalledTimes(2);
+			expect(component.getTopBorder(120).content).toContain("#7");
+		} finally {
+			component.dispose();
+		}
+	});
+
+	it("refetches immediately after invalidateGitCaches, ignoring the interval", async () => {
+		const { run, component } = await startWithPr(PR_7);
+		try {
+			run.mockResolvedValueOnce(PR_8);
+			component.invalidateGitCaches();
+			component.getTopBorder(120);
+			await flush();
+			expect(run).toHaveBeenCalledTimes(2);
+			expect(component.getTopBorder(120).content).toContain("#8");
+		} finally {
+			component.dispose();
+		}
+	});
+
+	it("cancels the pending trailing refresh when an explicit refresh supersedes it", async () => {
+		const { clock, run, repaint, component } = await startWithPr(PR_7);
+		try {
+			component.invalidate();
+			component.getTopBorder(120);
+			const [timer] = clock.pending();
+			expect(timer).toBeDefined();
+
+			run.mockResolvedValueOnce(PR_8);
+			component.invalidateGitCaches();
+			expect(timer!.cancelled).toBe(true);
+			component.getTopBorder(120);
+			await flush();
+			repaint.mockClear();
+			expect(component.getTopBorder(120).content).toContain("#8");
+			expect(repaint).not.toHaveBeenCalled();
+			expect(run).toHaveBeenCalledTimes(2);
+		} finally {
+			component.dispose();
+		}
+	});
+
+	it("cancels the pending trailing refresh on dispose", async () => {
+		const { clock, component } = await startWithPr(PR_7);
+		component.invalidate();
+		component.getTopBorder(120);
+		const [timer] = clock.pending();
+		expect(timer).toBeDefined();
+		component.dispose();
+		expect(timer!.cancelled).toBe(true);
 	});
 });

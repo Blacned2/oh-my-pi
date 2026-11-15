@@ -1,7 +1,13 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import { KeybindingsManager } from "@oh-my-pi/pi-tui/app-keybindings";
 import { setKeybindings, type TerminalFrameProvider, TUI } from "@oh-my-pi/pi-tui";
-import { defaultFormData, fieldError, formAnswers } from "@oh-my-pi/pi-tui/html-form/data";
+import {
+	defaultFormData,
+	fieldContexts,
+	fieldError,
+	fieldQuestions,
+	formAnswers,
+} from "@oh-my-pi/pi-tui/html-form/data";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -468,6 +474,24 @@ describe("html form", () => {
 				{ name: "workers", question: "Workers", answer: "2" },
 				{ name: "notes", question: "Notes", answer: "" },
 			]);
+		});
+
+		it("carries context before a fieldset into its field's prompt, without repeating the question", () => {
+			const form = parseHtmlForm(`<form><p>Logo now:</p><pre>██ ▐█</pre><p>Where should the dot go?</p>
+				<fieldset><legend>Target</legend>
+				<label><input type="radio" name="pos" value="a"> Left</label><label><input type="radio" name="pos" value="b"> Right</label>
+				</fieldset>
+				<p>Anything else?</p><label><input type="radio" name="more" value="y"> Yes</label><label><input type="radio" name="more" value="n"> No</label>
+				<label>Note <input name="note"></label></form>`);
+			const questions = fieldQuestions(form);
+			const contexts = fieldContexts(form);
+			const [pos, more, note] = form.fields;
+			expect([questions.get(pos!), contexts.get(pos!)]).toEqual([
+				"Target",
+				"Logo now:\n\n██ ▐█\n\nWhere should the dot go?",
+			]);
+			expect([questions.get(more!), contexts.get(more!)]).toEqual(["Anything else?", undefined]);
+			expect([questions.get(note!), contexts.get(note!)]).toEqual(["Note", undefined]);
 		});
 
 		it("validates required, numeric bounds and anchored patterns; ignores an invalid pattern", () => {

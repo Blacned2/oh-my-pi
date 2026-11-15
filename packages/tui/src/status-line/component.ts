@@ -186,6 +186,8 @@ function promptCacheFactProps(status: PromptCacheStatus, nowMs: number): TspProp
 const GIT_STATUS_TTL_MS = 10_000;
 const JJ_REFRESH_TTL_MS = 5000;
 const JJ_COMMAND_TIMEOUT_MS = 5_000;
+/** Minimum spacing between `gh pr view` runs triggered only by ordinary repaint activity. */
+const PR_ACTIVITY_REFRESH_MS = 15_000;
 const WATCHER_FAILURE_POLL_TTL_MS = 5000;
 /** Brand-color fade duration across working-state edges (rust omp's `BRAND_FADE`). */
 const BRAND_FADE_MS = 450;
@@ -830,6 +832,11 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	#cachedPrContext: PrCacheContext | undefined = undefined;
 	#cachedPrExpired = false;
 	#prLookupInFlight = false;
+	/** Completion time of the last `gh pr view`; ordinary-activity expiry waits {@link PR_ACTIVITY_REFRESH_MS} past it. */
+	#prFetchedAt = 0;
+	/** Explicit Git invalidation (HEAD move, cwd switch) bypasses the activity throttle once. */
+	#prForceRefresh = false;
+	#prRefreshTimer: NodeJS.Timeout | undefined;
 	#defaultBranch?: string;
 	#defaultBranchCwd: string | undefined = undefined;
 	#lastTokensPerSecond: number | null = null;
@@ -1376,6 +1383,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		this.#disposed = true;
 		this.#branchResolveActive?.controller.abort();
 		this.#branchResolveActive = undefined;
+		this.#cancelPrRefresh();
 		this.#resetJjRequests();
 		this.#onBranchChange = null;
 		this.#stopSpeculationBlink();
@@ -1666,6 +1674,8 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		this.#branchLastFetch = undefined;
 		this.#branchCacheGeneration++;
 		this.#cachedPrExpired = true;
+		this.#prForceRefresh = true;
+		this.#cancelPrRefresh();
 		// A HEAD move (commit, checkout, reset) changes the dirty counts; keep the
 		// stale counts on screen but refetch on the next render. The generation
 		// bump stops an in-flight pre-move result from re-stamping freshness.
@@ -2007,6 +2017,25 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		if (branch === "detached" || this.#isDefaultBranch(branch, gitCwd)) return null;
 		if (this.#prLookupInFlight) return stalePr;
 
+		// `invalidate()` expires the PR on every repaint, so streaming would respawn
+		// `gh pr view` back to back. Same-branch activity expiry waits out a minimum
+		// interval; a trailing repaint refreshes once it lapses.
+		if (
+			!this.#prForceRefresh &&
+			this.#cachedPr !== undefined &&
+			currentContext !== null &&
+			isSamePrCacheContext(this.#cachedPrContext, currentContext)
+		) {
+			const dueAt = this.#prFetchedAt + PR_ACTIVITY_REFRESH_MS;
+			const now = Date.now();
+			if (now < dueAt) {
+				this.#armPrRefresh(dueAt - now);
+				return stalePr;
+			}
+		}
+		this.#prForceRefresh = false;
+		this.#cancelPrRefresh();
+
 		this.#prLookupInFlight = true;
 		const lookupContext = currentContext;
 		const lookupCwd = gitCwd;
@@ -2053,6 +2082,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 				setCachedPr(null);
 			} finally {
 				this.#prLookupInFlight = false;
+				this.#prFetchedAt = Date.now();
 				if (!this.#disposed) {
 					this.#invalidateStatusLineRenderCache();
 					this.#onBranchChange?.();
@@ -2061,6 +2091,24 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		})();
 
 		return stalePr ?? null;
+	}
+
+	#cancelPrRefresh(): void {
+		if (!this.#prRefreshTimer) return;
+		clearTimeout(this.#prRefreshTimer);
+		this.#prRefreshTimer = undefined;
+	}
+
+	#armPrRefresh(delayMs: number): void {
+		if (this.#prRefreshTimer || this.#disposed) return;
+		const timer = setTimeout(() => {
+			this.#prRefreshTimer = undefined;
+			if (this.#disposed) return;
+			this.#invalidateStatusLineRenderCache();
+			this.#onBranchChange?.();
+		}, delayMs);
+		timer.unref?.();
+		this.#prRefreshTimer = timer;
 	}
 
 	#getTokensPerSecond(): number | null {

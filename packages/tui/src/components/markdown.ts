@@ -1311,6 +1311,8 @@ const EMPTY_RENDER_LINES: readonly string[] = [];
 interface RenderedLine {
 	text: string;
 	literalCode?: true;
+	/** Finished content row (wrapped, margined, padded); set only on memoized streaming code rows. */
+	final?: string;
 }
 
 interface RenderedListItemLine extends RenderedLine {
@@ -1320,6 +1322,14 @@ interface RenderedListItemLine extends RenderedLine {
 function renderedLine(text: string, literalCode?: boolean): RenderedLine {
 	return literalCode ? { text, literalCode: true } : { text };
 }
+
+/** Per-signature memo of finished open-fence rows, keyed by the rendered row's text. */
+interface CodeRowMemo {
+	key: string;
+	literal: Map<string, readonly RenderedLine[]>;
+	plain: Map<string, readonly RenderedLine[]>;
+}
+const CODE_ROW_MEMO_MAX = 4096;
 
 const renderCache = new LRUCache<string, readonly string[]>({
 	max: RENDER_CACHE_MAX,
@@ -2561,6 +2571,7 @@ export class Markdown implements Component {
 	// only the trailing partial line stays unhighlighted.
 	#renderingStablePrefix = false;
 	#streamingHighlightCache?: StreamingHighlightCache;
+	#codeRowMemo?: CodeRowMemo;
 	#activeRenderSignature?: RenderSignature;
 	#fastTail?: FastTailRecipe; // undefined = disarmed
 	// B+ capture plumbing: #renderContentLines records the last rendered paragraph row.
@@ -2679,6 +2690,7 @@ export class Markdown implements Component {
 		this.invalidate();
 		this.#dropStreamPrefix();
 		this.#streamingHighlightCache = undefined;
+		this.#codeRowMemo = undefined;
 		this.#fastTail = undefined;
 		this.#lastTailCapture = undefined;
 	}
@@ -2809,6 +2821,7 @@ export class Markdown implements Component {
 			this.#tailRowCache = undefined;
 			this.#listItemRowsCache = undefined;
 			this.#streamingHighlightCache = undefined;
+			this.#codeRowMemo = undefined;
 			this.#streamingListCache = undefined;
 			this.#streamRewound = undefined;
 			this.#streamFenceSettledText = undefined;
@@ -3765,20 +3778,51 @@ export class Markdown implements Component {
 			this.#extensionLinkBlock = i;
 			this.#extensionLinkOrdinal = 0;
 			const renderedTokenLines = this.#renderToken(token, contentWidth, nextToken?.type);
-			for (const renderedRow of renderedTokenLines) {
+			// An open code fence is the unfrozen tail, so every streamed frame
+			// re-renders all its completed rows. Wrapping and padding a row is a
+			// pure function of its text, so reuse the finished rows across frames.
+			const rowMemo =
+				token.type === "code" && this.transientRenderCache && !this.#renderingStablePrefix
+					? this.#codeRowMemoFor(signature)
+					: undefined;
+			// Skip the border rows and the growing last body row: each frame's
+			// partial line is new text that would only evict useful entries.
+			const memoLast = renderedTokenLines.length - 2;
+			for (let r = 0; r < renderedTokenLines.length; r++) {
+				const renderedRow = renderedTokenLines[r]!;
 				// Lists wrap while their structural prefixes are still available, so
 				// continuation rows retain the correct hanging indent. Re-wrapping the
 				// flattened rows here would discard that structure.
 				if (token.type === "list" || TERMINAL.isImageLine(renderedRow.text) || isOsc66Line(renderedRow.text)) {
 					wrappedLines.push(renderedRow);
+					continue;
+				}
+				const memoMap =
+					rowMemo !== undefined && r > 0 && r < memoLast && renderedRow.text !== ""
+						? renderedRow.literalCode
+							? rowMemo.literal
+							: rowMemo.plain
+						: undefined;
+				const memoized = memoMap?.get(renderedRow.text);
+				if (memoized !== undefined) {
+					for (let m = 0; m < memoized.length; m++) wrappedLines.push(memoized[m]!);
+					continue;
+				}
+				const wrappedRows = wrapTextWithAnsi(renderedRow.text, contentWidth);
+				if (memoMap !== undefined) {
+					const finished = this.#finishMemoRows(wrappedRows, renderedRow.literalCode === true, signature);
+					if (finished !== undefined) {
+						if (memoMap.size >= CODE_ROW_MEMO_MAX) memoMap.clear();
+						memoMap.set(renderedRow.text, finished);
+						for (let m = 0; m < finished.length; m++) wrappedLines.push(finished[m]!);
+						continue;
+					}
+				}
+				if (wrappedRows.length === 1 && wrappedRows[0] === renderedRow.text) {
+					wrappedLines.push(renderedRow);
 				} else {
-					const wrappedRows = wrapTextWithAnsi(renderedRow.text, contentWidth);
-					if (wrappedRows.length === 1 && wrappedRows[0] === renderedRow.text) {
-						wrappedLines.push(renderedRow);
-					} else {
-						for (const wrappedLine of wrappedRows) {
-							wrappedLines.push(renderedLine(wrappedLine, renderedRow.literalCode));
-						}
+					for (const wrappedLine of wrappedRows) {
+						wrappedLines.push(renderedLine(wrappedLine, renderedRow.literalCode));
 					}
 				}
 			}
@@ -3821,6 +3865,11 @@ export class Markdown implements Component {
 		const contentLines: string[] = [];
 		let previousLineWasOsc66 = false;
 		for (const renderedLine of wrappedLines) {
+			if (renderedLine.final !== undefined) {
+				contentLines.push(renderedLine.final);
+				previousLineWasOsc66 = false;
+				continue;
+			}
 			const literalCodeRow = renderedLine.literalCode === true;
 			const line = renderedLine.text;
 			// The first empty row after a scale>1 OSC 66 heading is structural:
@@ -3846,16 +3895,7 @@ export class Markdown implements Component {
 				contentLines.push(line);
 				continue;
 			}
-			const lineWithMargins = leftMargin + line + rightMargin;
-
-			if (bgFn) {
-				contentLines.push(applyBackgroundToLine(lineWithMargins, signature.width, bgFn));
-			} else {
-				// No background - just pad to width
-				const visibleLen = visibleWidth(lineWithMargins);
-				const paddingNeeded = Math.max(0, signature.width - visibleLen);
-				contentLines.push(lineWithMargins + padding(paddingNeeded));
-			}
+			contentLines.push(this.#finishPaddedRow(line, signature, leftMargin, rightMargin, bgFn));
 		}
 
 		// PoC H: record per-token row slices for the tail cache. The pad pass
@@ -3889,6 +3929,53 @@ export class Markdown implements Component {
 		}
 
 		return contentLines;
+	}
+
+	#finishPaddedRow(
+		line: string,
+		signature: RenderSignature,
+		leftMargin: string,
+		rightMargin: string,
+		bgFn: ((text: string) => string) | undefined,
+	): string {
+		const lineWithMargins = leftMargin + line + rightMargin;
+		if (bgFn) return applyBackgroundToLine(lineWithMargins, signature.width, bgFn);
+		// No background - just pad to width
+		return lineWithMargins + padding(Math.max(0, signature.width - visibleWidth(lineWithMargins)));
+	}
+
+	/**
+	 * Final content rows for the wrapped rows of one code line, or undefined
+	 * when any row needs the structural handling (image/OSC 66/blank) the
+	 * generic pad pass applies.
+	 */
+	#finishMemoRows(
+		wrappedRows: readonly string[],
+		literalCode: boolean,
+		signature: RenderSignature,
+	): RenderedLine[] | undefined {
+		if (wrappedRows.length === 0) return undefined;
+		const leftMargin = padding(signature.paddingX);
+		const rightMargin = padding(signature.paddingX);
+		const bgFn = this.#defaultTextStyle?.bgColor;
+		const finished: RenderedLine[] = [];
+		for (const row of wrappedRows) {
+			if (row === "" || TERMINAL.isImageLine(row) || isOsc66Line(row)) return undefined;
+			const final = literalCode ? row : this.#finishPaddedRow(row, signature, leftMargin, rightMargin, bgFn);
+			finished.push(literalCode ? { text: row, literalCode: true, final } : { text: row, final });
+		}
+		return finished;
+	}
+
+	// Row memo for the open fence, valid for one render signature.
+	#codeRowMemoFor(signature: RenderSignature): CodeRowMemo {
+		const key = this.#renderCacheKey("", signature);
+		let memo = this.#codeRowMemo;
+		if (memo === undefined || memo.key !== key) {
+			memo = { key, literal: new Map(), plain: new Map() };
+			this.#codeRowMemo = memo;
+		}
+		return memo;
 	}
 
 	#renderCodeBodyLines(token: Token, codeIndent: string): RenderedLine[] {

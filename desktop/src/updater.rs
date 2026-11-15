@@ -1,5 +1,6 @@
-//! App updates. Only the Kostomp shell is replaced: the bundled omp/stats live in `runtime\`,
-//! which the NSIS installer never deletes, so a slim update installer leaves them in place.
+//! App updates. The Kostomp shell and the Graph sidecar sources (`runtime\graph\`) are replaced;
+//! the bundled omp/stats in `runtime\` stay, since the NSIS installer never deletes files and a
+//! slim update installer leaves them out.
 //!
 //! Update source: a local folder (default `%LOCALAPPDATA%\Kostomp\updates`, override with
 //! `KOSTOMP_UPDATE_DIR`) that build-installer.ps1 fills. The updater plugin only speaks HTTP, so
@@ -95,5 +96,10 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
     let update = find_update(&app).await?.ok_or("No update available.")?;
     let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
     crate::shutdown_children(&app);
-    update.install(bytes).map_err(|e| e.to_string())
+    if let Err(error) = update.install(bytes) {
+        // The app keeps running, so Graph may start again.
+        crate::graph::reopen(&app);
+        return Err(error.to_string());
+    }
+    Ok(())
 }

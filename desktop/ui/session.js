@@ -150,6 +150,64 @@
   let hlUnsupported = false; // an omp without highlight_code: stop asking
   // `highlight` is shared by every session, but `request` belongs to one: each ready session registers its own.
   const hlAskers = new Map(); // sid -> request
+  const scriptViews = new Map(); // sid -> (key) => void
+  const projectScriptKey = (dir) => {
+    const p = typeof dir === "string" ? dir.trim().replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase() : "";
+    return p ? "kostomp-project-scripts:" + p : null;
+  };
+  // Favourite answers live in localStorage per session file (message timestamps); the sidebar stars a chat that has one.
+  const FAV_KEY = "kostomp-fav-messages";
+  const favViews = new Map(); // sid -> (fileKey) => void
+  const favFileKey = (file) => (typeof file === "string" && file ? file.replace(/\//g, "\\").toLowerCase() : null);
+  function loadFavs() {
+    try {
+      const v = JSON.parse(localStorage.getItem(FAV_KEY));
+      return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+    } catch {
+      return {};
+    }
+  }
+  window.kostompFavs = {
+    /** The session file has at least one favourite message. */
+    any(file) {
+      const k = favFileKey(file);
+      const list = k ? loadFavs()[k] : null;
+      return Array.isArray(list) && list.length > 0;
+    },
+    has(file, ts) {
+      const k = favFileKey(file);
+      const list = k ? loadFavs()[k] : null;
+      return Array.isArray(list) && list.includes(ts);
+    },
+    /** Flips one message; returns its new state. Tells every session view and the sidebar. */
+    toggle(file, ts) {
+      const k = favFileKey(file);
+      if (!k) return false;
+      const all = loadFavs();
+      const list = Array.isArray(all[k]) ? all[k].filter((t) => t !== ts) : [];
+      const on = list.length === (Array.isArray(all[k]) ? all[k].length : 0);
+      if (on) list.push(ts);
+      if (list.length) all[k] = list;
+      else delete all[k];
+      try {
+        localStorage.setItem(FAV_KEY, JSON.stringify(all));
+      } catch {
+        return !on;
+      }
+      for (const sync of favViews.values()) sync(k);
+      document.dispatchEvent(new CustomEvent("kostomp-favs", { detail: k }));
+      return on;
+    },
+    /** A deleted session file takes its favourites with it. */
+    forget(file) {
+      const k = favFileKey(file);
+      const all = loadFavs();
+      if (!k || !(k in all)) return;
+      delete all[k];
+      try { localStorage.setItem(FAV_KEY, JSON.stringify(all)); } catch {}
+      document.dispatchEvent(new CustomEvent("kostomp-favs", { detail: k }));
+    },
+  };
   /** Resolves with the token list, or null (no language, too big, an older omp, a failure). */
   function highlight(code, lang) {
     const ask = [...hlAskers.values()].at(-1);
@@ -780,6 +838,32 @@
         if (text) out.push(textRows(text, { tail: true, cls: c.isError ? "err" : "" }));
         if (images.length || imagesOf(d.images).length) out.push(imageRow([...images, ...imagesOf(d.images)], "eval output"));
         return out;
+      case "ask": {
+        // details.answers: { question, answer } per named field; the text is only the JSON the model reads.
+        const answers = Array.isArray(d.answers) ? d.answers.filter((x) => isObj(x) && typeof x.question === "string") : [];
+        if (c.isError || !answers.length) {
+          if (c.isError) errOut();
+          else if (text) out.push(textRows(text));
+          return out;
+        }
+        const notes = Array.isArray(d.notes) ? d.notes.filter((n) => isObj(n) && str(n.text)) : [];
+        const items = [];
+        answers.forEach((x, i) => {
+          if (i) items.push({ gap: true });
+          items.push({ q: x.question });
+          const lines = str(x.answer) ? splitLines(x.answer) : [""];
+          lines.forEach((l, j) => items.push({ a: l, first: j === 0, empty: !str(x.answer) }));
+          for (const n of notes.filter((n) => n.question === x.question)) items.push({ a: `${str(n.option)}: ${n.text}`, first: true, note: true });
+        });
+        out.push(rowsBlock(items, (it) => {
+          if (it.gap) return row("", "");
+          if (it.q !== undefined) return row("ask-q", it.q);
+          const mark = span("mark", it.first ? (it.note ? "  ✎ " : "  → ") : "    ");
+          return row(it.empty ? "ask-a empty" : "ask-a", mark, it.empty ? "—" : it.a);
+        }));
+        if (d.timedOut) out.push(dimRow("timed out · unanswered questions kept their defaults"));
+        return out;
+      }
     }
     // Edit-like tools (edit, ast_edit, ...): the diff of the result, or a preview of the arguments.
     const diffs = editDiffs(d);
@@ -857,10 +941,12 @@
   let bashRunning = 0; // user `!cmd` runs in flight
   let userBashSeq = 0;
   let alive = false; // the omp process is up (ready seen, no exit since)
+  let disposed = false; // dispose() ran: the tab is gone, nothing may schedule work any more
   let treeUi = null; // tree panel parts, built on first open: { list, info, state, sum, cancel, fork }
   let navPending = false; // a navigate_tree is in flight
   let navSummarize = false;
   let sessionFile = null; // current session file, from get_state
+  let cwd = typeof opts.cwd === "string" && opts.cwd.trim() ? opts.cwd : null;
   let histNote = null; // note shown after the next get_messages render
   let seq = 0;
   const messages = new Map(); // messageId -> element
@@ -870,31 +956,167 @@
     hooks.status?.(text, kind);
   }
   let lastAnswer = ""; // final text of the newest assistant message in the current turn, for notifications
+  let lastAnswerText = ""; // lastAnswer as get_last_assistant_text projects it: its text blocks joined with nothing, trimmed
   function setBusy(value) {
     busy = value;
     el.stop.hidden = !value && bashRunning === 0;
+    syncSend();
     el.busyHint.hidden = !value;
     el.hint.hidden = value;
     paintTreeBusy();
     setStatus(value ? "working…" : "ready", value ? "busy" : "ok");
   }
-  function scrollDown() {
+  let scrollFrame = 0;
+  let ownScrollTop = -1; // scrollTop right after the last tail scroll made here
+  function tailScroll() {
     const m = el.messages;
-    if (!pinned) return;
-    // `.messages` has scroll-behavior:smooth: a plain scrollTop assignment animates and stops short
-    // when content keeps growing (tool rows, thinking blocks), leaving the last message hidden.
-    const toEnd = () => m.scrollTo({ top: m.scrollHeight, behavior: "instant" });
-    toEnd();
-    requestAnimationFrame(toEnd);
+    m.scrollTo({ top: m.scrollHeight, behavior: "instant" });
+    ownScrollTop = m.scrollTop;
+  }
+  /** Scroll to the tail now when pinned and off it; true when it scrolled. */
+  function followTail() {
+    const m = el.messages;
+    if (!pinned || m.scrollHeight - m.scrollTop - m.clientHeight <= 1) return false;
+    tailScroll();
+    return true;
+  }
+  /**
+   * Follow the tail once per frame. Reading `scrollHeight` forces a layout, and the mutation observer
+   * plus every delta/tool/history row used to call this, so one streamed token could cost several layouts.
+   * `.messages` has scroll-behavior:smooth: an explicit instant scroll keeps up with growing content.
+   * A scroll brings rows into view whose height was an estimate (content-visibility), so it repeats
+   * until a frame finds the view at the bottom; `rowSizes` covers rows that take their height later.
+   */
+  function scrollDown() {
+    if (!pinned || scrollFrame || disposed) return;
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = 0;
+      if (followTail()) scrollDown();
+    });
+  }
+  /**
+   * A row not rendered yet has an estimated height, and rendering it near a scroll target moves the target.
+   * Lays out the rows within reach of `node` and keeps each real height as that row's estimate, so the rows
+   * the engine renders around the landing place change nothing.
+   */
+  function measureRowsAround(node) {
+    const reach = el.messages.clientHeight * 2.5; // the view, and the margin in which rows render early
+    const rows = [node];
+    node.style.contentVisibility = "visible";
+    for (const next of ["previousElementSibling", "nextElementSibling"]) {
+      let r = node[next];
+      // Estimates larger than the real rows leave a round short of `reach`: take more, a few times at most.
+      for (let h = 0, round = 0; r && h < reach && round < 3; round++) {
+        const batch = [];
+        for (let estimate = 0; r && estimate < reach - h; r = r[next]) {
+          batch.push(r);
+          estimate += r.offsetHeight;
+        }
+        for (const row of batch) row.style.contentVisibility = "visible";
+        for (const row of batch) h += row.offsetHeight;
+        rows.push(...batch);
+      }
+    }
+    const sizes = rows.map((row) => {
+      const cs = getComputedStyle(row);
+      return row.getBoundingClientRect().height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - parseFloat(cs.borderTopWidth) - parseFloat(cs.borderBottomWidth);
+    });
+    rows.forEach((row, i) => {
+      row.style.contentVisibility = "";
+      if (sizes[i] > 0) row.style.containIntrinsicBlockSize = `auto ${sizes[i]}px`;
+    });
+  }
+  /**
+   * Scroll to `top` with `behavior` (default: the transcript's own), then call `landing(moves)`: from then on a
+   * `scrollend` is this scroll's, and `moves` says whether one will come. A long way first jumps to one view
+   * short of `top`: animating across the rows in between would render them just for the animation, and each
+   * one taking its real height on the way would move the target.
+   */
+  function glideTo(top, behavior, signal, landing) {
+    const m = el.messages;
+    const go = () => {
+      const moves = Math.abs(Math.max(0, Math.min(top, m.scrollHeight - m.clientHeight)) - m.scrollTop) >= 1;
+      m.scrollTo(behavior ? { top, behavior } : { top });
+      landing(moves);
+    };
+    const way = top - m.scrollTop;
+    if (Math.abs(way) <= 2 * m.clientHeight) return go();
+    m.scrollTo({ top: top - Math.sign(way) * m.clientHeight, behavior: "instant" });
+    const frame = requestAnimationFrame(go); // the jump's own scrollend is out before a frame's callbacks run
+    signal.addEventListener("abort", () => cancelAnimationFrame(frame), { once: true });
   }
   // Follow the tail while the user is at the bottom; scrolling up unpins, scrolling back down re-pins.
   // Content grows after being appended (streaming text, tool output), so a mutation observer keeps following.
-  let pinned = true;
+  let pinned;
+  function setPinned(value) {
+    if (pinned === value) return;
+    pinned = value;
+    // Pinned keeps the tail in view, so anchoring to a row would fight it; unpinned, anchoring holds the
+    // reading position while rows above take their real height.
+    el.messages.style.overflowAnchor = value ? "none" : "";
+  }
+  setPinned(true);
+  let lastScrollTop = 0;
+  // Scroll anchoring moves scrollTop down whenever a row above grows, so moving down near the tail does not by
+  // itself mean the user came back: only downward input (wheel, keys, a scrollbar drag) re-pins inside the band.
+  let userDownAt = -Infinity;
+  let dragging = false;
+  const DOWN_KEYS = new Set(["ArrowDown", "PageDown", "End", " "]);
+  const UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
+  el.messages.addEventListener("wheel", (e) => {
+    if (e.deltaY > 0) userDownAt = performance.now();
+    else if (e.deltaY < 0) userDownAt = -Infinity;
+  }, { passive: true });
+  el.messages.addEventListener("keydown", (e) => {
+    if (UP_KEYS.has(e.key) || (e.key === " " && e.shiftKey)) userDownAt = -Infinity;
+    else if (DOWN_KEYS.has(e.key)) userDownAt = performance.now();
+  }, { passive: true });
+  el.messages.addEventListener("pointerdown", () => (dragging = true), { passive: true });
+  window.addEventListener("pointerup", () => (dragging = false), { passive: true });
+  window.addEventListener("pointercancel", () => (dragging = false), { passive: true });
   el.messages.addEventListener("scroll", () => {
     const m = el.messages;
-    pinned = m.scrollHeight - m.scrollTop - m.clientHeight < 80;
+    const top = m.scrollTop;
+    const up = top < lastScrollTop - 1;
+    lastScrollTop = top;
+    const gap = m.scrollHeight - top - m.clientHeight;
+    // A smooth wheel scroll keeps moving for a few hundred ms after its last event.
+    const userDown = dragging || performance.now() - userDownAt < 1000;
+    // A small scroll up stays inside the band; staying pinned there let the next follow snap the view back.
+    if (gap <= 1 || (!up && userDown && gap < 80)) setPinned(true);
+    // Off the tail by our own scroll means rows below took their real height since: still following.
+    else if (Math.abs(top - ownScrollTop) > 1) setPinned(false);
   }, { passive: true });
-  new MutationObserver(() => scrollDown()).observe(el.messages, { childList: true, subtree: true, characterData: true });
+  const tailObserver = new MutationObserver(() => scrollDown());
+  tailObserver.observe(el.messages, { childList: true, subtree: true, characterData: true });
+  // Covers pane and window resizes and a transcript attached again after being detached.
+  const tailResize = new ResizeObserver(() => scrollDown());
+  tailResize.observe(el.messages);
+  // A detached transcript forgets the size of skipped rows; a row's last rendered size kept as its
+  // estimate keeps scrollHeight, and the scroll position restored on re-attach, true.
+  // A streaming row grows here before its frame is painted, so the tail follows without a frame's lag.
+  const rowSizes = new ResizeObserver((entries) => {
+    for (const e of entries) {
+      const row = e.target;
+      if (row.parentElement !== el.messages) {
+        rowSizes.unobserve(row); // removed from the transcript
+        continue;
+      }
+      const box = e.contentBoxSize[0];
+      if (box.inlineSize) row.style.containIntrinsicBlockSize = `auto ${box.blockSize}px`; // no box: detached or hidden
+    }
+    if (!disposed) followTail();
+  });
+  el.messages.addEventListener("contentvisibilityautostatechange", (e) => {
+    if (disposed || e.target.parentElement !== el.messages) return;
+    if (e.skipped) rowSizes.unobserve(e.target);
+    else rowSizes.observe(e.target);
+  });
+  /** Calls `fn` once on the first user scroll gesture on the transcript (wheel, press, key) until `signal` aborts. */
+  function onUserScroll(fn, signal) {
+    const o = { once: true, passive: true, signal };
+    for (const type of ["wheel", "pointerdown", "keydown"]) el.messages.addEventListener(type, fn, o);
+  }
   // ---- turn rail: one tick per user message in the left margin; hover previews the turn, click jumps to it ----
   const RAIL_TOP_GAP = 46; // matches `.messages` top padding, so a jumped-to prompt lands under the pane header
   const rail = document.createElement("div");
@@ -926,10 +1148,35 @@
     }
     return "";
   }
+  let jumpWait = null; // AbortController of a rail jump whose landing is still being corrected
+  let toBottomWait = null; // AbortController of a to-bottom scroll still on its way
   function jumpToTurn(node) {
+    jumpWait?.abort();
+    toBottomWait?.abort();
+    setPinned(false);
     const m = el.messages;
-    const top = node.getBoundingClientRect().top - m.getBoundingClientRect().top;
-    m.scrollTo({ top: m.scrollTop + top - RAIL_TOP_GAP });
+    measureRowsAround(node);
+    const offset = () => node.getBoundingClientRect().top - m.getBoundingClientRect().top - RAIL_TOP_GAP;
+    // Rows around the target can still change while the scroll runs (a streaming reply, an image loading):
+    // once it ends, put the prompt back in place each frame until the view has stayed still.
+    const wait = (jumpWait = new AbortController());
+    let frame = 0;
+    let still = 0; // frames in a row that left the scroll position alone
+    let frames = 0;
+    const settle = () => {
+      const before = m.scrollTop;
+      const d = offset();
+      if (Math.abs(d) > 1) m.scrollBy({ top: d, behavior: "instant" });
+      still = m.scrollTop === before ? still + 1 : 0;
+      if (still === 10 || ++frames === 90) return wait.abort();
+      frame = requestAnimationFrame(settle);
+    };
+    wait.signal.addEventListener("abort", () => cancelAnimationFrame(frame), { once: true });
+    onUserScroll(() => wait.abort(), wait.signal);
+    glideTo(m.scrollTop + offset(), undefined, wait.signal, (moves) => {
+      if (moves) m.addEventListener("scrollend", settle, { once: true, signal: wait.signal });
+      else settle();
+    });
   }
   function showRailCard(i) {
     const t = railTurns[i];
@@ -989,7 +1236,8 @@
       paintRailActive();
     });
   }, { passive: true });
-  new MutationObserver(rebuildRail).observe(el.messages, { childList: true });
+  const railObserver = new MutationObserver(rebuildRail);
+  railObserver.observe(el.messages, { childList: true });
   // ---- jump-to-latest: floating button shown while the user has scrolled away from the tail ----
   const toBottom = document.createElement("button");
   toBottom.type = "button";
@@ -999,10 +1247,25 @@
   toBottom.setAttribute("aria-label", "Scroll to latest message");
   messagesWrap.append(toBottom);
   toBottom.addEventListener("click", () => {
-    // Re-pin on arrival; instant tail-following must not interrupt the animation.
-    pinned = false;
+    jumpWait?.abort();
+    toBottomWait?.abort();
+    // Re-pin on arrival; instant tail-following must not interrupt the animation. The tail can grow while the
+    // scroll runs, so the tail loop finishes the way; a user scroll first leaves `pinned` to the scroll listener.
+    setPinned(false);
     toBottom.hidden = true;
-    el.messages.scrollTo({ top: el.messages.scrollHeight, behavior: "smooth" });
+    const m = el.messages;
+    const wait = (toBottomWait = new AbortController());
+    const arrive = () => {
+      wait.abort();
+      setPinned(true);
+      scrollDown();
+    };
+    onUserScroll(() => wait.abort(), wait.signal);
+    if (m.lastElementChild) measureRowsAround(m.lastElementChild);
+    glideTo(m.scrollHeight - m.clientHeight, "smooth", wait.signal, (moves) => {
+      if (moves) m.addEventListener("scrollend", arrive, { once: true, signal: wait.signal });
+      else arrive();
+    });
     el.input?.focus({ preventScroll: true });
   });
   el.messages.addEventListener("scroll", () => (toBottom.hidden = pinned), { passive: true });
@@ -1074,8 +1337,12 @@
     noteAction(n, "Copy link", () => copyLink(target, (t) => note(t)));
     openUrl(target, (t) => note(t));
   }
+  let startSettled = null; // settles when the rpc_start in flight does; null while none is
   function send(obj) {
-    return invoke("rpc_send", { id: sid, line: JSON.stringify(obj) }).catch((e) => note(String(e), true));
+    const line = JSON.stringify(obj);
+    const go = () => invoke("rpc_send", { id: sid, line }).catch((e) => note(String(e), true));
+    // A send during a start belongs to the process being started: wait for it, in call order.
+    return startSettled ? startSettled.then(go) : go();
   }
 
   let imageSeq = 0; // highest image number used so far
@@ -1096,19 +1363,30 @@
   // ---- thinking: folded by default; Ctrl+T opens/closes them all, as in the CLI ----
   let thinkingOpen = false;
   const thinkingSet = new Map(); // "<messageId>:<block>" -> open, for blocks toggled by hand
-  /** Messages re-render on every delta, so a hand-toggled block keeps its state by key. */
-  function thinkingBlock(key, text) {
-    const d = document.createElement("details");
-    d.className = "thinking";
-    d.open = thinkingSet.get(key) ?? thinkingOpen;
-    const sum = document.createElement("summary");
+  /** Update a thinking disclosure in place: replacing it between pointerdown and click loses the click. */
+  function thinkingBlock(key, text, d) {
+    if (!d) {
+      d = document.createElement("details");
+      d.className = "thinking";
+      d.open = thinkingSet.get(key) ?? thinkingOpen;
+      const sum = document.createElement("summary");
+      const peek = span("peek");
+      peek.append(document.createTextNode(""));
+      sum.append(span("label", "Thinking"), peek);
+      const body = document.createElement("div");
+      body.className = "thinking-body";
+      body.append(document.createTextNode(""));
+      d.append(sum, body);
+      d.addEventListener("toggle", () => {
+        if (d.isConnected) thinkingSet.set(key, d.open);
+      });
+    }
     const first = text.trim().split("\n", 1)[0] ?? "";
-    sum.append(span("label", "Thinking"), span("peek", clip(flat(first.replace(/^[#*\s]+|\*+$/g, "")), 120)));
-    sum.addEventListener("click", () => thinkingSet.set(key, !d.open));
-    const body = document.createElement("div");
-    body.className = "thinking-body";
-    body.textContent = text;
-    d.append(sum, body);
+    const preview = clip(flat(first.replace(/^[#*\s]+|\*+$/g, "")), 120);
+    const peek = d.querySelector(".peek").firstChild;
+    const body = d.querySelector(".thinking-body").firstChild;
+    if (peek.data !== preview) peek.data = preview;
+    if (body.data !== text) body.data = text;
     return d;
   }
   function toggleThinking() {
@@ -1122,6 +1400,7 @@
 
   // ---- messages ---------------------------------------------------------
   let lastAssistantId = null; // key of the newest assistant message node, for healing a missed message_end
+  const messageViews = new WeakMap(); // message node -> persistent assistant bubble and content blocks
   /** After a turn settles, re-render the final assistant message from the transcript when its live render missed the text. */
   function healLastMessage(list) {
     const last = Array.isArray(list) ? list[list.length - 1] : null;
@@ -1131,7 +1410,94 @@
     logFrameIssue("healed assistant message the live stream did not render");
     renderMessage(lastAssistantId, last, false);
   }
+  /** After a turn settles, fetch the whole transcript for healLastMessage only when omp's last answer is not the rendered one. */
+  async function healIfMissed() {
+    let text = null;
+    try {
+      const r = await request("get_last_assistant_text", {}, 5000);
+      text = isObj(r) ? str(r.text) : "";
+    } catch {}
+    if (text !== lastAnswerText && alive) send({ id: "settle", type: "get_messages" });
+  }
+  // Streamed message_update frames arrive per token, and painting one re-renders the whole message (markdown
+  // included); every paint also makes the window draw a frame. Updates coalesce to one paint per LIVE_PAINT_MS,
+  // not per display refresh (144 Hz screens drew 144 frames a second while a reply streamed).
+  const LIVE_PAINT_MS = 100; // streamed replies and tool updates repaint at most ~10 times a second
+  const pendingLive = new Map(); // messageId -> newest live message not painted yet
+  let liveTimer = 0;
+  function renderLive(id, message) {
+    pendingLive.set(id, message);
+    if (!liveTimer) liveTimer = setTimeout(flushLive, LIVE_PAINT_MS);
+  }
+  function flushLive() {
+    liveTimer = 0;
+    // A cleared transcript drops its nodes; a late update must not resurrect them.
+    for (const [id, message] of pendingLive) if (messages.has(id)) renderMessage(id, message, true);
+    pendingLive.clear();
+  }
+  // Under messageUpdates "delta" a message_update carries one streaming event instead of the whole message, and the
+  // reply is rebuilt here from its message_start. Events update the rebuilt object in place and renderLive keeps that
+  // reference, so a queued paint shows every event received before it runs.
+  const streaming = new Map(); // messageId -> assistant message rebuilt from delta updates
+  /** `content[i]` when it is a block of `type`, else an empty one, so a delta never lands on a missing or foreign block. */
+  function blockAt(content, i, type, field) {
+    const b = content[i];
+    return isObj(b) && b.type === type ? b : { type, [field]: "" };
+  }
+  /** Applies one delta message_update to the message rebuilt under `id` and returns that message. */
+  function applyDelta(id, frame) {
+    const ev = frame.assistantMessageEvent;
+    let m = streaming.get(id);
+    if (!m || (isObj(ev) && ev.type === "start")) {
+      const from = isObj(ev) && ev.type === "start" && isObj(ev.message) ? ev.message : {};
+      m = { role: frame.message?.role, ...from, content: Array.isArray(from.content) ? [...from.content] : [] };
+      streaming.set(id, m);
+    }
+    const i = isObj(ev) ? ev.contentIndex : undefined;
+    if (!Number.isInteger(i) || i < 0) return m;
+    const c = m.content;
+    switch (ev.type) {
+      case "text_start":
+        c[i] = isObj(ev.block) ? ev.block : { type: "text", text: "" };
+        break;
+      case "thinking_start":
+        c[i] = isObj(ev.block) ? ev.block : { type: "thinking", thinking: "" };
+        break;
+      case "toolcall_start":
+        c[i] = isObj(ev.block) ? ev.block : { type: "toolCall", arguments: {} };
+        break;
+      case "text_delta": {
+        const b = blockAt(c, i, "text", "text");
+        c[i] = { ...b, text: str(b.text) + str(ev.delta) };
+        break;
+      }
+      case "thinking_delta": {
+        const b = blockAt(c, i, "thinking", "thinking");
+        c[i] = { ...b, thinking: str(b.thinking) + str(ev.delta) };
+        break;
+      }
+      case "text_end": {
+        const b = blockAt(c, i, "text", "text");
+        c[i] = { ...(isObj(ev.block) ? ev.block : b), text: typeof ev.content === "string" ? ev.content : b.text };
+        break;
+      }
+      case "thinking_end": {
+        const b = blockAt(c, i, "thinking", "thinking");
+        c[i] = { ...(isObj(ev.block) ? ev.block : b), thinking: typeof ev.content === "string" ? ev.content : b.thinking };
+        break;
+      }
+      case "image_end":
+        if (isObj(ev.content)) c[i] = ev.content;
+        break;
+      case "toolcall_end":
+        if (isObj(ev.toolCall)) c[i] = ev.toolCall;
+        break;
+      // toolcall_delta needs nothing: tool cards come from tool_execution_* frames, not from message content.
+    }
+    return m;
+  }
   function renderMessage(id, message, live = false) {
+    pendingLive.delete(id); // this render supersedes a queued live paint
     if (!message || (message.role !== "user" && message.role !== "assistant")) return;
     if (message.role === "user" && (message.synthetic || message.steering)) return;
     let node = messages.get(id);
@@ -1141,7 +1507,7 @@
       messages.set(id, node);
       el.messages.append(node);
     }
-    node.replaceChildren();
+    if (message.role === "user") node.replaceChildren();
     if (message.role === "user") {
       // The card holds the text only; thumbnails and the copy/branch/fork bar sit below it.
       node.classList.add("split");
@@ -1164,41 +1530,63 @@
       node.append(userActions(node));
     } else {
       node.classList.add("split");
-      const bubble = document.createElement("div");
-      bubble.className = "bubble";
+      let view = messageViews.get(node);
+      if (!view) {
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        view = { bubble, blocks: new Map() };
+        messageViews.set(node, view);
+        node.append(bubble);
+      }
+      const { bubble } = view;
+      const parts = [];
+      const blocks = new Map();
       const content = Array.isArray(message.content) ? message.content : [];
       content.forEach((block, bi) => {
         if (!isObj(block)) return;
+        const previous = view.blocks.get(bi);
+        let child;
+        let text;
         if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking) {
-          bubble.append(thinkingBlock(id + ":" + bi, block.thinking));
+          text = block.thinking;
+          child = thinkingBlock(id + ":" + bi, text, previous?.type === "thinking" ? previous.node : undefined);
         } else if (block.type === "text" && typeof block.text === "string" && block.text) {
-          bubble.append(markdown(block.text, note));
+          text = block.text;
+          child = previous?.type === "text" && previous.text === text ? previous.node : markdown(text, note);
+        }
+        if (child) {
+          blocks.set(bi, { type: block.type, text, node: child });
+          parts.push(child);
         }
       });
+      view.blocks = blocks;
       const images = imagesOf(content.filter((b) => isObj(b) && b.type === "image"));
-      if (images.length) bubble.append(imageRow(images, "Image"));
+      if (images.length) parts.push(imageRow(images, "Image"));
       if (message.errorMessage) {
         const e = document.createElement("div");
         e.className = "error";
         e.textContent = message.errorMessage;
-        bubble.append(e);
+        parts.push(e);
       }
-      node.hidden = !bubble.childNodes.length;
-      node.append(bubble);
+      syncChildren(bubble, parts);
+      node.hidden = !parts.length;
+      node.querySelector(":scope > .msg-acts")?.remove();
       // Copy the answer as markdown, once it stopped streaming (re-rendered on every delta until then).
-      const answer = content
-        .filter((b) => isObj(b) && b.type === "text" && typeof b.text === "string" && b.text)
-        .map((b) => b.text)
-        .join("\n\n");
-      if (answer && !live) lastAnswer = answer;
+      const texts = content.filter((b) => isObj(b) && b.type === "text" && typeof b.text === "string" && b.text).map((b) => b.text);
+      const answer = texts.join("\n\n");
+      if (answer && !live) {
+        lastAnswer = answer;
+        lastAnswerText = texts.join("").trim();
+      }
       if (live || answer) lastAssistantId = id;
       if (answer && !live) {
         const bar = document.createElement("div");
         bar.className = "msg-acts";
         const copy = linkBtn("copy", "Copy this answer as markdown", () => copyText(answer, copy));
         bar.append(copy);
+        if (typeof message.timestamp === "number") bar.append(favButton(node, message.timestamp));
         node.append(bar);
-      }
+      } else node.classList.remove("faved");
       renderLedger(id, node, message, live);
     }
     scrollDown();
@@ -1339,7 +1727,6 @@
     live.text = text;
     return true;
   }
-  const LIVE_PAINT_MS = 100; // streamed tool updates repaint at most ~10 times a second
   function paintTool(c) {
     const arg = toolArg(c.toolName, c.args);
     c.arg.textContent = clip(arg, 160);
@@ -1391,106 +1778,359 @@
     done?.(-1);
   }
   let dialogTimer = null; // countdown of a request with `timeout`
+  let sheet = null; // the open ask sheet: { onKey }
   function closeDialog() {
     dropLocal();
     clearInterval(dialogTimer);
     dialogTimer = null;
     dialogId = null;
+    sheet = null;
     el.dialog.hidden = true;
     el.dialog.replaceChildren();
+    el.dialog.classList.remove("ask-sheet");
+    el.dialog.removeAttribute("role");
+    el.dialog.removeAttribute("aria-labelledby");
+    el.composer.hidden = false;
+    el.yielded.hidden = true;
     hooks.asking?.(null);
   }
-  /**
-   * `timeout` (ms) on a request: count down in the heading, then answer `{cancelled, timedOut}`
-   * (omp then applies its own timeout result, e.g. the recommended answers of an `ask`).
-   */
-  function startCountdown(req, heading) {
-    const ms = Number(req.timeout);
-    if (!Number.isFinite(ms) || ms <= 0) return;
-    const end = Date.now() + ms;
-    const c = span("countdown");
-    heading.append(c);
-    const tick = () => {
-      const left = Math.max(0, Math.ceil((end - Date.now()) / 1000));
-      c.textContent = `closes in ${left}s`;
-      if (left === 0 && dialogId === req.id) respond(req.id, { cancelled: true, timedOut: true });
-    };
-    tick();
-    dialogTimer = setInterval(tick, 1000);
+  el.dialog.addEventListener("keydown", (e) => sheet?.onKey(e));
+  const ASK_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.9.8c0 1.7-2.4 2.2-2.4 3.7"/><path d="M12 17.2h.01"/></svg>';
+  function node(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
   }
-  /** `ask`: several questions in one dialog; each offers its options plus free text. */
+  function sheetBtn(cls, label, onClick, kbd) {
+    const b = node("button", "ask-btn " + cls, label);
+    b.type = "button";
+    if (kbd) b.append(span("kbd", kbd));
+    b.addEventListener("click", onClick);
+    return b;
+  }
+  /**
+   * Docked ask sheet for every extension request (ask, confirm, select, input, editor): it replaces the
+   * composer until it is answered. `spec.questions[]`: { header, question, detail, multi, recommended,
+   * options: [{ label, description, preview }], free (offers "Other"), text: { multiline, secret, placeholder,
+   * prefill } }. `spec.steps` ({ at, total }) shows the progress of omp's one-field-per-request prompts.
+   * `spec.payload(answers)` maps each question's { selected: number[], custom } to the response.
+   */
+  function openSheet(req, spec) {
+    dropLocal();
+    clearInterval(dialogTimer);
+    dialogTimer = null;
+    dialogId = req.id;
+    const qs = spec.questions;
+    const state = qs.map((q) => ({
+      selected: new Set(Number.isInteger(q.recommended) && q.options[q.recommended] ? [q.recommended] : []),
+      custom: q.text?.prefill ?? "",
+      useOther: !!q.text || !q.options.length,
+    }));
+    let at = 0;
+    const headingId = `ask-heading-${req.id}`;
+    el.dialog.replaceChildren();
+    el.dialog.classList.add("ask-sheet");
+    el.dialog.setAttribute("role", "dialog");
+    el.dialog.setAttribute("aria-labelledby", headingId);
+
+    // Countdown: omp enforces the timeout itself, so the sheet only shows it (no pause).
+    const ms = Number(req.timeout);
+    const timed = Number.isFinite(ms) && ms > 0;
+    const track = node("div", "ask-timer");
+    const fill = node("div", "ask-timer-fill");
+    track.append(fill);
+    track.hidden = !timed;
+
+    const head = node("header", "ask-head");
+    const badge = node("span", "ask-badge");
+    badge.innerHTML = ASK_ICON;
+    const title = node("h4", "ask-title", spec.title);
+    title.id = headingId;
+    title.title = spec.title;
+    const pill = node("span", "ask-timer-pill");
+    pill.hidden = !timed;
+    head.append(badge, title, pill);
+
+    const steps = node("div", "ask-steps");
+    const body = node("div", "ask-body");
+    const col = node("div", "ask-col");
+    const preview = node("aside", "ask-preview");
+    const previewHead = node("div", "ask-preview-head");
+    const previewCode = node("pre", "ask-preview-code");
+    preview.append(previewHead, previewCode);
+    body.append(col, preview);
+    const error = node("div", "ask-error");
+    error.setAttribute("role", "alert");
+    error.hidden = true;
+
+    const summary = span("ask-summary");
+    const useRec = sheetBtn("ghost", "Use recommended", () => {
+      qs.forEach((q, i) => {
+        if (!Number.isInteger(q.recommended) || !q.options[q.recommended]) return;
+        state[i].selected = new Set([q.recommended]);
+        state[i].useOther = false;
+      });
+      render();
+    });
+    useRec.hidden = !qs.some((q) => Number.isInteger(q.recommended) && q.options[q.recommended]);
+    const cancel = sheetBtn("ghost", "Cancel", () => respond(req.id, { cancelled: true }), "Esc");
+    const prev = sheetBtn("", "Previous", () => go(at - 1));
+    const next = sheetBtn("primary", "", () => (at < qs.length - 1 ? go(at + 1) : submit()));
+    const foot = node("footer", "ask-foot");
+    const footL = node("div", "ask-foot-l");
+    const footR = node("div", "ask-foot-r");
+    footL.append(summary, useRec);
+    footR.append(cancel, prev, next);
+    foot.append(footL, footR);
+    el.dialog.append(track, head, steps, body, error, foot);
+
+    const answered = (i) => {
+      const s = state[i];
+      if (qs[i].text) return true; // an empty text answer is still an answer
+      return s.selected.size > 0 || (s.useOther && s.custom.trim().length > 0);
+    };
+    const go = (i) => {
+      if (i < 0 || i >= qs.length) return;
+      at = i;
+      error.hidden = true;
+      render();
+      col.querySelector("[data-focus]")?.focus();
+    };
+    const toggle = (i) => {
+      const q = qs[at];
+      const s = state[at];
+      if (i === q.options.length) {
+        if (!q.free) return;
+        if (q.multi) s.useOther = !s.useOther;
+        else {
+          s.selected.clear();
+          s.useOther = true;
+        }
+      } else if (q.multi) {
+        if (!s.selected.delete(i)) s.selected.add(i);
+      } else {
+        s.selected = new Set([i]);
+        s.useOther = false;
+      }
+      error.hidden = true;
+      render(`opt-${i}`);
+      if (i === q.options.length && s.useOther) col.querySelector(".ask-other-input")?.focus();
+    };
+    function submit() {
+      const missing = qs.findIndex((_, i) => !answered(i));
+      if (missing !== -1) {
+        go(missing);
+        error.textContent = qs.length > 1 ? `Answer question ${missing + 1}: pick an option or write your own answer.` : "Pick an option or write your own answer.";
+        error.hidden = false;
+        return;
+      }
+      respond(req.id, spec.payload(state.map((s) => ({
+        selected: [...s.selected].sort((a, b) => a - b),
+        custom: s.useOther ? s.custom : "",
+      }))));
+    }
+
+    function renderSteps() {
+      if (spec.steps) {
+        const { at: cur, total } = spec.steps;
+        steps.replaceChildren(span("ask-step-count", `Question ${cur} of ${total}`));
+        for (let i = 1; i <= total; i++) {
+          const t = span("ask-step" + (i < cur ? " answered" : ""));
+          if (i === cur) t.setAttribute("aria-current", "step");
+          t.append(span("ask-step-num", i < cur ? "✓" : String(i)));
+          steps.append(t);
+        }
+        steps.hidden = false;
+        return;
+      }
+      steps.hidden = qs.length < 2;
+      if (steps.hidden) return;
+      steps.setAttribute("role", "tablist");
+      steps.setAttribute("aria-label", "Questions");
+      steps.replaceChildren(...qs.map((q, i) => {
+        const b = node("button", "ask-step" + (answered(i) ? " answered" : ""));
+        b.type = "button";
+        b.setAttribute("role", "tab");
+        b.setAttribute("aria-selected", String(i === at));
+        b.append(span("ask-step-num", answered(i) && i !== at ? "✓" : String(i + 1)), span("", q.header || `Question ${i + 1}`));
+        b.addEventListener("click", () => go(i));
+        return b;
+      }));
+    }
+    function optionCard(q, i, label, selected) {
+      const b = node("button", "ask-opt" + (selected ? " selected" : ""));
+      b.type = "button";
+      b.dataset.key = `opt-${i}`;
+      b.setAttribute("role", q.multi ? "checkbox" : "radio");
+      b.setAttribute("aria-checked", String(selected));
+      if (selected || (!q.multi && i === 0)) b.dataset.focus = "";
+      const ctrl = span("ask-ctrl" + (q.multi ? " multi" : ""));
+      ctrl.setAttribute("aria-hidden", "true");
+      const content = span("ask-opt-content");
+      const top = span("ask-opt-top");
+      top.append(span("ask-opt-label", label));
+      if (i === q.recommended) top.append(span("ask-opt-rec", "Recommended"));
+      content.append(top);
+      const o = q.options[i];
+      if (o?.description) content.append(span("ask-opt-desc", o.description));
+      b.append(ctrl, content);
+      if (i < 9) {
+        const k = span("ask-opt-key", String(i + 1));
+        k.setAttribute("aria-hidden", "true");
+        b.append(k);
+      }
+      b.addEventListener("click", () => toggle(i));
+      return b;
+    }
+    function textField(q, s, cls, placeholder) {
+      const multiline = q.text?.multiline;
+      const f = node(multiline ? "textarea" : "input", cls);
+      if (multiline) f.rows = 6;
+      else f.type = q.text?.secret ? "password" : "text";
+      f.placeholder = placeholder;
+      f.value = s.custom;
+      f.setAttribute("aria-label", q.question || spec.title);
+      f.addEventListener("input", () => {
+        s.custom = f.value;
+        error.hidden = true;
+        renderFoot();
+        if (!steps.hidden && !spec.steps) renderSteps();
+      });
+      return f;
+    }
+    function render(focusKey) {
+      const q = qs[at];
+      const s = state[at];
+      renderSteps();
+      col.replaceChildren();
+      if (q.question) col.append(node("p", "ask-prompt", q.question));
+      if (q.detail) col.append(node("p", "ask-detail", q.detail));
+      if (q.text || !q.options.length) {
+        const f = textField(q, s, q.text?.multiline ? "ask-textarea" : "ask-input", q.text?.placeholder || "Your answer");
+        f.dataset.focus = "";
+        col.append(f);
+      } else {
+        col.append(node("p", "ask-hint", q.multi ? "Select all that apply." : q.free ? "Pick one or write your own answer." : "Pick one."));
+        const list = node("div", "ask-opts");
+        list.setAttribute("role", q.multi ? "group" : "radiogroup");
+        list.setAttribute("aria-label", q.question || spec.title);
+        q.options.forEach((o, i) => list.append(optionCard(q, i, o.label, s.selected.has(i))));
+        if (q.free) {
+          const other = optionCard(q, q.options.length, "Other (write your own answer)", s.useOther);
+          list.append(other);
+          if (s.useOther) {
+            const f = textField(q, s, "ask-input ask-other-input", "Your own answer");
+            f.setAttribute("aria-label", "Your own answer");
+            list.append(f);
+          }
+        }
+        col.append(list);
+      }
+      const withPreview = q.options.filter((o) => o.preview);
+      const shown = q.options.find((o, i) => s.selected.has(i) && o.preview) ?? withPreview[0];
+      preview.hidden = !shown;
+      body.classList.toggle("has-preview", !!shown);
+      if (shown) {
+        previewHead.replaceChildren(span("", shown.label), span("ask-preview-tag", "preview"));
+        previewCode.textContent = shown.preview;
+      }
+      if (focusKey) col.querySelector(`[data-key="${focusKey}"]`)?.focus();
+      renderFoot();
+    }
+    function renderFoot() {
+      summary.textContent = qs.length > 1 ? `${qs.filter((_, i) => answered(i)).length} of ${qs.length} answered` : "";
+      prev.hidden = at === 0;
+      next.replaceChildren();
+      if (at < qs.length - 1) next.textContent = `Next (${at + 2}/${qs.length})`;
+      else next.append("Submit", span("kbd", "Ctrl ↵"));
+    }
+    if (timed) {
+      const end = Date.now() + ms;
+      const tick = () => {
+        const left = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+        fill.style.transform = `scaleX(${Math.max(0, (end - Date.now()) / ms)})`;
+        const urgent = left <= 10;
+        fill.classList.toggle("urgent", urgent);
+        pill.classList.toggle("urgent", urgent);
+        pill.textContent = `${left}s`;
+        pill.title = `Closes in ${left}s; omp then applies its default answer`;
+        if (left === 0 && dialogId === req.id) respond(req.id, { cancelled: true, timedOut: true });
+      };
+      tick();
+      dialogTimer = setInterval(tick, 1000);
+    }
+    sheet = {
+      onKey(e) {
+        if (e.isComposing) return;
+        if (e.key === "Escape") {
+          e.preventDefault();
+          respond(req.id, { cancelled: true });
+          return;
+        }
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          submit();
+          return;
+        }
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const typing = e.target instanceof Element && e.target.matches("input, textarea");
+        if (typing) {
+          if (e.key === "Enter" && !e.shiftKey && e.target.tagName === "INPUT") {
+            e.preventDefault();
+            if (at < qs.length - 1) go(at + 1);
+            else submit();
+          }
+          return;
+        }
+        const q = qs[at];
+        if (/^[1-9]$/.test(e.key) && Number(e.key) - 1 <= q.options.length - (q.free ? 0 : 1) && q.options.length) {
+          e.preventDefault();
+          toggle(Number(e.key) - 1);
+        } else if (e.key === "ArrowRight" && !spec.steps && at < qs.length - 1) {
+          e.preventDefault();
+          go(at + 1);
+        } else if (e.key === "ArrowLeft" && !spec.steps && at > 0) {
+          e.preventDefault();
+          go(at - 1);
+        }
+      },
+    };
+    render();
+    el.composer.hidden = true;
+    el.yielded.hidden = false;
+    el.dialog.hidden = false;
+    queueMicrotask(() => (col.querySelector("[data-focus]") ?? next).focus());
+  }
+  /** `ask`: several questions in one sheet; each offers its options plus free text. */
   function openAskDialog(req) {
     const questions = (Array.isArray(req.questions) ? req.questions : []).filter((q) => q && typeof q.id === "string");
     if (!questions.length) return respond(req.id, { cancelled: true });
-    dropLocal();
-    clearInterval(dialogTimer);
-    dialogId = req.id;
     hooks.asking?.(String(questions[0].question ?? "") || req.title || "Question");
-    el.dialog.replaceChildren();
-    el.dialog.classList.remove("ask-card");
-    const h = document.createElement("h4");
-    h.textContent = req.title || (questions.length > 1 ? `${questions.length} questions` : "Question");
-    el.dialog.append(h);
-    const reads = questions.map((q, qi) => {
-      const box = document.createElement("div");
-      box.className = "ask-q";
-      if (typeof q.header === "string" && q.header) box.append(span("head", q.header));
-      const p = document.createElement("p");
-      p.textContent = String(q.question ?? "");
-      box.append(p);
-      const multi = q.multi === true;
-      const opts = (Array.isArray(q.options) ? q.options : []).filter((o) => o && typeof o.label === "string");
-      const inputs = opts.map((o, oi) => {
-        const lab = document.createElement("label");
-        const inp = document.createElement("input");
-        inp.type = multi ? "checkbox" : "radio";
-        inp.name = `ask-${req.id}-${qi}`;
-        if (oi === q.recommended && !multi) inp.checked = true;
-        lab.append(inp, span("", o.label));
-        if (oi === q.recommended) lab.append(span("rec", "recommended"));
-        if (typeof o.description === "string" && o.description) lab.append(span("desc", "— " + o.description));
-        box.append(lab);
-        return inp;
-      });
-      // An option's `preview` (a code sample, a mock-up...): folded boxes under the options.
-      for (const o of opts) {
-        if (typeof o.preview !== "string" || !o.preview.trim()) continue;
-        const d = document.createElement("details");
-        d.className = "ask-preview";
-        const s = document.createElement("summary");
-        s.textContent = "preview · " + o.label;
-        const pre = document.createElement("pre");
-        pre.textContent = o.preview.replace(/\r\n?/g, "\n");
-        d.append(s, pre);
-        box.append(d);
-      }
-      const other = document.createElement("input");
-      other.placeholder = opts.length ? "Or type your own answer" : "Your answer";
-      // Single-select: an option and free text are exclusive, so typing clears the radio and vice versa.
-      if (!multi) {
-        other.addEventListener("input", () => { if (other.value.trim()) for (const i of inputs) i.checked = false; });
-        for (const i of inputs) i.addEventListener("change", () => { if (i.checked) other.value = ""; });
-      }
-      box.append(other);
-      el.dialog.append(box);
-      return () => {
-        const answer = { id: q.id, selectedOptions: opts.filter((_, i) => inputs[i].checked).map((o) => o.label) };
-        const custom = other.value.trim();
-        if (custom) answer.customInput = custom;
-        return answer;
-      };
+    const qs = questions.map((q) => ({
+      header: typeof q.header === "string" ? q.header : "",
+      question: String(q.question ?? ""),
+      multi: q.multi === true,
+      recommended: q.recommended,
+      free: true,
+      options: (Array.isArray(q.options) ? q.options : []).filter((o) => o && typeof o.label === "string").map((o) => ({
+        label: o.label,
+        description: typeof o.description === "string" ? o.description : "",
+        preview: typeof o.preview === "string" && o.preview.trim() ? o.preview.replace(/\r\n?/g, "\n") : "",
+      })),
+    }));
+    openSheet(req, {
+      title: req.title || (qs.length > 1 ? `${qs.length} questions` : qs[0].header || "Question"),
+      questions: qs,
+      payload: (answers) => ({
+        answers: answers.map((a, i) => {
+          const answer = { id: questions[i].id, selectedOptions: a.selected.map((oi) => qs[i].options[oi].label) };
+          const custom = a.custom.trim();
+          if (custom) answer.customInput = custom;
+          return answer;
+        }),
+      }),
     });
-    const row = document.createElement("div");
-    row.className = "row";
-    row.append(
-      btn("Submit", () => respond(req.id, { answers: reads.map((read) => read()) })),
-      btn("Cancel", () => respond(req.id, { cancelled: true })),
-    );
-    el.dialog.append(row);
-    startCountdown(req, h);
-    el.dialog.hidden = false;
-    el.dialog.scrollIntoView({ block: "nearest" });
-    queueMicrotask(() => el.dialog.querySelector("input")?.focus());
   }
 
   // ---- extension UI state: setStatus chips, setWidget blocks --------------
@@ -1547,62 +2187,37 @@
     b.addEventListener("click", onClick);
     return b;
   }
+  /** confirm / select / input / editor: one question in the ask sheet. */
   function openDialog(req) {
-    dropLocal();
-    clearInterval(dialogTimer);
-    dialogId = req.id;
     hooks.asking?.(req.message || req.title || "omp");
-    el.dialog.replaceChildren();
-    // The ask tool's field-by-field prompts lead with "(2/3) ": show it as a progress header instead.
+    // The ask tool's field-by-field prompts lead with "(2/3) ": show it as progress instead.
     const step = /^\((\d+)\/(\d+)\) ([\s\S]*)$/.exec(req.title || "");
-    el.dialog.classList.toggle("ask-card", !!step);
-    if (step) {
-      const at = Number(step[1]);
-      const total = Number(step[2]);
-      const bar = document.createElement("div");
-      bar.className = "ask-progress";
-      bar.append(span("ask-count", `Question ${at} of ${total}`));
-      const dots = span("ask-dots");
-      for (let i = 1; i <= total; i++) dots.append(span(i < at ? "done" : i === at ? "cur" : ""));
-      bar.append(dots);
-      el.dialog.append(bar);
-    }
-    const h = document.createElement("h4");
-    h.textContent = step ? step[3] : req.title || "omp";
-    el.dialog.append(h);
-    if (req.message) {
-      const p = document.createElement("p");
-      p.textContent = req.message;
-      el.dialog.append(p);
-    }
-    const row = document.createElement("div");
-    row.className = "row";
-    const cancel = btn("Cancel", () => respond(req.id, { cancelled: true }));
-    cancel.classList.add("cancel");
+    // Title lines after the first are detail, as in the terminal: the ask tool puts a question's context there.
+    const [heading, ...detail] = (step ? step[3] : req.title || "omp").split("\n");
+    const message = typeof req.message === "string" ? req.message : "";
+    const q = {
+      question: step ? heading : message,
+      detail: [...detail, ...(step && message ? [message] : [])].join("\n"),
+      multi: false,
+      free: false,
+      options: [],
+    };
+    let payload;
     if (req.method === "confirm") {
-      row.append(btn("Yes", () => respond(req.id, { confirmed: true })), btn("No", () => respond(req.id, { confirmed: false })));
+      q.options = [{ label: "Yes" }, { label: "No" }];
+      payload = ([a]) => ({ confirmed: a.selected[0] === 0 });
     } else if (req.method === "select") {
-      (req.options || []).forEach((opt, i) => {
-        const b = btn(opt, () => respond(req.id, { value: opt }));
-        const d = req.optionDetails && req.optionDetails[i] && req.optionDetails[i].description;
-        if (d) { b.title = d; b.append(span("desc", d)); }
-        row.append(b);
+      const opts = (Array.isArray(req.options) ? req.options : []).filter((o) => typeof o === "string");
+      q.options = opts.map((label, i) => {
+        const d = req.optionDetails?.[i]?.description;
+        return { label, description: typeof d === "string" ? d : "" };
       });
-      row.append(cancel);
+      payload = ([a]) => ({ value: opts[a.selected[0]] });
     } else {
-      const field = req.method === "editor" ? document.createElement("textarea") : document.createElement("input");
-      if (req.method === "editor") field.rows = 6;
-      if (req.secret) field.type = "password";
-      field.placeholder = req.placeholder || "";
-      field.value = req.prefill || "";
-      el.dialog.append(field);
-      row.append(btn("OK", () => respond(req.id, { value: field.value })), cancel);
-      queueMicrotask(() => field.focus());
+      q.text = { multiline: req.method === "editor", secret: !!req.secret, placeholder: req.placeholder || "", prefill: req.prefill || "" };
+      payload = ([a]) => ({ value: a.custom });
     }
-    el.dialog.append(row);
-    startCountdown(req, h);
-    el.dialog.hidden = false;
-    el.dialog.scrollIntoView({ block: "nearest" });
+    openSheet(req, { title: step ? "Question" : heading, steps: step ? { at: Number(step[1]), total: Number(step[2]) } : undefined, questions: [q], payload });
   }
   /** A question of this UI's own (not an extension request): resolves the picked button's index, -1 if dismissed. */
   function askLocal(title, message, labels) {
@@ -1757,6 +2372,7 @@
     scrollDown();
     bashRunning++;
     el.stop.hidden = false;
+    syncSend();
     try {
       const params = { command };
       if (excluded && bashExclude) params.excludeFromContext = true;
@@ -1767,48 +2383,78 @@
     } finally {
       bashRunning--;
       if (!busy) el.stop.hidden = bashRunning === 0;
+      syncSend();
       scrollDown();
     }
   }
 
-  // Desktop script cards are stored per saved session in this webview's workspace.
-  const scriptCards = document.createElement("div");
-  scriptCards.className = "chips script-cards";
-  scriptCards.hidden = true;
-  el.composer.before(scriptCards);
-  const scriptKey = () => sessionFile ? "kostomp-script-cards:" + sessionFile : null;
+  // Desktop script cards are stored per project folder and shown in the top-right stack panel across all sessions of that project.
+  const scriptKey = () => projectScriptKey(cwd);
+  const scriptRuns = new Map(); // card.id -> running count in this session
+  let deckClosed = false;
   function loadScripts() {
     try {
-      const saved = JSON.parse(localStorage.getItem(scriptKey()) || "[]");
+      const key = scriptKey();
+      const saved = JSON.parse((key && localStorage.getItem(key)) || "[]");
       return Array.isArray(saved) ? saved.filter((s) => s && typeof s.name === "string" && typeof s.command === "string") : [];
     } catch {
       return [];
     }
   }
+  function notifyScripts(key) {
+    for (const sync of scriptViews.values()) sync(key);
+  }
+  function migrateSessionScripts() {
+    const key = scriptKey();
+    const legacyKey = sessionFile ? "kostomp-script-cards:" + sessionFile : null;
+    if (!key || !legacyKey) return;
+    const raw = localStorage.getItem(legacyKey);
+    if (!raw) return;
+    try {
+      const legacy = JSON.parse(raw);
+      const valid = Array.isArray(legacy) ? legacy.filter((s) => s && typeof s.name === "string" && typeof s.command === "string") : [];
+      if (valid.length) {
+        const current = loadScripts();
+        const seen = new Set(current.map((s) => `${s.name}\0${s.command}`));
+        const merged = [...current, ...valid.filter((s) => !seen.has(`${s.name}\0${s.command}`))];
+        localStorage.setItem(key, JSON.stringify(merged));
+      }
+      localStorage.removeItem(legacyKey);
+      notifyScripts(key);
+    } catch {}
+  }
   function storeScripts(cards) {
     const key = scriptKey();
-    if (!key) throw new Error("Wait for the session to finish starting.");
+    if (!key) throw new Error("Wait for the project folder to be ready.");
     localStorage.setItem(key, JSON.stringify(cards));
-    renderScripts();
+    notifyScripts(key);
+  }
+  async function runScript(card) {
+    scriptRuns.set(card.id, (scriptRuns.get(card.id) || 0) + 1);
+    renderStack();
+    try {
+      await runUserBash("!" + card.command);
+    } finally {
+      const left = (scriptRuns.get(card.id) || 1) - 1;
+      if (left > 0) scriptRuns.set(card.id, left);
+      else scriptRuns.delete(card.id);
+      renderStack();
+    }
+  }
+  function removeScript(id) {
+    try {
+      storeScripts(loadScripts().filter((s) => s.id !== id));
+    } catch (e) {
+      note("Could not remove script: " + errText(e), true);
+    }
   }
   function renderScripts() {
-    scriptCards.replaceChildren();
-    const cards = scriptKey() ? loadScripts() : [];
-    for (const card of cards) {
-      const item = span("chip glass-pill");
-      const run = linkBtn(card.name, card.command, () => runUserBash("!" + card.command));
-      const remove = linkBtn("×", "Remove " + card.name, () => {
-        try {
-          storeScripts(loadScripts().filter((s) => s.id !== card.id));
-        } catch (e) {
-          note("Could not remove script: " + errText(e), true);
-        }
-      });
-      item.append(run, remove);
-      scriptCards.append(item);
-    }
-    scriptCards.hidden = cards.length === 0;
+    migrateSessionScripts();
+    renderStack();
   }
+  scriptViews.set(sid, (changedKey) => {
+    if (changedKey === scriptKey()) renderStack();
+  });
   function saveScript(raw) {
     const command = raw.slice(2).trim();
     const restore = () => {
@@ -1816,7 +2462,7 @@
       el.input.focus();
     };
     if (!command || !scriptKey()) {
-      note(command ? "Wait for the session to finish starting." : "Usage: !+ <command>", true);
+      note(command ? "Wait for the project folder to be ready." : "Usage: !+ <command>", true);
       restore();
       return;
     }
@@ -1835,7 +2481,8 @@
       const name = input.value.trim();
       if (!name) return input.focus();
       try {
-        if (scriptKey() !== key) throw new Error("The active session changed.");
+        if (scriptKey() !== key) throw new Error("The active project folder changed.");
+        deckClosed = false;
         storeScripts([...loadScripts(), { id: crypto.randomUUID(), name, command }]);
         localDone = null;
         closeDialog();
@@ -1864,6 +2511,7 @@
       .map((p) => ({ name: typeof p.name === "string" ? p.name : "", tasks: p.tasks.filter((t) => t && typeof t.content === "string") }))
       .filter((p) => p.tasks.length);
     renderTodos();
+    renderStack();
   }
   const refreshTodos = () => send({ id: "todos", type: "get_state" });
   function renderTodos() {
@@ -1967,32 +2615,67 @@
       upsertAgent(id, patch);
     }
   }
+  let agentsTimer = 0;
+  // Subagent frames arrive several times a second per running agent: the deck repaints at most once per LIVE_PAINT_MS.
   function renderAgents() {
-    renderStack();
+    if (agentsTimer || disposed) return;
+    agentsTimer = setTimeout(() => {
+      agentsTimer = 0;
+      renderStack();
+    }, LIVE_PAINT_MS);
   }
 
-  // ---- activity stack: subagents and background jobs, two independent toggles at the top right of the chat ----
-  // Each toggle opens its own panel; open panels stack under the toggles in the order they were opened.
-  const JOB_MARK = { running: "⚙", completed: "✓", failed: "✕", cancelled: "⊘" };
+  // ---- activity deck: subagents, background jobs, todos and project scripts at the top right of the chat ----
+  // An overview (running count, one segment per item, a legend) over one foldable category per kind of work.
+  // Always present in every project, even with nothing listed; hidden, the deck shrinks to a pill with the running count.
   const JOBS_POLL_MS = 2000;
   let jobTree = { running: [], recent: [], rootId: undefined, agents: [] };
-  let jobsSupported = true; // an older omp answers get_async_jobs with "Unknown command"; the jobs toggle then stays hidden
+  let jobsSupported = true; // an older omp answers get_async_jobs with "Unknown command"; the jobs category then stays out
   let jobsBusy = false;
   let jobsPoll = null;
   let jobsSoon = null;
-  let stackOrder = []; // "agents" | "jobs", oldest opened first
+  let jobsSeen = null; // the last get_async_jobs answer as JSON, so an idle poll tick can skip an unchanged repaint
+  // deckClosed (declared with the scripts above): the user hid the deck; it reopens when a script is added.
+  let deckOpen = false;
+  const deckExpanded = new Set(["agents", "jobs"]); // unfolded categories
+  const deckLogs = new Set(); // "kind:id" rows whose output is unfolded
+  const deckArmed = new Map(); // "kind:id" -> timer of a stop button waiting for its confirming click
+  const DECK_ARM_MS = 2500;
+  const DECK_SEGMENTS = 48; // overview bar segments
+  const DECK_PIPS = 12; // status pips on a category header
+  const DECK_LOG_LINES = 6;
+  const RING_LEN = 88; // circumference of the r=14 progress ring
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const DECK_ICON = {
+    agents: '<path d="M8 2l1.6 3.4L13 7l-3.4 1.6L8 12 6.4 8.6 3 7l3.4-1.6z"/>',
+    jobs: '<path d="M3 4.5l3.5 3.5L3 11.5M8 12h5"/>',
+    todos: '<path d="M3 4l1.5 1.5L7 3M3 9l1.5 1.5L7 8M9 5h4M9 10h4"/>',
+    scripts: '<path d="M2 8h12M10 4l4 4-4 4"/>',
+    hide: '<path d="M6 4l4 4-4 4"/>',
+    show: '<path d="M10 4L6 8l4 4"/>',
+    chev: '<path d="M4 6l4 4 4-4"/>',
+    add: '<path d="M8 3v10M3 8h10"/>',
+    view: '<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
+    stop: '<rect x="4.5" y="4.5" width="7" height="7" rx="1.2"/>',
+    log: '<path d="M3 4h10M3 8h10M3 12h6"/>',
+    run: '<path d="M5 3.5v9l7-4.5z"/>',
+    remove: '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>',
+  };
+  const AGENT_ST = { pending: "run", running: "run", completed: "ok", failed: "err", aborted: "idle" };
+  const JOB_ST = { running: "run", completed: "ok", failed: "err", cancelled: "idle" };
+  const TODO_ST = { pending: "idle", in_progress: "run", completed: "ok", abandoned: "idle", blocked: "warn" };
   const stack = document.createElement("div");
   stack.className = "stack";
-  stack.hidden = true;
+  stack.hidden = true; // until the first renderStack
   const stackToggles = document.createElement("div");
   stackToggles.className = "stack-toggles";
   const stackPanels = document.createElement("div");
   stackPanels.className = "stack-panels";
   stack.append(stackToggles, stackPanels);
-  messagesWrap.append(stack);
+  root.append(stack); // the session root, not messagesWrap: the deck may extend down over the composer
 
   const isRunning = (s) => s === "running" || s === "pending";
-  /** Jobs the jobs panel lists: running first, then recent; `task` jobs are the subagents, shown in their own panel. */
+  /** Jobs the jobs category lists: running first, then recent; `task` jobs are the subagents, shown in their own category. */
   function listedJobs() {
     const keep = (j) => isObj(j) && j.type !== "task";
     return [...jobTree.running.filter(keep), ...jobTree.recent.filter(keep)];
@@ -2003,129 +2686,404 @@
     const m = Math.floor(s / 60);
     return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
   }
-  function stackToggle(kind) {
-    const at = stackOrder.indexOf(kind);
-    if (at >= 0) stackOrder.splice(at, 1);
-    else stackOrder.push(kind);
-    if (kind === "jobs" && at < 0) refreshJobs();
-    renderStack();
+  function deckIcon(name) {
+    const s = document.createElementNS(SVG_NS, "svg");
+    s.setAttribute("class", "i");
+    s.setAttribute("viewBox", "0 0 16 16");
+    s.setAttribute("aria-hidden", "true");
+    s.innerHTML = DECK_ICON[name];
+    return s;
   }
-  function stackPill(kind, label, running, total) {
-    const open = stackOrder.includes(kind);
-    const b = document.createElement("button");
+  function deckTag(name, cls, text) {
+    const n = document.createElement(name);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  /** A deck button; `fk` names it so focus survives the re-render every progress frame causes. */
+  function deckBtn(cls, label, fk, onClick) {
+    const b = deckTag("button", cls);
     b.type = "button";
-    b.className = "stack-pill glass-pill" + (open ? " on" : "");
-    b.setAttribute("aria-pressed", String(open));
-    b.title = open ? `Hide ${label}` : `Show ${label}`;
-    if (open && stackOrder.length > 1) b.append(span("ord", String(stackOrder.indexOf(kind) + 1)));
-    const mark = span("mark" + (running ? " run" : ""), kind === "jobs" ? JOB_MARK.running : running ? AGENT_MARK.running : AGENT_MARK.completed);
-    if (running) mark.style.animationDelay = `-${Date.now() % 1400}ms`; // keep the spin phase across re-renders
-    b.append(mark, span("", label), span("badge", String(running || total)));
-    b.addEventListener("click", () => stackToggle(kind));
+    if (label) {
+      b.setAttribute("aria-label", label);
+      b.title = label;
+    }
+    b.dataset.fk = fk;
+    b.addEventListener("click", onClick);
     return b;
   }
-  function stackPanel(kind, title, running, done, rows) {
-    const panel = document.createElement("div");
-    panel.className = "stack-panel glass";
-    panel.dataset.kind = kind;
-    panel.setAttribute("role", "region");
-    panel.setAttribute("aria-label", title);
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "link stack-x";
-    close.title = `Hide ${title}`;
-    close.setAttribute("aria-label", `Hide ${title}`);
-    close.textContent = "✕";
-    close.addEventListener("click", () => stackToggle(kind));
-    const head = document.createElement("div");
-    head.className = "stack-head";
-    head.append(span("", title), span("chip" + (running ? " run" : ""), running ? `${running} running` : `${done} done`), close);
-    const body = document.createElement("div");
-    body.className = "stack-rows";
-    body.append(...rows);
-    panel.append(head, body);
-    return panel;
+  const deckNodeKey = (node) => node.nodeType === Node.ELEMENT_NODE ? node.dataset.dk ?? node.dataset.fk : undefined;
+  /**
+   * Bring `cur` in line with the freshly built `next` in place, so a re-render (every job poll, every subagent
+   * progress event) keeps the live nodes: no hover, scrollbar or focus reset, no flash. Rows, categories and
+   * buttons match by identity rather than position, so inserting or settling other work leaves them alone.
+   */
+  function deckMorph(cur, next) {
+    if (cur.nodeType !== next.nodeType || cur.nodeName !== next.nodeName || deckNodeKey(cur) !== deckNodeKey(next)) {
+      cur.replaceWith(next);
+      return next;
+    }
+    if (cur.nodeType !== Node.ELEMENT_NODE) {
+      if (cur.nodeValue !== next.nodeValue) cur.nodeValue = next.nodeValue;
+      return cur;
+    }
+    for (const { name } of [...cur.attributes]) if (!next.hasAttribute(name)) cur.removeAttribute(name);
+    for (const { name, value } of next.attributes) if (cur.getAttribute(name) !== value) cur.setAttribute(name, value);
+    deckMorphChildren(cur, [...next.childNodes]);
+    return cur;
   }
-  function agentRows(list) {
+  function deckMorphChildren(parent, nextKids) {
+    const curKids = [...parent.childNodes];
+    const keyed = new Map();
+    const unkeyed = [];
+    for (const child of curKids) {
+      const key = deckNodeKey(child);
+      if (key !== undefined) keyed.set(key, child);
+      else unkeyed.push(child);
+    }
+    let index = 0;
+    const ordered = nextKids.map((next) => {
+      const key = deckNodeKey(next);
+      const cur = key === undefined ? unkeyed[index++] : keyed.get(key);
+      return cur ? deckMorph(cur, next) : next;
+    });
+    syncChildren(parent, ordered);
+  }
+  /** Reconcile actual child nodes without detaching retained interactive surfaces. */
+  function syncChildren(parent, ordered) {
+    const curKids = [...parent.childNodes];
+    const keep = new Set(ordered);
+    for (const child of curKids) if (!keep.has(child)) child.remove();
+    let cursor = parent.firstChild;
+    for (const child of ordered) {
+      if (child !== cursor) {
+        // moveBefore preserves focus and running CSS animations on supporting WebViews.
+        if (parent.moveBefore && child.parentNode === parent) parent.moveBefore(child, cursor);
+        else parent.insertBefore(child, cursor);
+      }
+      cursor = child.nextSibling;
+    }
+  }
+  /** Hide or show the deck; focus moves to the control that undoes it. */
+  function toggleDeck() {
+    deckClosed = !deckClosed;
+    if (!deckClosed && deckExpanded.has("jobs")) refreshJobs();
+    renderStack();
+    stack.querySelector(deckClosed ? ".deck-pill" : ".deck .ib")?.focus();
+  }
+  function addScript() {
+    setInput("!+ ");
+    el.input.focus();
+  }
+  function deckPill(running, failed) {
+    const b = deckBtn("deck-pill", "Show activity", "pill", toggleDeck);
+    b.append(span("dot" + (failed && !running ? " bad" : "")), deckTag("b", "", String(running)), " running", deckIcon("show"));
+    return b;
+  }
+  /** Progress ring: a share when one is known, a spinning arc for running work without one, full for settled rows. */
+  function deckRing(it) {
+    const spin = it.st === "run" && it.pct === undefined;
+    const ring = span("ring" + (spin ? " indeterminate" : ""));
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 34 34");
+    svg.setAttribute("aria-hidden", "true");
+    const pct = it.st === "ok" || it.st === "err" || it.st === "warn" ? 100 : (it.pct ?? 0);
+    for (const cls of ["t", "v"]) {
+      const c = document.createElementNS(SVG_NS, "circle");
+      c.setAttribute("class", cls);
+      c.setAttribute("cx", "17");
+      c.setAttribute("cy", "17");
+      c.setAttribute("r", "14");
+      if (cls === "v") c.setAttribute("stroke-dasharray", spin ? `26 ${RING_LEN}` : `${(RING_LEN * pct) / 100} ${RING_LEN}`);
+      svg.append(c);
+    }
+    // Nothing done yet reads as waiting, not as a measured 0%.
+    const label = it.st === "ok" ? "✓" : it.st === "err" || it.st === "warn" ? "!" : it.pct === undefined ? "–" : it.pct === 0 ? "⏳" : `${it.pct}%`;
+    ring.append(svg, span(label === "⏳" ? "wait" : "", label));
+    return ring;
+  }
+  /** Stop asks once more: the first click arms it ("Stop?"), a second within DECK_ARM_MS stops. */
+  function deckStop(key, action) {
+    const armed = deckArmed.has(key);
+    const b = deckBtn("stop" + (armed ? " arm" : ""), armed ? "Confirm: " + action.label : action.label, key + ":stop", () => {
+      if (deckArmed.has(key)) {
+        clearTimeout(deckArmed.get(key));
+        deckArmed.delete(key);
+        action.run();
+      } else {
+        deckArmed.set(key, setTimeout(() => {
+          deckArmed.delete(key);
+          renderStack();
+        }, DECK_ARM_MS));
+      }
+      renderStack();
+    });
+    if (armed) b.textContent = "Stop?";
+    else b.append(deckIcon("stop"));
+    return b;
+  }
+  /** One deck row. `it`: { id, st: run|ok|err|warn|idle, pct?, title, tip?, now?: [label, text], meta, log?, actions? }. */
+  function deckItem(kind, it) {
+    const key = `${kind}:${it.id}`;
+    const hasLog = !!it.log?.length;
+    const showLog = hasLog && deckLogs.has(key);
+    const row = deckTag("div", "it " + it.st + (showLog ? " show" : ""));
+    row.dataset.dk = key;
+    const text = deckTag("div", "it-text");
+    const h = deckTag("h4", "", it.title);
+    if (it.tip) h.title = it.tip;
+    const first = deckTag("p");
+    if (it.now) first.append(deckTag("b", "", it.now[0]), " " + it.now[1]);
+    else first.textContent = it.meta;
+    text.append(h, first);
+    if (it.now && it.meta) text.append(deckTag("p", "", it.meta));
+    const acts = deckTag("div", "ia");
+    if (hasLog) {
+      const b = deckBtn("", showLog ? "Hide output" : "Show output", key + ":log", () => {
+        if (!deckLogs.delete(key)) deckLogs.add(key);
+        renderStack();
+      });
+      b.setAttribute("aria-expanded", String(showLog));
+      b.append(deckIcon("log"));
+      acts.append(b);
+    }
+    for (const a of it.actions ?? []) {
+      if (a.stop) {
+        acts.append(deckStop(key, a));
+        continue;
+      }
+      const b = deckBtn("", a.label, `${key}:${a.icon}`, a.run);
+      b.append(deckIcon(a.icon));
+      acts.append(b);
+    }
+    row.append(deckRing(it), text, acts);
+    if (showLog) row.append(deckTag("div", "log", it.log.join("\n")));
+    return row;
+  }
+  /** One foldable category: tile, name, counts and a pip per row; unfolded, its rows or an empty state. */
+  function deckCategory(cat) {
+    const open = deckExpanded.has(cat.kind);
+    const sec = deckTag("section", "cat" + (open ? " open" : ""));
+    sec.dataset.kind = cat.kind;
+    sec.dataset.dk = "category:" + cat.kind;
+    const head = deckBtn("ch", "", "cat:" + cat.kind, () => {
+      if (!deckExpanded.delete(cat.kind)) deckExpanded.add(cat.kind);
+      if (cat.kind === "jobs" && deckExpanded.has("jobs")) refreshJobs();
+      renderStack();
+    });
+    head.setAttribute("aria-expanded", String(open));
+    const tile = span("cat-tile");
+    tile.append(deckIcon(cat.kind));
+    const run = cat.items.filter((it) => it.st === "run").length;
+    const name = span("cn");
+    name.append(deckTag("strong", "", cat.name), deckTag("small", "", cat.items.length ? `${run} running · ${cat.items.length} total` : cat.hint));
+    const pips = span("pips");
+    pips.setAttribute("aria-hidden", "true");
+    pips.append(...cat.items.slice(0, DECK_PIPS).map((it) => deckTag("i", it.st)));
+    const chev = span("chev");
+    chev.append(deckIcon("chev"));
+    head.append(tile, name, pips, chev);
+    sec.append(head);
+    if (open) {
+      const body = deckTag("div", "body");
+      if (cat.items.length) body.append(...cat.items.map((it) => deckItem(cat.kind, it)));
+      else {
+        const empty = deckTag("div", "empty");
+        empty.append(span("", cat.empty));
+        if (cat.emptyAction) {
+          const b = deckBtn("", "", `${cat.kind}:empty`, cat.emptyAction.run);
+          b.textContent = cat.emptyAction.label;
+          empty.append(b);
+        }
+        body.append(empty);
+      }
+      sec.append(body);
+    }
+    return sec;
+  }
+  function agentItems(list) {
     return list.map((a) => {
-      const row = document.createElement("div");
-      row.className = "panel-row agent " + a.status;
-      const what = oneLine(a.description || a.task || "");
-      row.append(span("mark", AGENT_MARK[a.status] ?? "○"), span("name", a.agent), span("text", clip(what, 120)));
-      if (a.task) row.title = a.task;
-      const pr = a.progress || {};
-      const meta = [];
-      if (str(pr.lastIntent)) meta.push(clip(oneLine(pr.lastIntent), 60));
-      else if (str(pr.currentTool)) meta.push(pr.currentTool);
-      if (Number(pr.toolCount) > 0) meta.push(`${pr.toolCount} tools`);
+      const pr = isObj(a.progress) ? a.progress : {};
+      const tool = str(pr.currentTool);
+      const doing = oneLine(str(pr.currentToolArgs) || str(pr.currentToolIntent) || str(pr.lastIntent));
+      const meta = [a.agent];
+      if (Number(pr.toolCount) > 0) meta.push(plural(Number(pr.toolCount), "tool"));
       if (Number(pr.tokens) > 0) meta.push(fmtTok(Number(pr.tokens)) + " tok");
-      if (meta.length) row.append(span("panel-sub", meta.join(" · ")));
-      row.append(linkBtn("view", "Show its transcript and steer it", () => openSubagent(a.id)));
-      if (isRunning(a.status)) row.append(linkBtn("stop", "Cancel this subagent", () => cancelSubagent(a.id)));
-      return row;
+      if (Number(pr.durationMs) > 0) meta.push(fmtAge(Number(pr.durationMs)));
+      const output = Array.isArray(pr.recentOutput) ? pr.recentOutput.filter((s) => typeof s === "string" && s.trim()) : [];
+      const tools = Array.isArray(pr.recentTools) ? pr.recentTools.filter(isObj).map((t) => `› ${str(t.tool)} ${oneLine(str(t.args))}`.trim()) : [];
+      const log = (output.length ? output : tools).slice(-DECK_LOG_LINES).map((s) => clip(s, 300));
+      const actions = [{ icon: "view", label: "Show its transcript and steer it", run: () => openSubagent(a.id) }];
+      if (isRunning(a.status)) actions.push({ stop: true, label: "Stop this subagent", run: () => cancelSubagent(a.id) });
+      return {
+        id: a.id,
+        st: AGENT_ST[a.status] ?? "run",
+        title: clip(oneLine(a.description || a.task || a.agent), 160),
+        tip: a.task || undefined,
+        now: isRunning(a.status) && (tool || doing) ? [tool || "now", clip(doing, 120)] : null,
+        meta: meta.join(" · "),
+        log,
+        actions,
+      };
     });
   }
-  function jobRows(list) {
+  function jobItems(list) {
     const now = Date.now();
     return list.map((j) => {
-      const row = document.createElement("div");
-      row.className = "panel-row job " + j.status;
-      const what = oneLine(j.intent || j.label || j.id);
-      row.append(span("mark", JOB_MARK[j.status] ?? "⚙"), span("text", clip(what, 120)));
-      row.title = str(j.command) || str(j.label) || what;
+      const title = oneLine(j.intent || j.label || j.id);
       const meta = [];
       if (str(j.ownerId) && j.ownerId !== jobTree.rootId) meta.push(j.ownerId);
+      if (j.status !== "running") meta.push(str(j.status));
       meta.push(fmtAge((Number(j.endTime) || now) - Number(j.startTime || now)));
-      row.append(span("panel-sub", meta.join(" · ")));
-      if (j.status === "running") row.append(linkBtn("stop", "Cancel this job", () => cancelJob(j.id)));
-      return row;
+      const command = str(j.command) || str(j.label);
+      return {
+        id: j.id,
+        st: JOB_ST[j.status] ?? "run",
+        title: clip(title, 160),
+        tip: command || title,
+        now: j.status === "running" && str(j.caption) ? [str(j.type) || "now", clip(oneLine(j.caption), 120)] : null,
+        meta: meta.join(" · "),
+        log: command && oneLine(command) !== title ? ["$ " + command] : [],
+        actions: j.status === "running" ? [{ stop: true, label: "Stop this job", run: () => cancelJob(j.id) }] : [],
+      };
     });
   }
-  function renderStack() {
-    const agentList = [...agents.values()].sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
-    const jobList = jobsSupported ? listedJobs() : [];
-    const agentsRunning = agentList.filter((a) => isRunning(a.status)).length;
-    const jobsRunning = jobList.filter((j) => j.status === "running").length;
-    const has = { agents: agentList.length > 0, jobs: jobList.length > 0 };
-    stackOrder = stackOrder.filter((k) => has[k]);
-    if (!has.agents && !has.jobs) {
-      stack.hidden = true;
-      stackToggles.replaceChildren();
-      stackPanels.replaceChildren();
-      syncJobsPoll();
-      return;
+  function todoItems() {
+    const items = [];
+    todoPhases.forEach((p, pi) => {
+      const done = p.tasks.filter((t) => t.status === "completed").length;
+      const progress = `${done} / ${p.tasks.length} done`;
+      p.tasks.forEach((t, ti) => {
+        const status = Object.hasOwn(TODO_ST, t.status) ? t.status : "pending";
+        const meta = [todoPhases.length > 1 && p.name ? p.name : "", status === "blocked" && str(t.blocker) ? "blocked: " + oneLine(t.blocker) : progress];
+        const extra = [t.details, t.notes].filter((x) => typeof x === "string" && x.trim());
+        items.push({
+          id: `${pi}.${ti}`,
+          st: TODO_ST[status],
+          pct: status === "pending" ? 0 : undefined,
+          title: clip(oneLine(t.content), 160),
+          tip: t.content,
+          meta: meta.filter(Boolean).join(" · "),
+          log: extra.length ? extra.join("\n\n").split("\n").map((s) => clip(s, 300)) : [],
+        });
+      });
+    });
+    return items;
+  }
+  function scriptItems(list) {
+    return list.map((card) => ({
+      id: card.id,
+      st: (scriptRuns.get(card.id) || 0) > 0 ? "run" : "idle",
+      title: card.name,
+      tip: card.command,
+      meta: clip(oneLine(card.command), 160),
+      actions: [
+        { icon: "run", label: "Run " + clip(oneLine(card.command), 80), run: () => runScript(card) },
+        { icon: "remove", label: "Remove " + card.name, run: () => removeScript(card.id) },
+      ],
+    }));
+  }
+  function deckPanel(cats, all, running, failed) {
+    const panel = deckTag("section", "stack-panel deck");
+    panel.setAttribute("aria-label", "Activity");
+    const ov = deckTag("div", "ov");
+    const top = deckTag("div", "ov-top");
+    const sum = deckTag("p");
+    sum.append(deckTag("b", "", "running"), span("", failed ? `${failed} failed` : "no errors"));
+    const hide = deckBtn("ib", "Hide activity", "hide", toggleDeck);
+    hide.append(deckIcon("hide"));
+    top.append(deckTag("div", "big", String(running)), sum, hide);
+    const listed = cats.filter((c) => c.items.length);
+    const spec = deckTag("div", "spec");
+    spec.setAttribute("role", "img");
+    spec.setAttribute("aria-label", "Work by category: " + (listed.map((c) => `${c.name} ${c.items.length}`).join(", ") || "none"));
+    for (const { kind, it } of all.slice(0, DECK_SEGMENTS)) {
+      const seg = deckTag("i", it.st === "run" ? "" : "idle");
+      seg.dataset.kind = kind;
+      seg.style.flex = it.st === "run" ? "3" : "1";
+      spec.append(seg);
     }
-    const scroll = new Map([...stackPanels.querySelectorAll(".stack-rows")].map((n) => [n.parentElement.dataset.kind, n.scrollTop]));
-    const toggles = [];
-    if (has.agents) toggles.push(stackPill("agents", "agents", agentsRunning, agentList.length));
-    if (has.jobs) toggles.push(stackPill("jobs", "jobs", jobsRunning, jobList.length));
-    const panels = stackOrder.map((kind) =>
-      kind === "agents"
-        ? stackPanel("agents", "Subagents", agentsRunning, agentList.length - agentsRunning, agentRows(agentList))
-        : stackPanel("jobs", "Background", jobsRunning, jobList.length - jobsRunning, jobRows(jobList)),
-    );
-    stackToggles.replaceChildren(...toggles);
-    stackPanels.replaceChildren(...panels);
-    for (const p of panels) p.classList.toggle("enter", !scroll.has(p.dataset.kind));
-    for (const p of panels) p.querySelector(".stack-rows").scrollTop = scroll.get(p.dataset.kind) ?? 0;
+    const legend = deckTag("div", "legend");
+    for (const c of listed) {
+      const key = span("");
+      key.dataset.kind = c.kind;
+      key.append(deckTag("s"), c.name + " ", deckTag("b", "", String(c.items.filter((it) => it.st === "run").length)));
+      legend.append(key);
+    }
+    ov.append(top, spec, legend);
+    const list = deckTag("div", "cats");
+    list.append(...cats.map(deckCategory));
+    panel.append(ov, list);
+    if (scriptKey()) {
+      const add = deckBtn("add", "", "add", addScript);
+      add.append(deckIcon("add"), "Add script: !+ <command> in the composer");
+      panel.append(add);
+    }
+    return panel;
+  }
+  function renderStack() {
+    clearTimeout(agentsTimer); // this render covers a deferred renderAgents
+    agentsTimer = 0;
+    const agentList = [...agents.values()].sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
+    const cats = [
+      { kind: "agents", name: "Subagents", hint: "agents working in parallel", empty: "No subagents in this session.", items: agentItems(agentList) },
+      ...(jobsSupported ? [{ kind: "jobs", name: "Jobs", hint: "background commands", empty: "No background jobs.", items: jobItems(listedJobs()) }] : []),
+      { kind: "todos", name: "Todos", hint: "plan steps", empty: "No plan yet.", items: todoItems() },
+      {
+        kind: "scripts",
+        name: "Scripts",
+        hint: "saved project commands",
+        empty: "No saved scripts.",
+        emptyAction: scriptKey() ? { label: "Add script", run: addScript } : null,
+        items: scriptKey() ? scriptItems(loadScripts()) : [],
+      },
+    ];
+    const all = cats.flatMap((c) => c.items.map((it) => ({ kind: c.kind, it })));
+    const keys = new Set(all.map(({ kind, it }) => `${kind}:${it.id}`));
+    for (const k of deckLogs) if (!keys.has(k)) deckLogs.delete(k);
+    const wasOpen = deckOpen;
+    deckOpen = !deckClosed;
+    const running = all.filter(({ it }) => it.st === "run").length;
+    const failed = all.filter(({ it }) => it.st === "err").length;
+    const focusKey = stack.contains(document.activeElement) ? document.activeElement.dataset?.fk : undefined;
+    if (!deckOpen) {
+      stackPanels.replaceChildren();
+      deckMorphChildren(stackToggles, [deckPill(running, failed)]);
+    } else {
+      const panel = deckPanel(cats, all, running, failed);
+      stackToggles.replaceChildren();
+      // Keep the entrance animation running if a re-render lands before it ends.
+      if (!wasOpen || stackPanels.firstElementChild?.classList.contains("enter")) panel.classList.add("enter");
+      deckMorphChildren(stackPanels, [panel]);
+    }
+    if (focusKey && !stack.contains(document.activeElement)) stack.querySelector(`[data-fk="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
     stack.hidden = false;
     syncJobsPoll();
   }
-  /** Poll while this session has a running job or the jobs panel is open; the elapsed times refresh with it. */
+  /** Poll while this session has a running job, or while the jobs panel is open and on screen; the elapsed times refresh with it. */
   function syncJobsPoll() {
-    const want = alive && jobsSupported && (jobTree.running.some((j) => j.type !== "task") || stackOrder.includes("jobs"));
-    if (want && !jobsPoll) jobsPoll = setInterval(refreshJobs, JOBS_POLL_MS);
+    const want = alive && jobsSupported && (jobTree.running.some((j) => j.type !== "task") || (deckOpen && deckExpanded.has("jobs")));
+    if (want && !jobsPoll) jobsPoll = setInterval(pollJobs, JOBS_POLL_MS);
     else if (!want && jobsPoll) {
       clearInterval(jobsPoll);
       jobsPoll = null;
     }
   }
-  async function refreshJobs() {
+  /** A poll tick: an open jobs panel nobody can see has nothing to refresh while no job runs. */
+  function pollJobs() {
+    if (!jobTree.running.some((j) => j.type !== "task") && (document.hidden || !root.checkVisibility())) return;
+    refreshJobs(true);
+  }
+  async function refreshJobs(tick = false) {
     if (!jobsSupported || !alive || jobsBusy) return;
     jobsBusy = true;
+    let same = false;
     try {
       const r = await request("get_async_jobs", {}, 5000);
       if (isObj(r)) {
+        const seen = JSON.stringify(r);
+        same = seen === jobsSeen;
+        jobsSeen = seen;
         jobTree = {
           running: Array.isArray(r.running) ? r.running : [],
           recent: Array.isArray(r.recent) ? r.recent : [],
@@ -2138,11 +3096,13 @@
     } finally {
       jobsBusy = false;
     }
+    // Only running rows show a moving elapsed time: an unchanged idle answer would paint the same deck again.
+    if (tick && same && !jobTree.running.length) return;
     renderStack();
   }
   /** A tool call or turn just ended: a background job may have started or settled. */
   function refreshJobsSoon() {
-    if (!jobsSupported || jobsSoon) return;
+    if (!jobsSupported || jobsSoon || disposed) return;
     jobsSoon = setTimeout(() => {
       jobsSoon = null;
       refreshJobs();
@@ -2151,6 +3111,7 @@
   function clearJobs() {
     clearTimeout(jobsSoon);
     jobsSoon = null;
+    jobsSeen = null;
     jobTree = { running: [], recent: [], rootId: undefined, agents: [] };
     renderStack();
   }
@@ -2584,7 +3545,8 @@
     ["Enter", "Send (steers the running turn)"],
     ["Alt+Enter", "Queue as a follow-up for after the turn"],
     ["Shift+Enter", "New line"],
-    ["Esc", "Close the popup / drop the suggestion / stop the turn"],
+    ["Esc", "Close the popup / drop the suggestion"],
+    ["Alt+Esc", "Stop the turn"],
     ["↑ / ↓", "Prompt history (on an empty editor)"],
     ["Ctrl+R", "Search the prompt history (again: next match)"],
     ["Tab / →", "Accept the suggestion or the highlighted completion"],
@@ -2635,6 +3597,33 @@
     b.addEventListener("click", onClick);
     return b;
   }
+  /** Star toggle for an answer; favourites are stored per session file, so a click before omp names the file only notes it. */
+  function favButton(node, ts) {
+    const b = linkBtn("", "", () => {
+      if (!sessionFile) return note("The session is not saved yet; try again in a moment.", true);
+      paintFav(b, node, window.kostompFavs.toggle(sessionFile, ts));
+    });
+    b.classList.add("fav");
+    b.dataset.ts = String(ts);
+    paintFav(b, node, !!sessionFile && window.kostompFavs.has(sessionFile, ts));
+    return b;
+  }
+  function paintFav(b, node, on) {
+    b.textContent = on ? "★ fav" : "☆ fav";
+    b.title = on ? "Remove this answer from favourites" : "Add this answer to favourites (the chat gets a star in the list)";
+    b.setAttribute("aria-pressed", String(on));
+    b.classList.toggle("on", on);
+    node.classList.toggle("faved", on);
+  }
+  /** Repaint every star in this transcript (the session file changed, or another view toggled one). */
+  function syncFavs() {
+    for (const b of el.messages.querySelectorAll(".msg-acts .fav")) {
+      paintFav(b, b.closest(".msg"), !!sessionFile && window.kostompFavs.has(sessionFile, Number(b.dataset.ts)));
+    }
+  }
+  favViews.set(sid, (k) => {
+    if (k === favFileKey(sessionFile)) syncFavs();
+  });
   function userActions(node) {
     const bar = document.createElement("div");
     bar.className = "msg-acts";
@@ -3173,8 +4162,10 @@
     const text = histNote ?? (n ? "— previous session restored —" : null);
     histNote = null;
     if (text) note(text);
-    pinned = true;
-    el.messages.scrollTo({ top: el.messages.scrollHeight, behavior: "instant" });
+    setPinned(true);
+    if (el.messages.lastElementChild) measureRowsAround(el.messages.lastElementChild); // the first paint is at the real tail
+    tailScroll();
+    scrollDown();
   }
   // ---- request/response bridge for other panels (settings) ---------------
   // Each call gets its own id; the matching response frame settles its promise.
@@ -3184,13 +4175,23 @@
   let readyGate = null;
   function resetReady() {
     let open;
+    let die;
     const p = new Promise((r) => (open = r));
-    readyGate = { promise: p, open, isOpen: false };
+    const dead = new Promise((r) => (die = r)); // the process failed to start or exited before it was ready
+    readyGate = { promise: p, open, dead, die, isOpen: false };
   }
   resetReady();
   async function request(type, params = {}, timeoutMs = 20000) {
+    if (disposed) throw new Error(`${type}: the session is closed`);
+    ensureStarted();
     if (!readyGate.isOpen) {
-      const waited = await Promise.race([readyGate.promise.then(() => true), new Promise((r) => setTimeout(() => r(false), timeoutMs))]);
+      let wait;
+      const waited = await Promise.race([
+        readyGate.promise.then(() => true),
+        readyGate.dead.then(() => false), // this gate never opens any more
+        new Promise((r) => (wait = setTimeout(() => r(false), timeoutMs))),
+      ]);
+      clearTimeout(wait);
       if (!waited) throw new Error("omp is not running");
     }
     const reqId = "req-" + ++nextReq;
@@ -3225,7 +4226,7 @@
       if (frame.id === "setmodel") renderModels(); // revert the picker
       // An older omp without set_ask_dialog keeps using single dialogs; nothing to report.
       // "subsub": an older omp without subagent events just shows no subagent panel.
-      // "evfilter": without bash_output chunks, full bash snapshots keep arriving.
+      // "evfilter": without bash_output chunks and message deltas, full snapshots keep arriving.
       if (!["hist", "settle", "stats", "askdlg", "warns", "todos", "subsub", "evfilter"].includes(frame.id)) note(`${frame.command || "command"} failed: ${frame.error || "unknown error"}`, true);
       return;
     }
@@ -3242,6 +4243,7 @@
       loadThinkingLevels();
       sessionFile = typeof data.sessionFile === "string" ? data.sessionFile : null;
       renderScripts();
+      syncFavs();
       hooks.sessionFile?.(sessionFile);
       hooks.title?.(typeof data.sessionName === "string" ? data.sessionName : null, true);
       setWarnings(data.configWarnings);
@@ -3263,6 +4265,7 @@
     } else if (frame.id === "sfile") {
       sessionFile = typeof data.sessionFile === "string" ? data.sessionFile : null;
       renderScripts();
+      syncFavs();
       hooks.sessionFile?.(sessionFile);
     } else if (frame.id === "models") {
       availableModels = data.models || [];
@@ -3286,6 +4289,7 @@
   // ---- frames -----------------------------------------------------------
   /** A frame whose handler throws loses only itself; the error is kept for "Show logs" instead of vanishing in the webview console. */
   function onFrame(frame) {
+    if (disposed) return;
     try {
       // A new process cannot continue an old process's partial chunk sequence.
       if (frame?.type === "ready") frameDecoder.reset();
@@ -3315,8 +4319,9 @@
         send({ id: "cmds", type: "get_available_commands" });
         send({ id: "askdlg", type: "set_ask_dialog", enabled: true }); // multi-question `ask` requests
         send({ id: "subsub", type: "set_subagent_subscription", level: "progress" }); // subagent panel
-        // Running bash output as bash_output splices; an older omp ignores the field and keeps sending snapshots.
-        send({ id: "evfilter", type: "set_event_filter", events: null, bashOutput: "chunks" });
+        // Running bash output as bash_output splices and streamed replies as deltas; an older omp ignores the fields
+        // and keeps sending snapshots.
+        send({ id: "evfilter", type: "set_event_filter", events: null, messageUpdates: "delta", bashOutput: "chunks" });
         if (resumed) send({ id: "hist", type: "get_messages" });
         break;
       case "response":
@@ -3325,6 +4330,7 @@
       case "agent_start":
         clearRecapHint();
         lastAnswer = "";
+        lastAnswerText = "";
         setBusy(true);
         break;
       case "message_start":
@@ -3332,7 +4338,15 @@
       case "message_end": {
         // Frames of one message share messageId; without it, fall back to start-order.
         const id = frame.messageId || (frame.type === "message_start" ? (lastId = keyOf(frame)) : lastId);
-        renderMessage(id, frame.message, frame.type !== "message_end");
+        let message = frame.message;
+        if (frame.type === "message_start") {
+          if (isObj(message) && message.role === "assistant") streaming.set(id, { ...message, content: Array.isArray(message.content) ? [...message.content] : [] });
+        } else if (frame.type === "message_end") streaming.delete(id);
+        // A full snapshot comes from an omp that ignored messageUpdates "delta".
+        else if (!Array.isArray(message?.content)) message = applyDelta(id, frame);
+        // The first frame paints at once so the node keeps its transcript position; later deltas coalesce.
+        if (frame.type === "message_update" && messages.has(id)) renderLive(id, message);
+        else renderMessage(id, message, frame.type !== "message_end");
         break;
       }
       case "tool_execution_start":
@@ -3378,7 +4392,7 @@
       case "session_settled":
         setBusy(false);
         send({ id: "sfile", type: "get_state" }); // a /new or /resume inside the turn may have switched files
-        send({ id: "settle", type: "get_messages" });
+        healIfMissed();
         refreshJobsSoon();
         refreshPlan();
         // A turn cut off before message_end would otherwise keep saying "streaming…".
@@ -3589,6 +4603,7 @@
     el.input.value = "";
     el.input.style.height = "";
     el.composer.classList.remove("shell");
+    syncSend();
     if (message) rememberPrompt(message);
     if (message.startsWith("!+")) {
       saveScript(message); // saving never executes the command or consumes staged images
@@ -3632,6 +4647,7 @@
       el.input.focus();
     })));
     strip.hidden = !attached.length;
+    syncSend();
   }
   function readImage(file) {
     return new Promise((resolve, reject) => {
@@ -3712,11 +4728,32 @@
     attachFiles([...e.target.files]);
     e.target.value = ""; // allow picking the same file again
   });
+  const SEND_ARROW_ICON = '<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>';
+  const SEND_STOP_ICON = '<rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor" stroke="none"/>';
+  /** While a turn or `!cmd` runs and there is nothing to send, the send button becomes a stop button. */
+  let stopMode = false;
+  function syncSend() {
+    const empty = !el.input.value.trim() && !attached.length;
+    const next = (busy || bashRunning > 0) && empty;
+    el.send.disabled = empty && !next;
+    if (next === stopMode) return;
+    stopMode = next;
+    el.send.classList.toggle("stop", next);
+    el.send.title = next ? "Stop (Alt+Esc)" : "Send (Enter)";
+    el.send.setAttribute("aria-label", next ? "Stop" : "Send");
+    el.send.firstElementChild.innerHTML = next ? SEND_STOP_ICON : SEND_ARROW_ICON;
+  }
+  el.send.addEventListener("click", (e) => {
+    if (!stopMode) return;
+    e.preventDefault();
+    stopTurn();
+  });
   function autosize() {
     const t = el.input;
     t.style.height = "auto";
     const h = t.scrollHeight;
     t.style.height = Math.min(h, 220) + "px";
+    syncSend();
   }
 
   // ---- new-chat welcome: a suggestion fills the composer (Enter sends); Alt+1..4 pick one ----
@@ -4200,7 +5237,7 @@
       hideGhost(true);
       return;
     }
-    if (e.key === "Escape" && (busy || bashRunning)) {
+    if (e.key === "Escape" && e.altKey && (busy || bashRunning)) {
       e.preventDefault();
       stopTurn(); // with a queue: also pulls the queued messages back into the editor
       return;
@@ -4218,6 +5255,7 @@
   el.input.addEventListener("input", (e) => {
     hist.index = -1;
     el.composer.classList.toggle("shell", el.input.value.startsWith("!"));
+    syncSend();
     autosize();
     if (pal.open && pal.mode === "hist") return scheduleHistorySearch(); // typing refines the search
     refreshPalette();
@@ -4280,11 +5318,11 @@
     }
   });
 
-  let cwd = null;
   let resumed = false;
   /** Forget everything rendered from the current transcript (staged attachments stay). */
   function clearTranscript() {
     messages.clear();
+    streaming.clear();
     tools.clear();
     ledgers.clear();
     turnUsage.clear();
@@ -4319,8 +5357,17 @@
     if (!el.tree.hidden) loadTree();
   }
   let starting = false; // rpc_start in flight: a second folder switch must not overlap it
+  let started = false; // start() ran once; until then no omp process exists for this session
+  /** Start the process with the creation-time folder and resume choice, unless it was started already or the session is closed. */
+  function ensureStarted() {
+    if (!started && !disposed) start(opts.cwd ?? null, opts.resume ?? true);
+  }
   async function start(dir, resume) {
     starting = true;
+    started = true;
+    let settle;
+    const settled = (startSettled = new Promise((r) => (settle = r)));
+    if (typeof dir === "string" && dir.trim()) cwd = dir;
     attached = [];
     clearTranscript();
     clearExtUi();
@@ -4333,16 +5380,20 @@
     try {
       // `resume` is true (continue the folder's latest session) or a session file path (that exact one).
       const file = typeof resume === "string" ? resume : null;
-      cwd = await invoke("rpc_start", { id: sid, cwd: dir ?? null, resume: resumed, session: file });
+      cwd = await window.KostompRpcLifecycle.start({ id: sid, cwd: dir ?? null, resume: resumed, session: file });
       el.cwd.textContent = folderName(cwd);
       el.cwd.title = cwd + " (change working folder)";
       saveRecent(cwd);
       hooks.cwd?.(cwd);
+      renderScripts();
     } catch (e) {
       setStatus("failed to start", "bad");
       note(String(e), true);
+      readyGate.die();
     } finally {
       starting = false;
+      if (startSettled === settled) startSettled = null;
+      settle();
     }
   }
   // ---- session changes inside the running process ------------------------
@@ -4362,7 +5413,7 @@
    * Open saved session `sessionPath` in this process. When its saved model cannot be restored, offer
    * to open it with the current model (`provider`/`modelId` on the retry). Resolves true on success.
    */
-  async function switchTo(sessionPath, model) {
+  async function switchTo(sessionPath, model, nextCwd) {
     if (busy) {
       note("Stop the running turn before switching to another session.", true);
       return false;
@@ -4378,13 +5429,20 @@
         note("Switch cancelled.");
         return false;
       }
+      if (typeof nextCwd === "string" && nextCwd.trim()) {
+        cwd = nextCwd;
+        el.cwd.textContent = folderName(cwd);
+        el.cwd.title = cwd + " (change working folder)";
+        saveRecent(cwd);
+        hooks.cwd?.(cwd);
+      }
       reloadTranscript("— switched session —");
       return true;
     } catch (e) {
       const msg = errText(e);
       if (!model && currentModel && /could not restore model/i.test(msg)) {
         const pick = await askLocal("Saved model unavailable", `${msg}\n\nOpen the session with ${modelKey(currentModel)} instead?`, ["Use " + modelKey(currentModel), "Cancel"]);
-        return pick === 0 ? switchTo(sessionPath, currentModel) : false;
+        return pick === 0 ? switchTo(sessionPath, currentModel, nextCwd) : false;
       }
       note("Could not switch session: " + msg, true);
       return false;
@@ -4479,7 +5537,7 @@
     (menu.querySelector(".folder-item:not(.current)") || menu.querySelector(".folder-item"))?.focus();
   }
   el.cwd.addEventListener("click", () => (folderMenu ? closeFolderMenu() : openFolderMenu()));
-  start(opts.cwd ?? null, opts.resume ?? true);
+  setStatus("not started"); // the process starts on first use: ensureStarted(), request() or submitText()
 
   return {
     sid,
@@ -4493,6 +5551,7 @@
     onExit() {
       frameDecoder.reset();
       alive = false;
+      readyGate.die();
       hlAskers.delete(sid);
       setBusy(false);
       closeDialog(); // nobody is waiting for its answer any more
@@ -4507,13 +5566,71 @@
     request,
     /** `fn(req, respond) => boolean` claims extension UI requests first; `null` restores the defaults. */
     setUiInterceptor: (fn) => { uiInterceptor = typeof fn === "function" ? fn : null; },
-    /** Re-read the scoped model list into the model picker. */
-    refreshModels: () => send({ id: "models", type: "get_available_models" }),
+    /** Re-read the scoped model list into the model picker (before the first start: `ready` will ask for it). */
+    refreshModels: () => { if (started) send({ id: "models", type: "get_available_models" }); },
     focus: () => el.input.focus(),
-    /** The session is closed for good: stop routing highlight requests to its process. */
-    dispose: () => hlAskers.delete(sid),
+    /** The session is closed for good: stop routing highlight requests to its process and drop everything still scheduled. */
+    dispose: () => {
+      hlAskers.delete(sid);
+      scriptViews.delete(sid);
+      favViews.delete(sid);
+      disposed = true;
+      alive = false;
+      readyGate.die();
+      clearInterval(jobsPoll);
+      jobsPoll = null;
+      clearTimeout(jobsSoon);
+      jobsSoon = null;
+      clearTimeout(liveTimer);
+      liveTimer = 0;
+      pendingLive.clear();
+      streaming.clear();
+      clearInterval(dialogTimer);
+      dialogTimer = null;
+      clearTimeout(pathTimer);
+      clearTimeout(histTimer);
+      clearTimeout(ghostTimer);
+      clearTimeout(caretTimer);
+      clearTimeout(agentsTimer);
+      agentsTimer = 0;
+      for (const t of agentTimers.values()) clearTimeout(t);
+      agentTimers.clear();
+      for (const c of tools.values()) clearTimeout(c.paintTimer);
+      for (const t of deckArmed.values()) clearTimeout(t);
+      deckArmed.clear();
+      cancelAnimationFrame(scrollFrame);
+      cancelAnimationFrame(railFrame);
+      scrollFrame = 0;
+      railFrame = 0;
+      tailObserver.disconnect();
+      tailResize.disconnect();
+      rowSizes.disconnect();
+      jumpWait?.abort();
+      toBottomWait?.abort();
+      railObserver.disconnect();
+      for (const w of pending.values()) {
+        clearTimeout(w.timer);
+        w.reject(new Error("the session is closed"));
+      }
+      pending.clear();
+    },
     lastAnswer: () => lastAnswer,
     restart: () => start(cwd, false),
+    /**
+     * Wait for omp to be ready, then submit `text` through the composer exactly as Enter does.
+     * Rejects when the process failed to start or exited before it was ready.
+     */
+    async submitText(text) {
+      ensureStarted();
+      const gate = readyGate;
+      if (!gate.isOpen && !(await Promise.race([gate.promise.then(() => true), gate.dead.then(() => false)]))) {
+        throw new Error("omp exited before it was ready");
+      }
+      setInput(String(text ?? ""));
+      submit();
+    },
+    /** Start the omp process on first use; later calls, and calls after dispose, do nothing. */
+    ensureStarted,
     /** `new_session` in the running process (starts the process again when it has exited). */
     newSession,
     /** `switch_session` to a saved session file; resolves true when the transcript changed. */

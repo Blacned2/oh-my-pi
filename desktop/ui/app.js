@@ -7,8 +7,9 @@
   const $ = (id) => document.getElementById(id);
   let layout = null; // set up below; showView() runs before that
   const sessions = new Map(); // sid -> { sid, api, tab, cwd, status: { text, kind } }
-  const focusChat = () => sessions.get(layout?.focused)?.api.focus();
-
+  const panels = new Map(); // sid -> { sid, kind, api, tab, label, cwd, name, state }
+  const focusActive = () => (sessions.get(layout?.focused) ?? panels.get(layout?.focused))?.api.focus?.();
+  const focusChat = () => focusActive();
   window.kostompConfirmDelete = async (title, detail) => {
     const dialog = document.createElement("dialog");
     dialog.className = "delete-confirm glass";
@@ -43,11 +44,38 @@
   const VIEW_KEY = "kostomp-view";
   const VIEWS = ["chat", "stats", "settings"];
   const tabs = [...document.querySelectorAll(".tabs [role=tab]")];
+  const tabStrip = $("tabs");
+  const tabThumb = tabStrip.querySelector(".thumb");
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  const DROP_EASE = "cubic-bezier(.23,1,.32,1)";
+  /** Fits the droplet to the selected tab. Moving, its leading edge travels faster than the trailing one, so it stretches. */
+  function placeThumb(dir) {
+    const tab = tabs.find((t) => t.getAttribute("aria-selected") === "true");
+    if (!tab) return;
+    const from = [tabThumb.style.getPropertyValue("--l"), tabThumb.style.getPropertyValue("--r")];
+    const l = tab.offsetLeft + "px";
+    const r = tabStrip.clientWidth - tab.offsetLeft - tab.offsetWidth + "px";
+    tabThumb.style.setProperty("--l", l);
+    tabThumb.style.setProperty("--r", r);
+    if (!dir || !from[0] || reducedMotion.matches) return;
+    tabThumb.animate({ left: [from[0], l] }, { duration: dir === "r" ? 380 : 220, easing: DROP_EASE });
+    tabThumb.animate({ right: [from[1], r] }, { duration: dir === "r" ? 220 : 380, easing: DROP_EASE });
+  }
+  addEventListener("resize", () => placeThumb());
+  document.fonts.ready.then(() => placeThumb());
   const gear = $("gear");
   function showView(name) {
-    for (const view of VIEWS) $(view).hidden = view !== name;
+    for (const view of VIEWS) {
+      const section = $(view);
+      const inactive = view !== name;
+      section.inert = inactive;
+      section.hidden = inactive;
+    }
+    const from = tabs.findIndex((t) => t.getAttribute("aria-selected") === "true");
+    const to = tabs.findIndex((t) => t.dataset.view === name);
     for (const tab of tabs) tab.setAttribute("aria-selected", String(tab.dataset.view === name));
-    $("tabs").dataset.view = tabs.some((t) => t.dataset.view === name) ? name : "none";
+    tabStrip.dataset.view = to >= 0 ? name : "none";
+    placeThumb(from >= 0 && to >= 0 && from !== to ? (to > from ? "r" : "l") : undefined);
     gear.classList.toggle("on", name === "settings");
     localStorage.setItem(VIEW_KEY, name);
     document.dispatchEvent(new CustomEvent("kostomp-view", { detail: name }));
@@ -91,23 +119,36 @@
 
   // ---- stats ------------------------------------------------------------
   const statsFrame = $("stats-frame");
-  let statsOrigin = null;
+  let statsOrigin = null; // set together with the frame's src
+  let statsUrl = null;
   function postStatsTheme() {
     if (statsOrigin) statsFrame.contentWindow?.postMessage({ type: "kostomp-theme", theme: themePref }, statsOrigin);
   }
   // Re-sync after every dashboard load (the bridge ignores a preference it already has).
   statsFrame.addEventListener("load", postStatsTheme);
+  // Tell the dashboard whether the Stats view is shown: hidden, it stops polling (stats-bridge.js).
+  function postStatsVisible() {
+    if (statsOrigin) statsFrame.contentWindow?.postMessage({ type: "kostomp-visible", visible: !$("stats").hidden }, statsOrigin);
+  }
+  statsFrame.addEventListener("load", postStatsVisible);
+  document.addEventListener("kostomp-view", postStatsVisible);
+  // The dashboard is a cross-origin app with its own renderer: load it only once Stats is first shown.
+  function loadStats() {
+    if (statsOrigin || !statsUrl || $("stats").hidden) return;
+    statsOrigin = new URL(statsUrl).origin;
+    statsFrame.addEventListener("load", () => {
+      statsFrame.hidden = false;
+      $("stats-wait").hidden = true;
+    }, { once: true });
+    // First load carries the preference in the URL so the dashboard paints in it at once.
+    statsFrame.src = statsUrl + "/?kostomp-theme=" + themePref;
+  }
+  document.addEventListener("kostomp-view", loadStats);
   function applyStats(result) {
     if (!result) return;
     if ("Ok" in result) {
-      const frame = statsFrame;
-      if (!statsOrigin) {
-        statsOrigin = new URL(result.Ok).origin;
-        // First load carries the preference in the URL so the dashboard paints in it at once.
-        frame.src = result.Ok + "/?kostomp-theme=" + themePref;
-      }
-      frame.hidden = false;
-      $("stats-wait").hidden = true;
+      statsUrl ??= result.Ok;
+      loadStats(); // the stored view may already be Stats
     } else {
       $("stats-wait").innerHTML = "";
       const err = document.createElement("div");
@@ -122,9 +163,26 @@
   // ---- sessions: tab strip + split workspace ------------------------------
   const strip = $("session-tabs");
   const statusBox = $("status");
+  const statusTitle = $("status-title");
+  const statusSub = $("status-sub");
+  const statusText = $("status-text");
+  const sessionMenu = $("session-menu");
   let nextSid = 0;
-  const AVATAR_COLORS = ["#6d4aff", "#ff6b5b", "#19c9a0", "#f5a60b", "#3d9bff", "#e0489e"];
-  let avatarSeq = 0;
+  const AVATAR_COLORS = ["var(--c-coral)", "var(--c-mint)", "var(--c-sun)", "var(--c-sky)", "var(--accent)"];
+
+  /**
+   * Graph and Design leave their pane when this is true for a click, Enter or Space caught (capture phase) on the
+   * strip, the compose button, the sidebar segments or the tool rail. In the strip only a chat tab, or a project's
+   * "+", shows a chat; folding a project, closing or renaming a tab do not. Switching the sidebar view (an unselected
+   * segment tab) is not navigation; the selected one opens its list.
+   */
+  window.kostompLeavesForChat = (event) => {
+    const target = event.target;
+    if (event.currentTarget !== strip) return !target.closest("#graph-new, #graphs-toggle, #design-new, #designs-toggle, #compose-new, #tool-more, .seg [aria-selected=false]");
+    if (event.type === "keydown") return target.matches(".stab");
+    if (target.closest(".stab-group-add")) return true;
+    return !!target.closest(".stab") && !target.closest(".stab-close, .stab-input");
+  };
 
   // ---- collapsible session sidebar (state persists) ----
   const sidebar = $("sidebar");
@@ -144,6 +202,133 @@
       e.preventDefault();
       setSidebar(!sidebar.classList.contains("collapsed"));
     }
+  });
+
+  // ---- buttons that no longer fit fold into one menu: the sidebar's New chat / Graph / Design row
+  // becomes "New ▾", the titlebar's panel rail one "⋯" bead. Rows click the real (hidden) buttons.
+  // Fit is measured with the full row in place, so toggling the folded state never feeds back into it.
+  const compose = sidebar.querySelector(".compose");
+  const composeMenu = window.kostompOverflowMenu($("compose-new"), $("compose-menu"), () => [
+    { button: $("session-add"), label: "Chat", icon: $("tab-chat").querySelector("svg") },
+    { button: $("graph-new"), label: "Graph" },
+    { button: $("design-new"), label: "Design" },
+  ], "left");
+  function fitCompose() {
+    compose.classList.remove("compact");
+    // The folded rail stacks the three buttons already; only the open sidebar can run out of room.
+    const tight = !sidebar.classList.contains("collapsed") && compose.scrollWidth > compose.clientWidth;
+    compose.classList.toggle("compact", tight);
+    if (!tight) composeMenu.close();
+  }
+  new ResizeObserver(fitCompose).observe(compose);
+
+  const topbar = document.querySelector(".topbar");
+  const toolRail = topbar.querySelector(".tool-rail");
+  const statusBtn = $("status");
+  const toolMenu = window.kostompOverflowMenu($("tool-more"), $("tool-menu"), () =>
+    [...toolRail.querySelectorAll(".tool-btn")].map((button) => ({ button, label: button.getAttribute("aria-label").replace(/ paneli$/, "") })),
+  "right");
+  /** Laid-out width of a flex row's visible children plus the gaps between them. */
+  function rowWidth(row) {
+    const kids = [...row.children].filter((c) => c.offsetWidth > 0);
+    const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+    return kids.reduce((sum, c) => sum + c.offsetWidth, 0) + gap * Math.max(0, kids.length - 1);
+  }
+  function fitToolRail() {
+    toolRail.classList.remove("compact");
+    // The titlebar is `1fr auto 1fr`: each side gets half of what the status pill leaves at its natural width.
+    statusBtn.style.width = "max-content";
+    const center = statusBtn.offsetWidth;
+    statusBtn.style.width = "";
+    const cs = getComputedStyle(topbar);
+    const inner = topbar.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const side = (inner - center - 2 * (parseFloat(cs.columnGap) || 0)) / 2;
+    const tight = rowWidth(topbar.querySelector(".tb-l")) > side || rowWidth(topbar.querySelector(".tb-r")) > side;
+    toolRail.classList.toggle("compact", tight);
+    if (!tight) toolMenu.close();
+  }
+  // The status pill's text changes width (title, timer), so it is watched too.
+  const railObserver = new ResizeObserver(fitToolRail);
+  railObserver.observe(topbar);
+  railObserver.observe(statusBtn);
+
+  // ---- resizable sidebar: drag the gap after it (double-click resets, arrows step). Dragging it under half
+  // the minimum folds it to the rail, dragging the rail out unfolds it. Moves are coalesced to one write per
+  // frame and the width is stored only when the drag ends. CSS clamps it to the window (50vw).
+  const sideResize = $("side-resize");
+  const SIDE_W_KEY = "kostomp-sidebar-w";
+  const SIDE_MIN = 240;
+  const SIDE_DEFAULT = 332;
+  const SIDE_STEP = 16;
+  const sideMax = () => Math.max(SIDE_MIN, Math.floor(window.innerWidth / 2));
+  let sideWidth = Number(localStorage.getItem(SIDE_W_KEY)) || 0; // 0: the CSS default
+  function applySideWidth() {
+    if (sideWidth > 0) sidebar.style.setProperty("--side-w", sideWidth + "px");
+    else sidebar.style.removeProperty("--side-w");
+    sideResize.setAttribute("aria-valuenow", String(sideWidth || SIDE_DEFAULT));
+  }
+  function saveSideWidth() {
+    try { localStorage.setItem(SIDE_W_KEY, String(sideWidth)); } catch {}
+  }
+  applySideWidth();
+  sideResize.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    sideResize.setPointerCapture(e.pointerId);
+    sideResize.classList.add("active");
+    document.body.classList.add("side-resizing");
+    const left = sidebar.getBoundingClientRect().left;
+    const max = sideMax();
+    let x = e.clientX;
+    let frame = 0;
+    const paint = () => {
+      frame = 0;
+      const w = x - left;
+      const folded = sidebar.classList.contains("collapsed");
+      if (w < SIDE_MIN / 2) {
+        if (!folded) setSidebar(true);
+        return;
+      }
+      if (folded) setSidebar(false);
+      sideWidth = Math.round(Math.min(max, Math.max(SIDE_MIN, w)));
+      applySideWidth();
+    };
+    const move = (ev) => {
+      x = ev.clientX;
+      frame ||= requestAnimationFrame(paint);
+    };
+    const up = () => {
+      if (frame) { cancelAnimationFrame(frame); paint(); }
+      sideResize.classList.remove("active");
+      document.body.classList.remove("side-resizing");
+      sideResize.removeEventListener("pointermove", move);
+      sideResize.removeEventListener("pointerup", up);
+      sideResize.removeEventListener("pointercancel", up);
+      saveSideWidth();
+    };
+    sideResize.addEventListener("pointermove", move);
+    sideResize.addEventListener("pointerup", up);
+    sideResize.addEventListener("pointercancel", up);
+  });
+  sideResize.addEventListener("dblclick", () => {
+    sideWidth = 0;
+    setSidebar(false);
+    applySideWidth();
+    saveSideWidth();
+  });
+  sideResize.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const grow = e.key === "ArrowRight";
+    if (sidebar.classList.contains("collapsed")) {
+      if (grow) setSidebar(false);
+      return;
+    }
+    const next = (sideWidth || SIDE_DEFAULT) + (grow ? SIDE_STEP : -SIDE_STEP);
+    if (next < SIDE_MIN) { setSidebar(true); return; }
+    sideWidth = Math.min(sideMax(), next);
+    applySideWidth();
+    saveSideWidth();
   });
 
   // ---- persistence: sessions + named layouts survive a restart -------------------------------
@@ -173,7 +358,9 @@
     const data = {
       v: 1,
       nextSid,
+      nextPid,
       sessions: [...sessions.values()].map((s) => ({ sid: s.sid, cwd: s.cwd, name: s.name, sessionFile: s.sessionFile })),
+      panels: [...panels.values()].map((p) => ({ sid: p.sid, kind: p.kind, cwd: p.cwd, name: p.name, state: p.api.serialize?.() ?? p.state ?? null })),
       layouts,
       active: activeLayout,
     };
@@ -190,46 +377,110 @@
   // like any chat. Detached here; the layout mounts it into whichever pane shows it.
   const LIST_SID = "sessions";
   const GRAPHS_SID = "graphs";
+  const DESIGNS_SID = "designs";
   const savedEl = $("saved");
+  let savedStale = false; // a list refresh landed while the panel was not mounted
   const graphsEl = $("graphs-panel");
+  const designsEl = $("designs-panel");
   savedEl.remove();
   savedEl.hidden = false;
   graphsEl.remove();
   graphsEl.hidden = false;
-  // graph.js loads after this detaches the panel, so document lookups would miss it.
+  designsEl.remove();
+  designsEl.hidden = false;
+  // graph.js and design.js load after this detaches the panels, so document lookups would miss them.
   window.KostompGraphsPanel = graphsEl;
+  window.KostompDesignsPanel = designsEl;
   let lastChatSid = null; // the chat that last had focus (the list panes have none)
-  const isPanel = (sid) => sid === LIST_SID || sid === GRAPHS_SID;
+  let shownSid = null; // the focused sid onFocus last handled
+  let nextPid = 0;
+  const panelStrip = $("panel-tabs");
+  const sidePanels = $("side-panels");
+  const PANEL_KINDS = ["terminal", "changes", "browser", "files"];
+  const PANEL_TITLES = { terminal: "Terminal", changes: "Değişiklikler", browser: "Tarayıcı", files: "Dosyalar" };
+  const PANEL_COLORS = { terminal: "#19c9a0", changes: "#f5a60b", browser: "#3d9bff", files: "#6d4aff" };
+  const PANEL_BADGES = { terminal: ">_", changes: "±", browser: "🌐", files: "📁" };
+  const isListPanel = (sid) => sid === LIST_SID || sid === GRAPHS_SID || sid === DESIGNS_SID;
+  const isPanel = (sid) => isListPanel(sid) || panels.has(sid);
   const isTab = (sid) => isPanel(sid) || sessions.has(sid);
 
+  const activeCwd = (fromSid) => {
+    const at = fromSid ?? layout?.focused;
+    return sessions.get(at)?.api.cwd ?? panels.get(at)?.cwd ?? sessions.get(lastChatSid)?.api.cwd ?? [...sessions.values()][0]?.api.cwd ?? null;
+  };
+
   layout = createLayout($("workspace"), {
-    sessionEl: (sid) => (sid === LIST_SID ? savedEl : sid === GRAPHS_SID ? graphsEl : sessions.get(sid)?.api.el),
+    sessionEl: (sid) => (sid === LIST_SID ? savedEl : sid === GRAPHS_SID ? graphsEl : sid === DESIGNS_SID ? designsEl : sessions.get(sid)?.api.el ?? panels.get(sid)?.api.el),
     onFocus: () => {
       document.dispatchEvent(new CustomEvent("kostomp-chat-shown"));
       if (sessions.has(layout.focused)) lastChatSid = layout.focused;
+      // Every commit reports focus, also when it stayed put; a panel's onShow re-reads git / the disk.
+      if (layout.focused !== shownSid) {
+        shownSid = layout.focused;
+        panels.get(shownSid)?.api.onShow?.();
+      }
       paintTabs();
       paintTopStatus();
-      $("sessions-open").classList.toggle("active", layout.focused === LIST_SID);
-      $("graphs-toggle").classList.toggle("active", layout.focused === GRAPHS_SID);
+      const focusedKind = panels.get(layout.focused)?.kind;
+      for (const k of PANEL_KINDS) $(k + "-open")?.classList.toggle("active", focusedKind === k);
     },
-    onChange: () => { paintTabs(); save(); },
-    split: (sid, zone) => newSession(sid, zone),
-    pinned: isPanel,
+    // Only refreshSaved sets savedStale, so the saved-list bindings exist whenever this paints.
+    onChange: () => {
+      for (const sid of layout.visible()) sessions.get(sid)?.api?.ensureStarted();
+      paintTabs();
+      save();
+      if (savedStale && savedEl.isConnected) paintSaved();
+    },
+    split: (sid, zone) => {
+      const p = panels.get(sid);
+      if (p) return newPanel(p.kind, sid, zone);
+      return newSession(sid, zone);
+    },
+    resolveDrop: (raw) => {
+      if (typeof raw === "string" && raw.startsWith("new:")) {
+        const kind = raw.slice(4);
+        if (PANEL_KINDS.includes(kind)) return addPanel({ kind, cwd: activeCwd() }).sid;
+      }
+      return raw;
+    },
+    pinned: isListPanel,
   });
   layout.setMeta(LIST_SID, { title: "Sessions" });
   layout.setMeta(GRAPHS_SID, { title: "Graphs" });
-  $("graphs-toggle").addEventListener("click", () => layout.show(GRAPHS_SID));
-  $("sessions-open").addEventListener("click", () => {
-    layout.show(LIST_SID);
-    refreshSaved();
-    savedEl.querySelector("input")?.focus();
-  });
-  /** Bring a chat into view; from the list pane it opens beside the list instead of replacing it. */
+  layout.setMeta(DESIGNS_SID, { title: "Designs" });
+  for (const kind of PANEL_KINDS) {
+    const btn = $(kind + "-open");
+    if (!btn) continue;
+    layout.makeDraggable(btn, "new:" + kind);
+    btn.addEventListener("click", (e) => {
+      if (e.shiftKey || e.ctrlKey || e.metaKey) {
+        newPanel(kind, layout.focused, "right");
+        return;
+      }
+      const focused = panels.get(layout.focused);
+      if (focused?.kind === kind) {
+        newPanel(kind, layout.focused, "right");
+        return;
+      }
+      const existing = [...panels.values()].find((p) => p.kind === kind && layout.has(p.sid)) ?? [...panels.values()].find((p) => p.kind === kind);
+      if (existing) {
+        placeItem(existing.sid);
+        existing.api.focus?.();
+      } else {
+        newPanel(kind, layout.focused, layout.focused ? "right" : null);
+      }
+    });
+  }
+  /** Bring a chat or panel into view; from a list pane (or when opening a tool panel over a chat) it splits beside it. */
+  function placeItem(sid, defaultZone = "right") {
+    if (layout.has(sid)) layout.show(sid);
+    else if (defaultZone && layout.focused) layout.drop(sid, layout.focused, defaultZone);
+    else layout.show(sid);
+  }
   function placeChat(sid) {
-    if (layout.has(sid) || !isPanel(layout.focused)) layout.show(sid);
+    if (layout.has(sid) || !isListPanel(layout.focused)) layout.show(sid);
     else layout.drop(sid, layout.focused, "right");
   }
-
   const baseName = (p) => (p ? p.split(/[\\/]/).filter(Boolean).pop() || p : "session");
   function retitle() {
     // Same folder in several sessions: number them so tabs and pane headers stay tellable apart.
@@ -240,15 +491,33 @@
       seen.set(base, n);
       // A name typed on the tab wins over the one omp reports (session name / extension setTitle).
       s.title = s.name ?? s.autoTitle ?? (n > 1 ? `${base} ${n}` : base);
-      s.label.textContent = s.title;
-      s.avatar.textContent = (Array.from(s.title.trim())[0] ?? "?").toLocaleUpperCase();
+      s.label.textContent = (window.kostompFavs.any(s.sessionFile) ? "★ " : "") + s.title;
       s.tab.title = s.cwd ? `${s.cwd} — drag onto the workspace to split` : "starting…";
       layout.setMeta(s.sid, { title: s.title });
     }
+    retitlePanels();
     groupTabs();
     save();
   }
-  const groupHeads = new Map(); // cwd -> header element
+  function retitlePanels() {
+    const counts = new Map();
+    for (const p of panels.values()) {
+      const n = (counts.get(p.kind) ?? 0) + 1;
+      counts.set(p.kind, n);
+      const base = PANEL_TITLES[p.kind] ?? p.kind;
+      const folder = p.cwd ? baseName(p.cwd) : "";
+      const sub = p.subTitle || folder;
+      const auto = n > 1 ? `${base} ${n}` : base;
+      p.title = p.name ?? (sub ? `${auto} · ${sub}` : auto);
+      p.label.textContent = p.title;
+      p.tab.title = `${p.title}${p.cwd ? "\n" + p.cwd : ""} — bölmek için çalışma alanına sürükleyin`;
+      layout.setMeta(p.sid, { title: p.title, status: p.statusKind ?? "" });
+    }
+    if (sidePanels) sidePanels.hidden = panels.size === 0;
+    filterSide();
+    paintTopStatus();
+  }
+  const groupEls = new Map(); // cwd -> { head, body, rows }
   const COLLAPSED_KEY = "kostomp-collapsed-projects";
   const collapsed = new Set((() => { try { return JSON.parse(localStorage.getItem(COLLAPSED_KEY)) ?? []; } catch { return []; } })());
   function setCollapsed(key, on) {
@@ -256,6 +525,14 @@
     try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed])); } catch {}
     groupTabs();
   }
+  /** Stable swatch color per project folder. */
+  const groupColor = (key) => {
+    let h = 0;
+    for (const ch of key) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    return AVATAR_COLORS[h % AVATAR_COLORS.length];
+  };
+  const GROUP_CHEV = '<svg class="stab-group-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+  let groupSeq = 0;
   /** Sidebar order: one header per project folder, its tabs underneath (first-opened project first).
    *  Clicking a header folds its tabs; its + opens a new chat in that project. */
   function groupTabs() {
@@ -265,29 +542,31 @@
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(s);
     }
-    for (const [key, head] of groupHeads) {
+    for (const [key, g] of groupEls) {
       if (groups.has(key)) continue;
-      head.remove();
-      groupHeads.delete(key);
+      g.head.remove();
+      g.body.remove();
+      groupEls.delete(key);
     }
     for (const [key, rows] of groups) {
-      let head = groupHeads.get(key);
-      if (!head) {
-        head = document.createElement("div");
+      let g = groupEls.get(key);
+      if (!g) {
+        const head = document.createElement("div");
         head.className = "stab-group";
         head.setAttribute("role", "button");
         head.tabIndex = 0;
-        const chev = document.createElement("span");
-        chev.className = "stab-group-chev";
-        chev.setAttribute("aria-hidden", "true");
-        chev.textContent = "▾";
-        const name = document.createElement("span");
-        name.className = "stab-group-name";
+        head.innerHTML = GROUP_CHEV + '<span class="stab-group-sw" aria-hidden="true"></span><span class="stab-group-name"></span><span class="stab-group-ct"></span>';
         const add = document.createElement("button");
         add.type = "button";
         add.className = "stab-group-add";
         add.textContent = "+";
-        head.append(chev, name, add);
+        head.append(add);
+        const body = document.createElement("div");
+        body.className = "stab-rows";
+        body.id = "stab-rows-" + ++groupSeq;
+        head.setAttribute("aria-controls", body.id);
+        const inner = document.createElement("div");
+        body.append(inner);
         const toggle = () => setCollapsed(head.dataset.key, !collapsed.has(head.dataset.key));
         head.addEventListener("click", (e) => {
           if (e.target === add) return;
@@ -306,38 +585,271 @@
           placeChat(entry.sid);
           entry.api.focus();
         });
-        groupHeads.set(key, head);
+        g = { head, body, rows: inner };
+        groupEls.set(key, g);
       }
+      const { head, body } = g;
       head.dataset.key = key;
+      head.style.setProperty("--c", key ? groupColor(key) : "var(--ink-3)");
       const isCollapsed = collapsed.has(key);
-      head.classList.toggle("collapsed", isCollapsed);
       head.setAttribute("aria-expanded", String(!isCollapsed));
+      body.classList.toggle("shut", isCollapsed);
+      body.inert = isCollapsed;
       head.querySelector(".stab-group-name").textContent = key ? baseName(key) : "starting…";
+      head.querySelector(".stab-group-ct").textContent = String(rows.length);
       const add = head.querySelector(".stab-group-add");
       add.hidden = !key;
       add.title = `New chat in ${baseName(key)}`;
       add.setAttribute("aria-label", add.title);
       head.title = key;
-      for (const s of rows) s.tab.hidden = isCollapsed;
-      strip.append(head, ...rows.map((s) => s.tab));
+      g.rows.append(...rows.map((s) => s.tab));
+      strip.append(head, body);
+    }
+    filterSide();
+  }
+
+  // ---- sidebar library: Sessions | Graphs | Designs switch the list under the segment. Clicking the
+  // selected one again opens its full list as a tab (graph.js / design.js refresh theirs on that click).
+  const seg = $("side-seg");
+  const segTabs = [$("sessions-open"), $("graphs-toggle"), $("designs-toggle")];
+  const sideSearch = $("side-search");
+  const graphOpen = $("graph-open");
+  const designOpen = $("design-open");
+  const SIDE_VIEW_KEY = "kostomp-side-view";
+  const SEARCH_HINTS = ["Search chats", "Search graphs", "Search designs"];
+  let sideView = 0;
+  const viewOf = (tab) => $(tab.getAttribute("aria-controls"));
+  const emptyOf = (tab) => viewOf(tab).querySelector(".side-empty");
+  for (const tab of segTabs) emptyOf(tab).dataset.none = emptyOf(tab).textContent;
+  function setSideView(i, persist = true) {
+    sideView = i;
+    segTabs.forEach((tab, j) => {
+      tab.setAttribute("aria-selected", String(i === j));
+      tab.tabIndex = i === j ? 0 : -1;
+      viewOf(tab).hidden = i !== j;
+    });
+    seg.style.setProperty("--i", String(i));
+    sideSearch.placeholder = SEARCH_HINTS[i];
+    sideSearch.setAttribute("aria-label", SEARCH_HINTS[i]);
+    filterSide();
+    if (persist) try { localStorage.setItem(SIDE_VIEW_KEY, String(i)); } catch {}
+  }
+  /** Applies the search box to every view and shows each view's empty line when nothing is left. */
+  function filterSide() {
+    const q = sideSearch.value.trim().toLocaleLowerCase();
+    const hit = (text) => !q || text.toLocaleLowerCase().includes(q);
+    let chats = 0;
+    for (const s of sessions.values()) {
+      const ok = hit(s.title + "\n" + (s.cwd ? baseName(s.cwd) : ""));
+      s.tab.classList.toggle("filtered", !ok);
+      if (ok) chats++;
+    }
+    for (const g of groupEls.values()) {
+      const any = !!g.rows.querySelector(".stab:not(.filtered)");
+      g.head.hidden = !any;
+      g.body.hidden = !any;
+    }
+    for (const p of panels.values()) {
+      const ok = hit(p.title);
+      p.tab.classList.toggle("filtered", !ok);
+      if (ok) chats++;
+    }
+    emptyOf(segTabs[0]).hidden = chats > 0 || !q;
+    [graphOpen, designOpen].forEach((list, i) => {
+      let shown = 0;
+      for (const item of list.children) {
+        const ok = hit(item.textContent);
+        item.hidden = !ok;
+        if (ok) shown++;
+      }
+      const empty = emptyOf(segTabs[i + 1]);
+      empty.textContent = list.children.length ? "No matches." : empty.dataset.none;
+      empty.hidden = shown > 0;
+      const count = $(i ? "designs-count" : "graphs-count");
+      count.textContent = String(list.children.length);
+      count.hidden = list.children.length === 0;
+    });
+  }
+  segTabs.forEach((tab, i) => tab.addEventListener("click", (e) => {
+    if (sideView !== i) {
+      // graph.js / design.js open their full list on this click; switching views must not.
+      e.stopImmediatePropagation();
+      setSideView(i);
+      return;
+    }
+    if (i === 1) layout.show(GRAPHS_SID);
+    else if (i === 2) layout.show(DESIGNS_SID);
+    else {
+      layout.show(LIST_SID);
+      refreshSaved();
+      savedEl.querySelector("input")?.focus();
+    }
+  }));
+  seg.addEventListener("keydown", (e) => {
+    const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+    let next = e.key === "Home" ? 0 : e.key === "End" ? 2 : e.key in keys ? (sideView + keys[e.key] + 3) % 3 : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    setSideView(next);
+    segTabs[next].focus();
+  });
+  for (const list of [graphOpen, designOpen]) new MutationObserver(filterSide).observe(list, { childList: true });
+  sideSearch.addEventListener("input", filterSide);
+  sideSearch.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && sideSearch.value) {
+      e.preventDefault();
+      e.stopPropagation();
+      sideSearch.value = "";
+      filterSide();
+    } else if (e.key === "Enter") {
+      // Enter opens the first match of the current view.
+      e.preventDefault();
+      const view = viewOf(segTabs[sideView]);
+      const first = sideView === 0
+        ? [...view.querySelectorAll(".stab:not(.filtered)")].find((t) => !t.closest("[inert]"))
+        : view.querySelector("li:not([hidden]) button[data-run], li:not([hidden]) button[data-board]");
+      first?.click();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== "KeyK" || $("chat").hidden) return;
+    if (e.target instanceof Element && e.target.closest(".term-wrap")) return; // the terminal owns Ctrl+K
+    e.preventDefault();
+    if (sidebar.classList.contains("collapsed")) setSidebar(false);
+    sideSearch.focus();
+    sideSearch.select();
+  });
+  setSideView(Math.min(2, Math.max(0, Number(localStorage.getItem(SIDE_VIEW_KEY)) || 0)), false);
+
+  /** Compact age of the last turn, as in the sidebar mockup: şimdi, 12dk, 3s, 2g. */
+  function sideAgo(at) {
+    const m = Math.floor((Date.now() - at) / 60000);
+    if (m < 1) return "şimdi";
+    if (m < 60) return m + "dk";
+    const h = Math.floor(m / 60);
+    return h < 24 ? h + "s" : Math.floor(h / 24) + "g";
+  }
+  function paintTime(s) {
+    const busy = s.badge.dataset.state === "busy";
+    s.time.hidden = busy;
+    if (!busy) s.time.textContent = sideAgo(s.lastAt);
+  }
+  setInterval(() => { for (const s of sessions.values()) paintTime(s); }, 30000);
+  const STATE_COLOR = { busy: "var(--accent)", ok: "var(--ok)", bad: "var(--bad)" };
+  /** m:ss since the session's current state began (lastAt moves on every kind change). */
+  const elapsed = (s) => {
+    const sec = Math.max(0, Math.floor((Date.now() - s.lastAt) / 1000));
+    return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+  };
+  /** A full-pane view (Design) that owns the titlebar while on screen: { title, cwd, status: { kind, text } }. */
+  let topOverride = null;
+  window.kostompTopStatus = (override) => {
+    topOverride = override;
+    paintTopStatus();
+  };
+  /** The titlebar vessel: the pane view on screen, else the focused chat or panel, its folder, and its state (the liquid level follows the kind). */
+  function paintTopStatus() {
+    const s = topOverride ? null : sessions.get(layout?.focused);
+    const p = topOverride ? null : panels.get(layout?.focused);
+    const item = topOverride ?? s ?? p;
+    const st = item?.status ?? null;
+    const text = (st?.text ?? "") + (s && st?.kind === "busy" ? " " + elapsed(s) : "");
+    statusTitle.textContent = item?.title ?? "Kostomp";
+    statusSub.textContent = item?.cwd ?? "";
+    statusText.textContent = text;
+    statusText.hidden = !text;
+    statusBox.className = "status" + (st?.kind ? " " + st.kind : "");
+    statusBox.setAttribute("aria-label", `Sessions: ${statusTitle.textContent}${text ? ", " + text : ""}`);
+  }
+  setInterval(() => { if (sessions.get(layout?.focused)?.status.kind === "busy") paintTopStatus(); }, 1000);
+  /** Subtitle text shared by the sidebar row and the titlebar popup: a question, an unseen reply, else the status. */
+  function sessionLabel(s) {
+    if (s.asking !== null) return s.asking;
+    return s.status.kind !== "busy" && s.status.kind !== "bad" && s.unseen ? "New reply" : s.status.text;
+  }
+  function paintSessionMenu() {
+    const heading = document.createElement("h3");
+    heading.textContent = "Sessions";
+    sessionMenu.replaceChildren(heading);
+    for (const s of sessions.values()) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "sm-item";
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", String(s.sid === layout.focused));
+      row.style.setProperty("--c", STATE_COLOR[s.status.kind] ?? "var(--ink-3)");
+      const dot = document.createElement("i");
+      const text = document.createElement("div");
+      const title = document.createElement("b");
+      title.textContent = s.title;
+      const sub = document.createElement("span");
+      sub.textContent = s.cwd ?? "";
+      text.append(title, sub);
+      const state = document.createElement("small");
+      state.textContent = sessionLabel(s);
+      row.append(dot, text, state);
+      row.addEventListener("click", () => {
+        toggleSessionMenu(false);
+        showView("chat");
+        placeChat(s.sid);
+        s.api.focus();
+      });
+      sessionMenu.append(row);
     }
   }
-  function paintTopStatus() {
-    const s = sessions.get(layout.focused);
-    statusBox.textContent = s ? s.status.text : "";
-    statusBox.className = "status" + (s?.status.kind ? " " + s.status.kind : "");
+  function toggleSessionMenu(open) {
+    const next = open === undefined ? sessionMenu.hidden : open;
+    if (next === !sessionMenu.hidden) return;
+    sessionMenu.hidden = !next;
+    statusBox.setAttribute("aria-expanded", String(next));
+    if (!next) return;
+    if (!layoutMenu.hidden) toggleLayoutMenu(false);
+    paintSessionMenu();
+    (sessionMenu.querySelector("[aria-selected=true]") ?? sessionMenu.querySelector(".sm-item"))?.focus();
   }
-  /** Avatar border: coral for a waiting question, amber while working, green for an unseen reply, red on error. */
+  statusBox.addEventListener("click", () => toggleSessionMenu());
+  document.addEventListener("pointerdown", (e) => {
+    if (!sessionMenu.hidden && !e.target.closest("#status, #session-menu")) toggleSessionMenu(false);
+  });
+  /** Arrow keys walk an open titlebar popover's rows; Escape closes it and returns focus to its button. */
+  document.addEventListener("keydown", (e) => {
+    const menu = !sessionMenu.hidden ? sessionMenu : !layoutMenu.hidden ? layoutMenu : null;
+    if (!menu || !menu.contains(document.activeElement)) return;
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const rows = [...menu.querySelectorAll(".sm-item, .layout-item")];
+    const i = rows.indexOf(document.activeElement);
+    rows[(i + (e.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length]?.focus();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !sessionMenu.hidden) { toggleSessionMenu(false); statusBox.focus(); }
+  });
+  /** Status dot and row subtitle: a waiting question, a turn in flight (typing dots), an unseen reply, an error. */
   function paintSessionStatus(s) {
     const kind = s.status.kind;
     const state = s.asking !== null ? "ask" : kind === "busy" ? "busy" : kind === "bad" ? "bad" : s.unseen ? "ok" : "idle";
-    s.avatar.dataset.state = state;
-    s.avatar.title = s.asking ?? s.status.text;
+    s.badge.dataset.state = state;
+    s.badge.title = s.asking ?? s.status.text;
+    s.sub.replaceChildren();
+    if (state === "busy") {
+      const dots = document.createElement("span");
+      dots.className = "typing";
+      dots.setAttribute("aria-hidden", "true");
+      dots.append(document.createElement("i"), document.createElement("i"), document.createElement("i"));
+      s.sub.append(dots);
+    }
+    s.sub.append(sessionLabel(s));
+    paintTime(s);
+    if (!sessionMenu.hidden) {
+      const at = [...sessionMenu.querySelectorAll(".sm-item")].indexOf(document.activeElement);
+      paintSessionMenu();
+      if (at >= 0) sessionMenu.querySelectorAll(".sm-item")[at]?.focus();
+    }
   }
   function paintTabs() {
-    const showingGraph = $("chat").classList.contains("graph-mode");
-    const focused = showingGraph ? null : layout.focused;
-    const shown = new Set(showingGraph ? [] : layout.visible());
+    const showingPane = $("chat").classList.contains("graph-mode") || $("chat").classList.contains("design-mode");
+    const focused = showingPane ? null : layout.focused;
+    const shown = new Set(showingPane ? [] : layout.visible());
     for (const s of sessions.values()) {
       const selected = s.sid === focused;
       s.tab.classList.toggle("active", selected);
@@ -350,8 +862,17 @@
       if (selected) s.tab.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     strip.classList.toggle("single", sessions.size === 1);
+    for (const p of panels.values()) {
+      const selected = p.sid === focused;
+      p.tab.classList.toggle("active", selected);
+      p.tab.classList.toggle("shown", shown.has(p.sid));
+      p.tab.setAttribute("aria-selected", String(selected));
+    }
+    const focusedKind = focused ? panels.get(focused)?.kind : null;
+    for (const k of PANEL_KINDS) $(k + "-open")?.classList.toggle("active", focusedKind === k);
   }
   document.addEventListener("kostomp-graph-mode", paintTabs);
+  document.addEventListener("kostomp-design-mode", paintTabs);
 
   function addSession(opts) {
     const sid = opts.sid ?? "s" + ++nextSid;
@@ -359,34 +880,32 @@
     tab.className = "stab";
     tab.setAttribute("role", "tab");
     tab.tabIndex = 0;
+    const text = document.createElement("span");
+    text.className = "stab-text";
     const label = document.createElement("span");
     label.className = "stab-label";
+    const sub = document.createElement("span");
+    sub.className = "stab-sub";
+    text.append(label, sub);
+    const time = document.createElement("span");
+    time.className = "stab-time";
     const close = document.createElement("button");
     close.type = "button";
     close.className = "stab-close";
     close.textContent = "×";
     close.setAttribute("aria-label", "Close session");
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "stab-delete";
-    del.textContent = "⌫";
-    del.title = "Delete session permanently";
-    del.setAttribute("aria-label", del.title);
-    del.addEventListener("click", (event) => {
-      event.stopPropagation();
-      void deleteChat(entry.api.sessionFile ?? entry.sessionFile, entry.title, entry);
-    });
-    const avatar = document.createElement("span");
-    avatar.className = "stab-av";
-    avatar.style.setProperty("--c", AVATAR_COLORS[avatarSeq++ % AVATAR_COLORS.length]);
-    avatar.setAttribute("aria-hidden", "true");
-    tab.append(avatar, label, del, close);
-    const entry = { sid, tab, label, avatar, cwd: null, title: "session", name: opts.name ?? null, autoTitle: null, sessionFile: opts.sessionFile ?? null, fresh: opts.resume === false, status: { text: "starting…" }, unseen: false, asking: null, api: null };
+    const badge = document.createElement("span");
+    badge.className = "stab-dot";
+    badge.setAttribute("aria-hidden", "true");
+    tab.append(badge, text, time, close);
+    const entry = { sid, tab, label, sub, time, badge, cwd: typeof opts.cwd === "string" && opts.cwd.trim() ? opts.cwd : null, title: "session", name: opts.name ?? null, autoTitle: null, sessionFile: opts.sessionFile ?? null, fresh: opts.resume === false, status: { text: "not started" }, lastAt: Date.now(), unseen: false, asking: null, api: null };
     sessions.set(sid, entry);
-    strip.insertBefore(tab, $("session-add"));
+    paintSessionStatus(entry);
+    strip.append(tab);
     entry.api = createSession(sid, {
       status(text, kind) {
         const wasBusy = entry.status.kind === "busy";
+        if (kind !== entry.status.kind) entry.lastAt = Date.now();
         entry.status = { text, kind };
         if (wasBusy && kind !== "busy" && layout.focused !== sid) entry.unseen = true;
         if (layout.focused === sid) entry.unseen = false;
@@ -397,6 +916,7 @@
           markAttention(sid);
           if (kind === "ok") notifyReply(entry);
           refreshSavedSoon();
+          window.kostompRefreshAccounts?.(); // the turn may have rotated to another account
         }
       },
       /** A dialog/ask is waiting (`text` = what it asks) or was closed (`null`). */
@@ -431,6 +951,7 @@
         if (!file || file === entry.sessionFile) return;
         entry.sessionFile = file;
         save();
+        retitle(); // the new file may carry favourite answers
         refreshSavedSoon();
       },
     }, opts);
@@ -438,12 +959,15 @@
     tab.addEventListener("click", (e) => {
       if (e.target.closest("button")) return;
       layout.show(sid);
+      window.kostompRefreshAccounts?.(); // each session pins its own account
       entry.api.focus();
     });
     tab.addEventListener("keydown", (e) => {
       if (e.target !== tab) return;
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); layout.show(sid); entry.api.focus(); }
     });
+    // Cancel the middle-button mousedown so Windows does not start autoscroll once the sidebar scrolls.
+    tab.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); });
     tab.addEventListener("auxclick", (e) => {
       if (e.button !== 1) return;
       e.preventDefault();
@@ -503,7 +1027,7 @@
     if (!entry || sessions.size === 1) return; // the last session stays: the app always has a chat
     const order = [...sessions.keys()];
     const next = order[order.indexOf(sid) + 1] ?? order[order.indexOf(sid) - 1];
-    if (!stopped) invoke("rpc_stop", { id: sid }).catch(() => {});
+    if (!stopped) window.KostompRpcLifecycle.stop(sid).catch(() => {});
     entry.api.dispose();
     sessions.delete(sid);
     entry.tab.remove();
@@ -514,6 +1038,123 @@
     paintTabs();
     paintTopStatus();
     focusChat();
+  }
+  function addPanel(opts) {
+    const kind = PANEL_KINDS.includes(opts.kind) ? opts.kind : "terminal";
+    const sid = opts.sid ?? "p" + ++nextPid;
+    const tab = document.createElement("div");
+    tab.className = "stab panel-stab";
+    tab.setAttribute("role", "tab");
+    tab.tabIndex = 0;
+    const label = document.createElement("span");
+    label.className = "stab-label";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "stab-close";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Paneli kapat");
+    const avatar = document.createElement("span");
+    avatar.className = "stab-av panel-av";
+    avatar.style.setProperty("--c", PANEL_COLORS[kind] ?? "#6d4aff");
+    avatar.textContent = PANEL_BADGES[kind] ?? "P";
+    avatar.setAttribute("aria-hidden", "true");
+    tab.append(avatar, label, close);
+    const cwd = opts.cwd ?? activeCwd();
+    const entry = {
+      sid,
+      kind,
+      tab,
+      label,
+      avatar,
+      cwd,
+      title: PANEL_TITLES[kind] ?? kind,
+      name: opts.name ?? null,
+      subTitle: "",
+      status: { text: PANEL_TITLES[kind] ?? kind, kind: "ok" },
+      statusKind: "ok",
+      state: opts.state ?? null,
+      api: null,
+    };
+    panels.set(sid, entry);
+    panelStrip?.append(tab);
+    entry.api = window.createWorkspacePanel(sid, kind, {
+      cwd: () => entry.cwd ?? activeCwd(sid),
+      setCwd(nextCwd) {
+        entry.cwd = nextCwd;
+        retitlePanels();
+        save();
+      },
+      subTitle(text) {
+        entry.subTitle = text || "";
+        retitlePanels();
+      },
+      status(text, statusKind = "ok") {
+        entry.status = { text: text || (PANEL_TITLES[kind] ?? kind), kind: statusKind };
+        entry.statusKind = statusKind;
+        layout.setMeta(sid, { status: statusKind });
+        if (layout.focused === sid) paintTopStatus();
+      },
+      save,
+      highlight: (code, lang) => {
+        const s = readySession();
+        if (!s || !lang || !code) return Promise.resolve(null);
+        return s.api.request("highlight_code", { code, lang }, 5000).then((d) => (Array.isArray(d?.tokens) ? d.tokens : null), () => null);
+      },
+    }, { cwd, state: opts.state ?? null });
+    layout.makeDraggable(tab, sid);
+    tab.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      layout.show(sid);
+      entry.api.focus?.();
+    });
+    tab.addEventListener("keydown", (e) => {
+      if (e.target !== tab) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        layout.show(sid);
+        entry.api.focus?.();
+      }
+    });
+    tab.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); });
+    tab.addEventListener("auxclick", (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      closePanel(sid);
+    });
+    close.addEventListener("click", () => closePanel(sid));
+    retitlePanels();
+    paintTabs();
+    save();
+    return entry;
+  }
+
+  function closePanel(sid) {
+    const entry = panels.get(sid);
+    if (!entry) return;
+    entry.api.dispose?.();
+    panels.delete(sid);
+    entry.tab.remove();
+    layout.remove(sid);
+    entry.api.el.remove();
+    if (!layout.visible().length) {
+      const fallback = lastChatSid && sessions.has(lastChatSid) ? lastChatSid : [...sessions.keys()][0];
+      if (fallback) layout.show(fallback);
+    }
+    retitlePanels();
+    paintTabs();
+    paintTopStatus();
+    save();
+    focusChat();
+  }
+
+  function newPanel(kind, from, zone) {
+    const at = from ?? layout.focused;
+    const cwd = activeCwd(at);
+    const entry = addPanel({ kind, cwd });
+    if (zone && isTab(at)) layout.drop(entry.sid, at, zone);
+    else placeItem(entry.sid, zone);
+    entry.api.focus?.();
+    return entry;
   }
 
   /** A fresh session in `from`'s folder. Without a zone it takes the focused pane (the old one keeps
@@ -540,6 +1181,16 @@
     entry.api.focus();
     return entry;
   }
+  /** Open a fresh chat in `cwd` (an empty one already there is reused) and send `prompt` as if typed + Enter. Resolves to the sid. */
+  window.kostompStartChat = async ({ cwd, prompt, name } = {}) => {
+    showView("chat");
+    const entry = openBlank(cwd ?? null) ?? addSession({ cwd: cwd ?? null, resume: false, name: name ?? null });
+    placeChat(entry.sid);
+    entry.api.focus();
+    if (cwd) window.KostompFolders.saveRecent(cwd);
+    await entry.api.submitText(prompt);
+    return entry.sid;
+  };
   $("session-add").addEventListener("click", () => newSession());
   document.addEventListener("keydown", (e) => {
     if ($("chat").hidden) return;
@@ -553,9 +1204,22 @@
       newSession();
       return;
     }
+    if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === "Backquote") {
+      e.preventDefault();
+      newPanel("terminal", layout.focused, e.shiftKey ? "bottom" : "right");
+      return;
+    }
     if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
     if (e.code === "KeyT") { e.preventDefault(); newSession(); }
-    else if (e.code === "Digit5") { e.preventDefault(); newSession(layout.focused, "right"); }
+    else if (e.code === "Digit5") {
+      e.preventDefault();
+      const p = panels.get(layout.focused);
+      if (p) newPanel(p.kind, layout.focused, "right");
+      else newSession(layout.focused, "right");
+    }
+    else if (e.code === "KeyG") { e.preventDefault(); newPanel("changes", layout.focused, "right"); }
+    else if (e.code === "KeyB") { e.preventDefault(); newPanel("browser", layout.focused, "right"); }
+    else if (e.code === "KeyE") { e.preventDefault(); newPanel("files", layout.focused, "right"); }
   });
 
   // ---- named layouts: Alt+L cycles, the strip button opens the list ---------------------------
@@ -659,7 +1323,9 @@
     layoutBtn.title = "Layouts (Alt+L switches)";
   }
   function paintLayoutMenu() {
-    layoutMenu.replaceChildren();
+    const heading = document.createElement("h3");
+    heading.textContent = "Layouts";
+    layoutMenu.replaceChildren(heading);
     for (const l of layouts) {
       const row = document.createElement("div");
       row.className = "layout-item" + (l.id === activeLayout ? " on" : "");
@@ -741,12 +1407,17 @@
     const next = open === undefined ? layoutMenu.hidden : open;
     layoutMenu.hidden = !next;
     layoutBtn.setAttribute("aria-expanded", String(next));
-    if (next) paintLayoutMenu();
-    else focusChat();
+    if (next) {
+      if (!sessionMenu.hidden) toggleSessionMenu(false);
+      // Body-level popover (so it refracts like the bar): pin its right edge under the button.
+      layoutMenu.style.right = Math.max(12, innerWidth - layoutBtn.getBoundingClientRect().right) + "px";
+      paintLayoutMenu();
+      layoutMenu.querySelector(".layout-item[aria-checked=true]")?.focus();
+    } else focusChat();
   }
   layoutBtn.addEventListener("click", () => toggleLayoutMenu());
   document.addEventListener("pointerdown", (e) => {
-    if (!layoutMenu.hidden && !e.target.closest(".layout-anchor")) toggleLayoutMenu(false);
+    if (!layoutMenu.hidden && !e.target.closest(".layout-anchor, #layout-menu")) toggleLayoutMenu(false);
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !layoutMenu.hidden) { toggleLayoutMenu(false); layoutBtn.focus(); }
@@ -758,7 +1429,15 @@
     for (const s of saved.sessions) {
       addSession({ sid: s.sid, cwd: s.cwd ?? null, name: s.name ?? null, sessionFile: s.sessionFile ?? null, resume: s.sessionFile ?? false });
     }
+    if (Array.isArray(saved.panels)) {
+      for (const p of saved.panels) {
+        if (p && typeof p.sid === "string" && PANEL_KINDS.includes(p.kind)) {
+          addPanel({ sid: p.sid, kind: p.kind, cwd: p.cwd ?? null, name: p.name ?? null, state: p.state ?? null });
+        }
+      }
+    }
     nextSid = Math.max(Number(saved.nextSid) || 0, ...[...sessions.keys()].map((k) => Number(k.slice(1)) || 0));
+    nextPid = Math.max(Number(saved.nextPid) || 0, ...[...panels.keys()].map((k) => Number(k.slice(1)) || 0));
     layouts = (Array.isArray(saved.layouts) ? saved.layouts : []).filter((l) => l && typeof l.id === "string" && typeof l.name === "string");
     layoutSeq = Math.max(0, ...layouts.map((l) => Number(l.id.slice(1)) || 0));
     activeLayout = layouts.some((l) => l.id === saved.active) ? saved.active : layouts[0]?.id ?? null;
@@ -779,7 +1458,7 @@
   if (!$("chat").hidden) sessions.get(layout.focused)?.api.focus();
 
   // ---- bridge for settings.js (talks to omp through whichever session has focus) -------------
-  const current = () => sessions.get(layout.focused) ?? sessions.get(lastChatSid) ?? sessions.values().next().value;
+  const current = () => sessions.get(layout.focused) ?? sessions.get(lastChatSid) ?? sessions.get(layout.visible().find((sid) => sessions.has(sid))) ?? sessions.values().next().value;
   let loginApi = null; // the session running `login`, so a cancel reaches the same omp
   window.kostompRpc = {
     request: (type, params, timeoutMs) => current().api.request(type, params, timeoutMs),
@@ -820,22 +1499,28 @@
     },
   };
 
-  // ---- sidebar: stored Claude (anthropic) accounts, the one this session uses is marked -------
+  // ---- sidebar footer: stored Claude (anthropic) accounts. The connected one is the footer button;
+  // it unfolds the others above it, and a click on one pins it to the session. ---------------------
   const acctBox = $("side-accounts");
   const acctList = $("side-accounts-list");
+  const acctMenu = $("side-accounts-menu");
+  const acctBtn = $("side-acct");
   let acctBusy = false;
+  let acctAgain = false;
   let acctSwitchPending = false;
-  const acctPill = document.createElement("span"); // sliding "switch" highlight behind the connected row
-  acctPill.className = "sacct-pill";
-  function placePill(row) {
-    if (!row) { acctPill.style.opacity = "0"; return; }
-    acctPill.style.height = row.offsetHeight + "px";
-    acctPill.style.transform = "translateY(" + row.offsetTop + "px)";
-    acctPill.style.opacity = "1";
+  function setAcctMenu(open) {
+    acctBtn.setAttribute("aria-expanded", String(open));
+    acctMenu.classList.toggle("open", open);
+    acctMenu.inert = !open;
   }
+  setAcctMenu(false);
+  acctBtn.addEventListener("click", () => {
+    if (acctList.childElementCount) setAcctMenu(acctBtn.getAttribute("aria-expanded") !== "true");
+  });
+  const initial = (label) => label.trim().charAt(0).toUpperCase() || "?";
   let acctRetry = 0;
   async function refreshAccounts() {
-    if (acctBusy) return;
+    if (acctBusy) { acctAgain = true; return; }
     acctBusy = true;
     try {
       const cur = current();
@@ -848,40 +1533,34 @@
       const list = (Array.isArray(res) ? res : res && Array.isArray(res.accounts) ? res.accounts : [])
         .filter((a) => a && Number.isInteger(a.credentialId) && a.type !== "api_key")
         .sort((a, b) => a.credentialId - b.credentialId);
-      // Keep the highlight mounted so an RPC refresh cannot interrupt its transition.
-      if (acctPill.parentNode !== acctList) acctList.append(acctPill);
-      for (const row of acctList.querySelectorAll(".sacct")) row.remove();
-      let onRow = null;
+      acctList.replaceChildren();
       acctBox.hidden = list.length === 0;
+      let connected = null;
       for (const a of list) {
         const inUse = canPin ? a.credentialId === activeId : !!a.active;
         const info = canPin ? sess.accounts.find((s) => s && s.credentialId === a.credentialId) : null;
         const label = (typeof a.label === "string" && a.label) || info?.email || "account " + a.credentialId;
+        if (inUse && connected === null) { connected = label; continue; }
         const row = document.createElement("button");
         row.type = "button";
-        row.className = "sacct" + (inUse ? " on" : "");
-        if (inUse) onRow = row;
-        row.title = label + (inUse ? " (connected)" : canPin ? " (click to connect)" : "");
+        row.className = "sacct";
+        row.title = label + (canPin ? " (click to connect)" : "");
         const av = document.createElement("span");
         av.className = "sacct-av";
-        av.textContent = label.trim().charAt(0).toUpperCase() || "?";
+        av.setAttribute("aria-hidden", "true");
+        av.textContent = initial(label);
         const name = document.createElement("span");
         name.className = "sacct-name";
         name.textContent = label;
         row.append(av, name);
-        if (inUse) {
-          const tag = document.createElement("span");
-          tag.className = "sacct-tag";
-          tag.textContent = "connected";
-          row.append(tag);
-        }
         row.addEventListener("click", async () => {
-          if (!canPin || inUse || acctSwitchPending) return;
+          if (!canPin || acctSwitchPending) return;
           acctSwitchPending = true;
           for (const button of acctList.querySelectorAll(".sacct")) button.disabled = true;
-          placePill(row);
-          try { await current().api.request("pin_session_account", { credentialId: a.credentialId, providerId: "anthropic" }); }
-          catch { /* e.g. a response is streaming; the list below shows the real state */ }
+          try {
+            await current().api.request("pin_session_account", { credentialId: a.credentialId, providerId: "anthropic" });
+            setAcctMenu(false);
+          } catch { /* e.g. a response is streaming; the refresh below shows the real state */ }
           finally {
             acctSwitchPending = false;
             for (const button of acctList.querySelectorAll(".sacct")) button.disabled = false;
@@ -890,13 +1569,20 @@
         });
         acctList.append(row);
       }
-      placePill(onRow);
+      const shown = connected ?? "Claude accounts";
+      acctBtn.querySelector(".sacct-av").textContent = connected === null ? String(list.length) : initial(connected);
+      acctBtn.querySelector(".sacct-name").textContent = shown;
+      acctBtn.querySelector(".acct-status").hidden = connected === null;
+      acctBtn.classList.toggle("solo", acctList.childElementCount === 0);
+      acctBtn.title = connected === null ? shown : connected + " (connected)";
+      if (!acctList.childElementCount) setAcctMenu(false);
       acctRetry = 0;
     } catch {
       // omp not ready yet (or no Claude login): try again a few times, then wait for an explicit refresh.
       if (acctRetry++ < 8) setTimeout(refreshAccounts, 2500);
     } finally {
       acctBusy = false;
+      if (acctAgain) { acctAgain = false; refreshAccounts(); }
     }
   }
   window.kostompRefreshAccounts = refreshAccounts;
@@ -912,8 +1598,20 @@
   let savedHeld = new Set(); // session ids leased by a process other than ours
   let savedSeq = 0;
   let savedTimer = 0;
-  const samePath = (a, b) => !!a && !!b && a.replace(/\//g, "\\").toLowerCase() === b.replace(/\//g, "\\").toLowerCase();
+  let savedPaintFrame = 0;
+  const pathKey = (p) => p.replace(/\//g, "\\").toLowerCase();
+  const samePath = (a, b) => !!a && !!b && pathKey(a) === pathKey(b);
   const tabFor = (path) => [...sessions.values()].find((s) => samePath(s.api.sessionFile ?? s.sessionFile, path));
+  /** Normalised session file -> its tab (the first, like tabFor), for checking many paths at once. */
+  function tabsByPath() {
+    const map = new Map();
+    for (const s of sessions.values()) {
+      const p = s.api.sessionFile ?? s.sessionFile;
+      if (p && !map.has(pathKey(p))) map.set(pathKey(p), s);
+    }
+    return map;
+  }
+  const tabIn = (tabs, path) => (path ? tabs.get(pathKey(path)) : undefined);
   function ago(when) {
     const t = new Date(when).getTime();
     if (!Number.isFinite(t)) return "";
@@ -940,6 +1638,7 @@
         wait.className = "saved-empty";
         wait.textContent = "omp is starting…";
         savedList.replaceChildren(wait);
+        savedStale = false;
       }
       source = current();
     }
@@ -969,14 +1668,20 @@
       }
       if (changed) retitle();
       // The lease also counts our own processes: those sessions are open in a tab, not "in use".
-      savedHeld = new Set(held.filter((id) => !tabFor(list.find((s) => s.id === id)?.path)));
-      paintSaved();
+      const byId = new Map();
+      for (const s of list) if (!byId.has(s.id)) byId.set(s.id, s);
+      const tabs = tabsByPath();
+      savedHeld = new Set(held.filter((id) => !tabIn(tabs, byId.get(id)?.path)));
+      // Hidden, the rows would be built for nothing: paint when the layout mounts the panel.
+      if (savedEl.isConnected) paintSaved();
+      else savedStale = true;
     } catch (e) {
       if (mine !== savedSeq) return;
       const err = document.createElement("div");
       err.className = "saved-empty";
       err.textContent = "Could not list sessions: " + String(e?.message ?? e);
       savedList.replaceChildren(err);
+      savedStale = false;
     }
   }
   function refreshSavedSoon() {
@@ -984,7 +1689,16 @@
     clearTimeout(savedTimer);
     savedTimer = setTimeout(refreshSaved, 600);
   }
+  document.addEventListener("kostomp-favs", () => {
+    retitle();
+    if (savedEl.isConnected) paintSaved();
+    else savedStale = true;
+  });
   function paintSaved() {
+    savedStale = false;
+    cancelAnimationFrame(savedPaintFrame);
+    savedPaintFrame = 0;
+    const tabs = tabsByPath();
     const q = savedSearch.value.trim().toLowerCase();
     const shown = q
       ? savedRows.filter((s) => [s.title, s.cwd, s.path].some((v) => typeof v === "string" && v.toLowerCase().includes(q)))
@@ -1002,7 +1716,7 @@
       head.textContent = cwd ? baseName(cwd) : "(no folder)";
       head.title = cwd;
       savedList.append(head);
-      for (const s of rows) savedList.append(savedRow(s));
+      for (const s of rows) savedList.append(savedRow(s, tabs));
     }
     if (!shown.length) {
       const empty = document.createElement("div");
@@ -1011,8 +1725,8 @@
       savedList.append(empty);
     }
   }
-  function savedRow(s) {
-    const open = tabFor(s.path);
+  function savedRow(s, tabs) {
+    const open = tabIn(tabs, s.path);
     const held = savedHeld.has(s.id);
     const row = document.createElement("div");
     row.className = "layout-item saved-row" + (open ? " on" : "") + (held ? " held" : "");
@@ -1022,7 +1736,7 @@
     row.title = `${title}\n${s.path}` + (held ? "\nOpen in another omp process" : open ? "\nOpen in a tab" : "");
     const text = document.createElement("span");
     text.className = "layout-label";
-    text.textContent = (s.pinned ? "★ " : "") + title;
+    text.textContent = (s.pinned || window.kostompFavs.any(s.path) ? "★ " : "") + title;
     const meta = document.createElement("span");
     meta.className = "saved-meta";
     const count = Number(s.messageCount);
@@ -1051,7 +1765,7 @@
       if (held) return;
       const target = current();
       placeChat(target.sid);
-      if (await target.api.switchTo(s.path)) refreshSavedSoon();
+      if (await target.api.switchTo(s.path, undefined, s.cwd)) refreshSavedSoon();
     };
     row.addEventListener("click", (e) => {
       if (e.target.closest(".layout-act, .layout-input")) return;
@@ -1071,30 +1785,26 @@
   }
 
   const deletingChats = new Set();
-  async function deleteChat(path, title, entry) {
-    const key = path ?? entry?.sid;
-    if (!key || deletingChats.has(key)) return;
-    deletingChats.add(key);
+  async function deleteChat(path, title) {
+    if (!path || deletingChats.has(path)) return;
+    deletingChats.add(path);
     try {
       if (!await window.kostompConfirmDelete(`Delete "${title}"?`,
         "This permanently removes the conversation and its saved artifacts. Any running turn in this chat will be stopped. This cannot be undone.")) return;
-      path = entry?.api.sessionFile ?? entry?.sessionFile ?? path;
-      const matches = [...sessions.values()].filter(s => path
-        ? samePath(s.api.sessionFile ?? s.sessionFile, path) : s === entry);
+      const matches = [...sessions.values()].filter(s => samePath(s.api.sessionFile ?? s.sessionFile, path));
       if (matches.length === sessions.size) {
         const replacement = addSession({ cwd: matches[0]?.api.cwd ?? null, resume: false });
         // request() waits for the new process's initial state before sending.
         await replacement.api.request("get_state");
       }
       for (const s of matches) {
-        await invoke("rpc_stop", { id: s.sid });
+        await window.KostompRpcLifecycle.stop(s.sid);
         closeSession(s.sid, true);
       }
-      if (path) {
-        const source = readySession() ?? current();
-        if (!source) throw new Error("No chat is available to delete the saved session");
-        await source.api.request("delete_session", { path });
-      }
+      const source = readySession() ?? current();
+      if (!source) throw new Error("No chat is available to delete the saved session");
+      await source.api.request("delete_session", { path });
+      window.kostompFavs.forget(path);
       await refreshSaved();
     } catch (error) {
       const message = document.createElement("div");
@@ -1104,7 +1814,7 @@
       layout.show(LIST_SID);
       savedList.prepend(message);
     } finally {
-      deletingChats.delete(key);
+      deletingChats.delete(path);
     }
   }
   /** Rename a saved session: through its tab when open, else `rename_session` on its file. */
@@ -1159,7 +1869,9 @@
     text.after(input);
     input.select();
   }
-  savedSearch.addEventListener("input", paintSaved);
+  savedSearch.addEventListener("input", () => {
+    if (!savedPaintFrame) savedPaintFrame = requestAnimationFrame(paintSaved);
+  });
   savedSearch.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && savedSearch.value) { e.stopPropagation(); savedSearch.value = ""; paintSaved(); }
   });
@@ -1167,17 +1879,23 @@
   refreshSaved(); // waits for the focused session's process to be ready
 
   // ---- process events, routed by session id ------------------------------
-  listen("rpc-frame", (e) => {
-    const [id, line] = e.payload;
-    let frame;
-    try {
-      frame = JSON.parse(line);
-    } catch (err) {
-      sessions.get(id)?.api.onBadFrame(line, err);
-      return;
+  listen("rpc-frames", (e) => {
+    const [id, lines] = e.payload;
+    // Design boards share this event; their lines are not ours to parse.
+    const api = sessions.get(id)?.api;
+    if (!api) return;
+    for (const line of lines) {
+      // A frame earlier in the batch may have closed or replaced the session.
+      if (sessions.get(id)?.api !== api) return;
+      let frame;
+      try {
+        frame = JSON.parse(line);
+      } catch (err) {
+        api.onBadFrame(line, err);
+        continue;
+      }
+      api.onFrame(frame);
     }
-    // protocol v2 chunking is opt-in via negotiate_protocol, which this client never sends.
-    sessions.get(id)?.api.onFrame(frame);
   });
   listen("rpc-stderr", (e) => {
     const [id, line] = Array.isArray(e.payload) ? e.payload : [];

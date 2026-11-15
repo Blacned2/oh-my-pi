@@ -117,6 +117,7 @@
 
     const ICON_RIGHT = '<svg viewBox="0 0 16 16" width="12.5" height="12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M8 2.5v11"/></svg>';
     const ICON_BELOW = '<svg viewBox="0 0 16 16" width="12.5" height="12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M2 8h12"/></svg>';
+    const ICON_CLOSE = '<svg viewBox="0 0 16 16" width="12.5" height="12.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5"/></svg>';
     function tool(cls, html, label, onClick) {
       const b = el("button", "pane-tool " + cls);
       b.type = "button";
@@ -167,6 +168,9 @@
         tool("split-right", ICON_RIGHT, "Split right (Ctrl+Shift+5)", () => hooks.split?.(sid, "right")),
         tool("split-below", ICON_BELOW, "Split below", () => hooks.split?.(sid, "bottom")),
       );
+      if (sidsOf(tree).length > 1) {
+        pill.append(tool("close-pane", ICON_CLOSE, "Close tab in pane (Middle click)", () => api.close(sid)));
+      }
       head.append(pill);
       const body = el("div", "pane-body");
       const root = hooks.sessionEl(g.active);
@@ -190,30 +194,42 @@
         b.style.flex = `${1 - n.ratio} 1 0`;
         g.setAttribute("aria-valuenow", String(Math.round(n.ratio * 100)));
       };
-      const setRatio = (v) => {
-        const r = box.getBoundingClientRect();
+      const setRatio = (v, r = box.getBoundingClientRect()) => {
         const size = (row ? r.width : r.height) - GUTTER;
         const min = Math.min(0.5, (row ? MIN_W : MIN_H) / Math.max(size, 1));
         n.ratio = clamp(v, min, 1 - min);
         paint();
       };
       paint();
+      // A drag reads the box once: reading it per move would force a layout right after the last flex writes.
+      let dragRect = null;
+      let dragPos = null; // last pointer coordinate along the split axis
+      let frame = 0;
+      const applyDrag = () => {
+        frame = 0;
+        const size = (row ? dragRect.width : dragRect.height) - GUTTER;
+        setRatio((dragPos - (row ? dragRect.left : dragRect.top) - GUTTER / 2) / size, dragRect);
+      };
       g.addEventListener("pointerdown", (e) => {
         if (e.button) return;
         e.preventDefault();
         g.setPointerCapture(e.pointerId);
+        dragRect = box.getBoundingClientRect();
+        dragPos = null;
         g.classList.add("active");
         host.classList.add("resizing", row ? "resizing-row" : "resizing-col");
       });
       g.addEventListener("pointermove", (e) => {
         if (!g.hasPointerCapture(e.pointerId)) return;
-        const r = box.getBoundingClientRect();
-        const size = (row ? r.width : r.height) - GUTTER;
-        setRatio(((row ? e.clientX - r.left : e.clientY - r.top) - GUTTER / 2) / size);
+        dragPos = row ? e.clientX : e.clientY;
+        if (!frame) frame = requestAnimationFrame(applyDrag);
       });
       const end = (e) => {
         if (!g.hasPointerCapture(e.pointerId)) return;
         g.releasePointerCapture(e.pointerId);
+        cancelAnimationFrame(frame);
+        if (dragPos !== null) applyDrag(); // the saved ratio must be the final position
+        dragRect = dragPos = null;
         g.classList.remove("active");
         host.classList.remove("resizing", "resizing-row", "resizing-col");
         hooks.onChange?.(); // the ratio is part of the saved layout
@@ -361,11 +377,13 @@
       if (!dragging) return;
       e.preventDefault();
       const z = zoneAt(e);
-      const sid = dragging;
+      const raw = dragging;
       dragging = null;
       host.classList.remove("dnd");
       overlay.hidden = true;
-      if (z) drop(sid, z.target, z.zone);
+      if (!z) return;
+      const sid = hooks.resolveDrop ? hooks.resolveDrop(raw, z.target, z.zone) : raw;
+      if (sid) drop(sid, z.target, z.zone);
     });
 
     // ---- public API ---------------------------------------------------------

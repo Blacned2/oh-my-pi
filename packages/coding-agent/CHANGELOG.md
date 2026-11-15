@@ -4,6 +4,8 @@
 
 ### Added
 
+- `--append-agent-prompt <name>` appends the named agent's instructions (bundled, user, or project) to the system prompt in any mode; an unknown name exits 1
+- Bundled `designer` agent for UI/visual design work (self-contained HTML/CSS mockups, critique, design systems); it appears under Agents so its model and effort can be overridden
 - `get_model_catalog` now reports each model's supported thinking `efforts`; the desktop Agents settings page uses it to pick an effort per subagent
 - RPC hosts can enter, leave, and read plan mode with the new `plan` command; the agent's plan is approved through a `select` dialog, and the desktop UI gains `/plan [prompt]` with a plan-mode chip
 - RPC hosts can list background jobs with `get_async_jobs` and cancel one with `cancel_async_job`; the desktop UI shows subagents and background jobs as independent toggles at the top right of the chat
@@ -17,9 +19,14 @@
 
 ### Fixed
 
+- Services you stop yourself now show as cancelled in the Jobs panel instead of failed
+- `ask` prompts shown one question at a time (desktop, RPC hosts, collab guests) now include the form's explanatory text and preformatted blocks before each question instead of only its legend
+- Desktop shows an answered `ask` as each question with its answer (and option notes) instead of the raw JSON sent to the model
+- Desktop activity indicators now spin cleanly, and concurrent subagent/job updates preserve row identity, focus and scroll position.
+- Desktop Thinking disclosures remain clickable while replies stream and retain their open state when the reply finishes.
 - Desktop transparent windows no longer flash the opaque theme background when returning from another application
 - Desktop Claude account selection now slides smoothly between accounts without interrupting the animation when the account list refreshes
-- Desktop `!+ <command>` now asks for a name and saves a clickable command card instead of executing the `+` as Bash; cards are kept per session in the desktop workspace.
+- Desktop `!+ <command>` now asks for a name and saves a clickable command card instead of executing the `+` as Bash; cards are kept per project and shown in the right-side activity stack across all sessions of that project.
 - Desktop turn navigation stays in place when the prompt input grows or shrinks
 - A steered message now stays in the queue list until it appears in the transcript, instead of vanishing while the next model request is prepared
 ## [18.18.8] - 2026-11-11

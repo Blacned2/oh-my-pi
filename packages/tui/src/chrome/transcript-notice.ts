@@ -1,6 +1,7 @@
 import type { TspText } from "@oh-my-pi/pi-wire";
 import { Spacer } from "../components/spacer";
-import { Text } from "../components/text";
+import { WidthAwareText } from "../render/index";
+import { formatErrorBlock } from "./error-block";
 import { node, text } from "../native/describe";
 import type { NativeNode } from "../native/node";
 import { styledSpans } from "../native/spans";
@@ -73,7 +74,14 @@ export class TranscriptNotice extends TranscriptBlock {
 	 * message, the label left to the icon.
 	 */
 	static line(tone: "warning" | "error", message: string): TranscriptNotice {
-		const line = new Text(`${LABELS[tone]}: ${message}`, 1, 0).setStyleFn(t => theme.fg(tone, t));
+		const line = new WidthAwareText(
+			contentWidth =>
+				formatErrorBlock(message, contentWidth, Number.POSITIVE_INFINITY, (row, index) =>
+					theme.fg(tone, index === 0 ? `${LABELS[tone]}: ${row}` : row),
+				),
+			1,
+			0,
+		);
 		return new TranscriptNotice(noticeRow(tone, styledSpans(message)), [new Spacer(1), line]);
 	}
 

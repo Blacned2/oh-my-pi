@@ -19,77 +19,149 @@
 </script>
 <link rel="stylesheet" href="app.css">
 <link rel="stylesheet" href="graph.css">
+<link rel="stylesheet" href="design.css">
 </head>
 <body>
 <div class="blobs" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
 <header class="topbar glass">
-  <img class="logo" src="logo.png" alt="Kostomp" title="Kostomp" draggable="false">
-  <nav class="tabs glass-control" id="tabs" role="tablist" aria-label="Views" data-view="chat">
-    <span class="thumb" aria-hidden="true"></span>
-    <button type="button" role="tab" id="tab-chat" data-view="chat" aria-controls="chat" aria-selected="true" aria-label="Chat" title="Chat">
-      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+  <div class="tb-l">
+    <div class="brand" role="img" aria-label="Kostomp" title="Kostomp"><span aria-hidden="true">k</span><i aria-hidden="true"></i></div>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Views" data-view="chat">
+      <span class="thumb" aria-hidden="true"></span>
+      <button type="button" role="tab" id="tab-chat" data-view="chat" aria-controls="chat" aria-selected="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4 3.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg><span>Chat</span>
+      </button>
+      <button type="button" role="tab" id="tab-stats" data-view="stats" aria-controls="stats" aria-selected="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V4M9 20v-8M14 20V8M19 20v-5"/></svg><span>Stats</span>
+      </button>
+    </nav>
+  </div>
+  <div class="vessel-anchor">
+    <button type="button" class="status" id="status" aria-haspopup="listbox" aria-expanded="false" aria-controls="session-menu">
+      <span class="v-t"><b id="status-title">Kostomp</b><span id="status-sub"></span></span>
+      <span class="v-s" id="status-text">starting…</span>
     </button>
-    <button type="button" role="tab" id="tab-stats" data-view="stats" aria-controls="stats" aria-selected="false" aria-label="Stats" title="Stats">
-      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
-    </button>
-  </nav>
-  <div class="spacer"></div>
-  <div class="status" id="status">starting…</div>
-  <button type="button" id="update" class="link update" hidden></button>
-  <button type="button" id="theme" class="icon glass-control" title="Theme"></button>
-      <div class="layout-anchor">
-        <button type="button" id="layout-btn" class="layout-btn glass-control" aria-haspopup="true" aria-expanded="false" aria-controls="layout-menu" title="Layouts (Alt+L switches)">
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M8 2.5v11M8 8h6"/></svg>
-          <span class="layout-name"></span>
-          <span class="layout-dot" aria-hidden="true"></span>
-        </button>
-        <div id="layout-menu" class="layout-menu glass" role="menu" aria-label="Layouts" hidden></div>
-      </div>
-  <div class="anchor">
-    <button type="button" id="gear" class="icon glass-control" title="Settings" aria-label="Settings" aria-controls="settings">
-      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+  </div>
+  <div class="tb-r">
+    <button type="button" id="update" class="link update" hidden></button>
+    <nav class="tool-rail" role="group" aria-label="Workspace panels">
+      <button type="button" id="terminal-open" class="bead tool-btn" title="Terminal paneli (sürükleyerek böl veya tıkla)" aria-label="Terminal paneli">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+      </button>
+      <button type="button" id="changes-open" class="bead tool-btn" title="Değişiklikler paneli (sürükleyerek böl veya tıkla)" aria-label="Değişiklikler paneli">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V10a4 4 0 0 0-4-4H8.5"/></svg>
+      </button>
+      <button type="button" id="browser-open" class="bead tool-btn" title="Tarayıcı paneli (sürükleyerek böl veya tıkla)" aria-label="Tarayıcı paneli">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8"/><path d="M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+      </button>
+      <button type="button" id="files-open" class="bead tool-btn" title="Dosyalar paneli (sürükleyerek böl veya tıkla)" aria-label="Dosyalar paneli">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg>
+      </button>
+      <button type="button" id="tool-more" class="bead tool-more" title="Paneller" aria-label="Paneller" aria-haspopup="menu" aria-expanded="false" aria-controls="tool-menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/></svg>
+      </button>
+    </nav>
+    <button type="button" id="theme" class="bead" title="Theme"></button>
+    <div class="layout-anchor">
+      <button type="button" id="layout-btn" class="layout-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="layout-menu" title="Layouts (Alt+L switches)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="M12 4v16M12 10h8.5"/></svg>
+        <span class="layout-name"></span>
+        <span class="layout-dot" aria-hidden="true"></span>
+        <svg class="layout-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+    </div>
+    <button type="button" id="gear" class="bead" title="Settings" aria-label="Settings" aria-controls="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
   </div>
 </header>
+<div id="session-menu" class="session-menu tb-pop glass" role="listbox" aria-label="Sessions" hidden></div>
+<div id="layout-menu" class="layout-menu tb-pop glass" role="menu" aria-label="Layouts" hidden></div>
+<div id="tool-menu" class="tb-pop glass ovf-menu" role="menu" aria-label="Paneller" hidden></div>
+<div id="compose-menu" class="tb-pop glass ovf-menu" role="menu" aria-label="New" hidden></div>
 
 <main>
   <section id="chat" class="view" role="tabpanel" aria-labelledby="tab-chat">
-    <aside id="sidebar" class="sidebar glass" aria-label="Open chats">
+    <aside id="sidebar" class="sidebar glass" aria-label="Sidebar">
       <div class="side-head">
-        <span class="side-title">Chats</span>
+        <span class="side-title"><span class="mark" aria-hidden="true"></span><span class="brand-name">Kostomp</span></span>
         <button type="button" id="side-toggle" class="icon side-toggle" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse sidebar" title="Collapse sidebar (Ctrl+B)">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9 4v16"/><path class="chev" d="M16 9.5 13.5 12l2.5 2.5"/></svg>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="3.5"/><path d="M9.5 4v16"/><path class="chev" d="M15.5 9.5 13 12l2.5 2.5"/></svg>
         </button>
       </div>
-      <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Open chats" aria-orientation="vertical">
-        <button type="button" id="session-add" class="new-chat glass-control" title="New session" aria-label="New session">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-          <span class="new-chat-label">New chat</span>
+      <div class="compose">
+        <button type="button" id="session-add" class="cta" title="New chat (Ctrl+N)" aria-label="New chat" aria-keyshortcuts="Control+N">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span class="btn-label">New chat</span>
+          <kbd class="btn-label" aria-hidden="true">Ctrl N</kbd>
         </button>
-        <button type="button" id="graph-new" class="new-chat sessions-open graph-new-run glass-control" title="Plan a change with Graph" aria-label="New graph">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.8 7.2 6.3 15.8m6.9-8.6 4.5 8.6"/></svg>
-          <span id="graph-new-label" class="new-chat-label">New graph</span>
+        <button type="button" id="graph-new" class="sq graph-new-run" title="New graph" aria-label="New graph">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M11 7l-5 10M13 7l5 10"/></svg>
         </button>
-        <div class="side-switch">
-          <button type="button" id="sessions-open" class="new-chat sessions-open glass-control" title="Open the sessions list as a tab" aria-label="Open the sessions list">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
-            <span class="new-chat-label">Sessions</span>
-          </button>
-          <button type="button" id="graphs-toggle" class="new-chat sessions-open glass-control" title="Open the graph runs list as a tab" aria-label="Open the graph runs list">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.8 7.2 6.3 15.8m6.9-8.6 4.5 8.6"/></svg>
-            <span class="new-chat-label">Graphs</span>
-          </button>
-        </div>
+        <button type="button" id="design-new" class="sq design-new-board" title="New design" aria-label="New design">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 100 18c1.4 0 2-1 1.6-2-.5-1.2.2-2.4 1.6-2.4H17a4 4 0 004-4c0-5-4-9.6-9-9.6z"/><circle cx="7.5" cy="11" r=".9"/><circle cx="10" cy="7" r=".9"/><circle cx="15" cy="7.5" r=".9"/></svg>
+          <span id="design-new-label" class="sr-only">New design</span>
+        </button>
+        <button type="button" id="compose-new" class="cta compose-new" aria-haspopup="menu" aria-expanded="false" aria-controls="compose-menu" title="New chat, graph or design">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span class="btn-label">New</span>
+          <svg class="compose-caret" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
       </div>
-      <div id="side-graphs" class="side-graphs" role="group" aria-label="Open graph runs" hidden>
-        <div class="side-accounts-title">Graphs</div>
-        <ul id="graph-open" class="graph-run-list" aria-label="Open graph runs"></ul>
+      <label class="side-search">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></svg>
+        <input type="search" id="side-search" placeholder="Search chats" aria-label="Search chats" aria-keyshortcuts="Control+K" spellcheck="false" autocomplete="off">
+        <kbd aria-hidden="true">Ctrl K</kbd>
+      </label>
+      <div id="side-seg" class="seg" role="tablist" aria-label="Library">
+        <span class="seg-thumb" aria-hidden="true"></span>
+        <button type="button" role="tab" id="sessions-open" class="seg-btn" aria-selected="true" aria-controls="side-view-sessions" title="Sessions · click again to open all saved sessions">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
+          <span class="btn-label">Sessions</span>
+        </button>
+        <button type="button" role="tab" id="graphs-toggle" class="seg-btn" aria-selected="false" aria-controls="side-view-graphs" tabindex="-1" title="Graphs · click again to open all graph runs">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M11 7l-5 10M13 7l5 10"/></svg>
+          <span class="btn-label">Graphs</span><span id="graphs-count" class="seg-n btn-label" hidden></span>
+        </button>
+        <button type="button" role="tab" id="designs-toggle" class="seg-btn" aria-selected="false" aria-controls="side-view-designs" tabindex="-1" title="Designs · click again to open all design boards">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>
+          <span class="btn-label">Designs</span><span id="designs-count" class="seg-n btn-label" hidden></span>
+        </button>
       </div>
-      <div id="side-accounts" class="side-accounts" role="group" aria-label="Claude accounts" hidden>
-        <div class="side-accounts-title">Claude accounts</div>
-        <div id="side-accounts-list" class="side-accounts-list"></div>
+      <div class="side-scroll">
+        <section id="side-view-sessions" class="side-view" role="tabpanel" aria-labelledby="sessions-open">
+          <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Open chats" aria-orientation="vertical"></div>
+          <div id="side-panels" class="side-panels" role="group" aria-label="Açık paneller" hidden>
+            <div class="side-group-title">Paneller</div>
+            <div id="panel-tabs" class="panel-tabs-list" role="tablist" aria-label="Açık paneller"></div>
+          </div>
+          <p class="side-empty">No chats match.</p>
+        </section>
+        <section id="side-view-graphs" class="side-view" role="tabpanel" aria-labelledby="graphs-toggle" hidden>
+          <div id="side-graphs" class="side-graphs" role="group" aria-label="Open graph runs" hidden>
+            <ul id="graph-open" class="graph-run-list side-cards" aria-label="Open graph runs"></ul>
+          </div>
+          <p class="side-empty">No open graphs. Click Graphs again to browse all runs.</p>
+        </section>
+        <section id="side-view-designs" class="side-view" role="tabpanel" aria-labelledby="designs-toggle" hidden>
+          <div id="side-designs" class="side-graphs side-designs" role="group" aria-label="Open designs" hidden>
+            <ul id="design-open" class="graph-run-list side-cards" aria-label="Open design boards"></ul>
+          </div>
+          <p class="side-empty">No open designs. Click Designs again to browse all boards.</p>
+        </section>
       </div>
+      <footer id="side-accounts" class="side-accounts" aria-label="Claude accounts" hidden>
+        <div id="side-accounts-menu" class="acct-menu"><div>
+          <div id="side-accounts-list" class="side-accounts-list" role="group" aria-label="Other Claude accounts"></div>
+        </div></div>
+        <button type="button" id="side-acct" class="acct" aria-expanded="false" aria-controls="side-accounts-menu">
+          <span class="sacct-av" aria-hidden="true"></span>
+          <span class="acct-text"><span class="sacct-name"></span><span class="acct-status">connected</span></span>
+          <svg class="acct-chev" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+        </button>
+      </footer>
     </aside>
+    <div id="side-resize" class="side-resize" role="separator" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" aria-valuemin="240" tabindex="0" title="Drag to resize (double-click: reset)"></div>
     <div id="workspace" class="workspace"></div>
     <div id="graph" class="graph-workspace" role="region" aria-label="Graph" hidden>
       <div class="graph-page">
@@ -107,6 +179,7 @@
           <p id="graph-status" role="status" hidden></p>
           <div class="graph-actions" id="graph-activity-actions" hidden>
             <button type="button" id="graph-cancel" hidden>Cancel</button>
+            <button type="button" id="graph-open-active" hidden>Open active run</button>
             <button type="button" id="graph-resume" hidden>Continue queued work</button>
             <button type="button" id="graph-patch" class="graph-primary" hidden>Show verified patch</button>
           </div>
@@ -182,7 +255,7 @@
           <ol id="graph-tasks"></ol>
           <div class="graph-actions" id="graph-plan-actions">
             <button type="button" id="graph-edit-plan">Edit plan</button>
-            <button type="button" id="graph-approve">Approve and run</button>
+            <button type="button" id="graph-approve" class="graph-primary">Approve and run</button>
             <button type="button" id="graph-discard">Discard plan</button>
           </div>
           <form id="graph-plan-editor" hidden>
@@ -199,9 +272,91 @@
         </section>
         <details id="graph-patch-view" hidden>
           <summary>Verified patch</summary>
-          <p id="graph-base"></p>
+          <div class="graph-patch-head">
+            <p id="graph-base"></p>
+            <button type="button" id="graph-copy-patch" class="graph-button">Copy patch</button>
+          </div>
           <textarea id="graph-output" aria-label="Verified patch" rows="8" readonly></textarea>
         </details>
+      </div>
+    </div>
+    <div id="design" class="design-workspace" role="region" aria-label="Design" hidden>
+      <div id="design-stage" class="design-stage" role="region" aria-label="Design canvas" tabindex="0"></div>
+      <div class="design-topbar glass">
+        <div class="design-head">
+          <input id="design-title" class="design-title glass-control" type="text" maxlength="80" spellcheck="false" aria-label="Board title" placeholder="Untitled board">
+          <span id="design-state" class="design-state glass-pill" role="status" aria-label="Board state" data-state="idle">Empty</span>
+        </div>
+        <div class="design-tools">
+          <label class="design-model design-opt glass-pill" title="Model for this board's design agent">Model <select id="design-model" aria-label="Design model"><option value="">Default model</option></select></label>
+          <button type="button" id="design-system-btn" class="design-tool glass-pill" aria-haspopup="dialog" aria-expanded="false" title="Design system (DESIGN.md)">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/></svg>
+            <span>Design system</span><i id="design-system-dot" class="design-system-dot" hidden></i>
+          </button>
+          <div class="design-zoom glass-control" role="group" aria-label="Canvas zoom">
+            <button type="button" id="design-zoom-out" aria-label="Zoom out" title="Zoom out (Ctrl+wheel)">−</button>
+            <output id="design-zoom-level" aria-label="Zoom level">100%</output>
+            <button type="button" id="design-zoom-in" aria-label="Zoom in" title="Zoom in (Ctrl+wheel)">+</button>
+            <button type="button" id="design-fit" aria-label="Fit all designs" title="Fit all designs">Fit</button>
+          </div>
+        </div>
+      </div>
+      <section id="design-system-panel" class="design-system-panel glass" role="dialog" aria-label="Design system" hidden>
+        <header class="design-system-head">
+          <strong>Design system</strong>
+          <span id="design-system-dirty" class="design-system-dirty glass-pill" hidden>Unsaved changes</span>
+          <span class="design-card-spacer"></span>
+          <button type="button" id="design-system-close" class="design-system-close glass-control" aria-label="Close design system" title="Close (Esc)">×</button>
+        </header>
+        <p class="design-system-hint">DESIGN.md lives in the board folder. Every design and critique prompt tells the agent to read it first and follow it.</p>
+        <textarea id="design-system-text" class="design-system-text glass-control" spellcheck="false" aria-label="DESIGN.md" placeholder="# Design system&#10;&#10;Palette, typography, spacing, radii, shadows, components, motion, do and don't."></textarea>
+        <div class="design-system-actions">
+          <button type="button" id="design-system-load" class="glass-control">Load file…</button>
+          <button type="button" id="design-system-generate" class="glass-control">Generate from designs</button>
+          <span class="design-card-spacer"></span>
+          <button type="button" id="design-system-clear" class="danger glass-control">Clear</button>
+          <button type="button" id="design-system-save" class="primary glass-control">Save</button>
+          <input type="file" id="design-system-file" accept=".md,.markdown,.txt" hidden>
+        </div>
+        <div id="design-system-note" class="design-system-note" role="status"></div>
+      </section>
+      <div id="design-empty" class="design-empty" hidden>
+        <div class="design-empty-card glass">
+          <strong>Describe what to design</strong>
+          <span>Designs appear here as cards. Click a card to iterate on it, or ask for several variants.</span>
+        </div>
+      </div>
+      <div class="design-dock-wrap">
+        <div class="design-dock">
+          <div class="design-options glass" role="group" aria-label="Prompt options">
+            <span class="design-chip glass-pill"><span id="design-target-text">New design</span><button type="button" id="design-target-clear" aria-label="Clear selection" title="Clear selection" hidden>×</button></span>
+            <label class="design-opt glass-pill" id="design-variants-wrap">Variants <select id="design-variants" aria-label="Number of designs"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+            <label class="design-opt glass-pill" id="design-project-wrap">Project <select id="design-project" aria-label="Project"></select></label>
+            <button type="button" id="design-project-browse" class="design-switch glass-pill" title="Choose another project folder">Browse…</button>
+            <label class="design-opt glass-pill">Skill <select id="design-skill" aria-label="Design skill"><option value="">Auto</option></select></label>
+            <button type="button" id="design-switch" class="design-switch glass-pill" aria-pressed="false" title="Use a different skill than the one already used">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3l4 4-4 4M21 7H8a4 4 0 0 0-4 4M7 21l-4-4 4-4M3 17h13a4 4 0 0 0 4-4"/></svg>
+              <span>Switch skill</span>
+            </button>
+            <span class="spacer"></span>
+            <span id="design-implement-slot" class="design-implement-slot" hidden></span>
+            <button type="button" id="design-send-notes" class="design-notes-send glass-pill" hidden>Send notes</button>
+          </div>
+          <div id="design-attachments" class="attachments" hidden></div>
+          <form id="design-form" class="composer glass" aria-label="Design prompt">
+            <div class="input-wrap">
+              <textarea id="design-input" rows="1" spellcheck="false" aria-label="Design prompt" placeholder="Describe a design… (Enter to send, Shift+Enter for a new line)"></textarea>
+            </div>
+            <button type="button" id="design-attach" class="attach glass-control" title="Attach images (or paste / drop them)" aria-label="Attach images">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><circle cx="9" cy="10" r="1.7"/><path d="m21 16-5-5-8 8"/></svg>
+            </button>
+            <button type="submit" id="design-send" class="send glass-control" title="Send (Enter)" aria-label="Send">
+              <svg class="send-ico" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg>
+              <svg class="stop-ico" viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true" hidden><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+            </button>
+          </form>
+          <div id="design-status" class="design-status" role="status"></div>
+        </div>
       </div>
     </div>
     <!-- The sessions list: mounted by the layout as a tab (sid "sessions"), never in the sidebar. -->
@@ -220,6 +375,16 @@
       </div>
       <ul id="graph-history" class="graph-run-list" aria-label="Graph runs"></ul>
       <div id="graph-empty" class="saved-empty" hidden>No graph runs yet</div>
+      <button type="button" id="graph-load-older" class="graph-button graph-load-older" hidden>Load older runs</button>
+    </section>
+    <!-- The designs list: mounted by the layout as a tab (sid "designs"), like the graph runs list. -->
+    <section id="designs-panel" class="saved graphs-panel designs-panel" aria-label="Design boards" hidden>
+      <div class="saved-head">
+        <span class="graphs-title">Design boards</span>
+        <button type="button" id="designs-refresh" class="layout-act" title="Refresh design boards" aria-label="Refresh design boards">↻</button>
+      </div>
+      <ul id="design-history" class="graph-run-list" aria-label="Design boards"></ul>
+      <div id="design-board-empty" class="saved-empty" hidden>No designs yet</div>
     </section>
   </section>
   <section id="stats" class="view" role="tabpanel" aria-labelledby="tab-stats" hidden>
@@ -281,11 +446,12 @@
         <button type="button" data-ref="attach" class="attach glass-control" title="Attach images" aria-label="Attach images">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><circle cx="9" cy="10" r="1.7"/><path d="m21 16-5-5-8 8"/></svg>
         </button>
-        <button type="submit" class="send glass-control" title="Send (Enter)" aria-label="Send">
+        <button type="submit" data-ref="send" class="send glass-control" title="Send (Enter)" aria-label="Send">
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg>
         </button>
         <input type="file" data-ref="file" accept="image/*" multiple hidden>
       </form>
+      <div class="composer-yielded" data-ref="yielded" role="status" hidden>Message input is paused until the question is answered.</div>
       <div class="widgets below" data-ref="widgetsBelow" hidden></div>
       <div class="statusline">
         <button type="button" data-ref="cwd" class="link pick glass-pill" title="Change working folder"></button>
@@ -300,7 +466,7 @@
         <span data-ref="total" class="total" hidden></span>
         <span data-ref="hint" class="hint">shift+enter newline</span>
         <span data-ref="busyHint" class="hint" hidden>enter steer · alt+enter queue</span>
-        <button type="button" data-ref="stop" class="link bad" hidden>esc stop</button>
+        <button type="button" data-ref="stop" class="link bad" hidden>alt+esc stop</button>
         <button type="button" data-ref="thinkingBtn" class="link" aria-label="Show or hide thinking (Ctrl+T)" aria-pressed="false" title="Show or hide thinking (Ctrl+T)">ctrl + t</button>
         <button type="button" data-ref="treeBtn" class="link" aria-expanded="false" title="Session tree: move to an earlier point, label entries">tree</button>
       </div>
@@ -317,10 +483,13 @@
 <script src="rpc-transport.js"></script>
 <script src="session.js"></script>
 <script src="layout.js"></script>
+<script src="panels.js"></script>
+<script src="overflow-menu.js"></script>
 <script src="app.js"></script>
 <script src="settings.js"></script>
 <script src="updater.js"></script>
 <script src="graph-map.js"></script>
 <script src="graph.js"></script>
+<script src="design.js"></script>
 </body>
 </html>

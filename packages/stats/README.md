@@ -82,7 +82,9 @@ Range queries read `message_rollup` / `tool_rollup` / `session_rollup`, maintain
 
 Pages: Overview, Models, Providers, Costs, Requests, Errors, Traces, Tools, Frustration, Projects and Gain. `1`–`6` pick the time range; `g` then a letter jumps to a page. Every page revalidates when the live data version moves, so there is no refresh button.
 
-Aurora chrome shares `src/client/glass.css` with collab-web. `desktop/build.rs` copies that canonical stylesheet into `desktop/ui/glass.css` for the packaged WebView. Use `.glass` for chrome panes, `.glass-control` for controls and `.glass-pill` for capsules; buttons receive the control recipe by default. Reading surfaces remain opaque. `data-material="opaque"` and reduced-transparency preferences remove blur, and reduced-motion preferences disable animations.
+Aurora chrome shares `src/client/glass.css` with collab-web. `desktop/build.rs` copies that canonical stylesheet into `desktop/ui/glass.css` for the packaged WebView. Use `.glass` for pane frames, `.glass-control` for controls and `.glass-pill` for capsules; buttons receive the control recipe by default. Message, code and data surfaces remain opaque. `data-material="opaque"` and reduced-transparency preferences remove blur, and reduced-motion preferences disable animations.
+
+In the desktop host, account/session rows and picker options stay stationary on hover; pickers keep glass on the outer menu, not each option. Ctrl+B explicitly opts into a 260 ms sidebar resize, while Chat–Stats uses a 220 ms crossfade without reloading the iframe. Permanent chat deletion is exposed in the Sessions list only; sidebar × buttons close tabs.
 
 ## License
 

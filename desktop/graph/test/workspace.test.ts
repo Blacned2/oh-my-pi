@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 import * as path from "node:path";
 import { TempDir } from "@oh-my-pi/pi-utils";
 import { author, changeSet, fixture, original } from "../fixtures/git";
-import { buildTestSnapshot } from "../test-snapshot";
-import { graphBaseIsCurrent, GraphWorkspace } from "../workspace";
+import { graphBaseIsCurrent, GraphObjectCache, GraphWorkspace } from "../workspace";
 
 test("combines two disjoint changes privately and releases only with matching evidence on a clean source", async () => {
 	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
@@ -20,7 +19,7 @@ test("combines two disjoint changes privately and releases only with matching ev
 	]);
 	const scopes = new Map(sets.map(set => [set.nodeId, set.changes.map(change => change.path)]));
 	const candidate = await workspace.compose(scopes, sets);
-	const archive = await workspace.testSnapshot(candidate, temp.join("candidate.tar"));
+	const archive = await workspace.testSnapshot(candidate);
 	const snapshot = await new Bun.Archive(await archive.bytes()).files();
 	expect(await snapshot.get("project/src/backend.txt")?.text()).toBe("new backend\n");
 	expect(await snapshot.get("project/src/frontend.txt")?.text()).toBe("new frontend\n");
@@ -59,6 +58,45 @@ test("combines two disjoint changes privately and releases only with matching ev
 	expect(await workspace.release(candidate, { test: testEvidence, review })).toEqual({ status: "stale_base" });
 });
 
+test("workspaces pinned with a shared object cache each read their own base", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
+	await using objectCache = new GraphObjectCache();
+	const source = await fixture(temp.join("source"));
+	const root = source.info().repoRoot;
+	const decoder = new TextDecoder();
+	const first = await GraphWorkspace.pin(root, { objectCache });
+	const baseSha = first.baseSha;
+	await first[Symbol.asyncDispose]();
+	{
+		await using second = await GraphWorkspace.pin(root, { objectCache });
+		expect(second.baseSha).toBe(baseSha);
+		expect(decoder.decode((await second.readBaseFile("src/backend.txt")).data)).toBe(original["src/backend.txt"]);
+		expect(second.files().sort()).toEqual(["src/backend.txt", "src/frontend.txt"]);
+	}
+	await Bun.write(path.join(root, "src/backend.txt"), "advanced backend\n");
+	await source.stageFiles(["src/backend.txt"]);
+	await source.commitCreate("Advance backend", { author });
+	await using third = await GraphWorkspace.pin(root, { objectCache });
+	expect(third.baseSha).not.toBe(baseSha);
+	expect(decoder.decode((await third.readBaseFile("src/backend.txt")).data)).toBe("advanced backend\n");
+});
+
+test("a candidate's test archive keeps its content across calls and after an aborted build", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
+	const source = await fixture(temp.join("source"));
+	const edited = await fixture(temp.join("edited"));
+	await using workspace = await GraphWorkspace.pin(source.info().repoRoot);
+	const set = await changeSet(edited, "code", { "src/backend.txt": "new backend\n" });
+	const candidate = await workspace.compose(new Map([["code", ["src/backend.txt"]]]), [set]);
+	await expect(workspace.testSnapshot(candidate, AbortSignal.abort())).rejects.toThrow();
+	const first = await (await workspace.testSnapshot(candidate)).bytes();
+	const second = await (await workspace.testSnapshot(candidate)).bytes();
+	expect(second).toEqual(first);
+	const snapshot = await new Bun.Archive(second).files();
+	expect(await snapshot.get("project/src/backend.txt")?.text()).toBe("new backend\n");
+	expect(await snapshot.get("project/src/frontend.txt")?.text()).toBe(original["src/frontend.txt"]);
+});
+
 test("rejects overlapping ownership, a wrong preimage, and changes hidden outside the declared scope", async () => {
 	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
 	const source = await fixture(temp.join("source"));
@@ -78,7 +116,7 @@ test("rejects overlapping ownership, a wrong preimage, and changes hidden outsid
 		/undeclared files/,
 	);
 	await expect(workspace.captureChangeSet("code", ["src/backend.txt"], artifact.patch)).rejects.toThrow(
-		/only approved files/,
+		"Graph patch must change only approved files; remove the changes to src/frontend.txt. Approved files: src/backend.txt",
 	);
 	expect(await source.isDirty()).toBe(false);
 });
@@ -116,18 +154,96 @@ test("a declared patch cannot introduce a symlink into the candidate", async () 
 	expect(await source.isDirty()).toBe(false);
 });
 
-test("a snapshot refuses a pre-existing Git symlink instead of materializing its target as file data", async () => {
+test("a source whose committed tree holds a Git symlink is refused at pin, before any model work", async () => {
 	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
 	const repo = await fixture(temp.join("source"));
-	const indexPath = temp.join("snapshot.index");
-	await repo.readTree("HEAD", indexPath);
 	await repo.applyPatch("diff --git a/src/backend.txt b/src/backend.txt\nold mode 100644\nnew mode 120000\n", {
 		cached: true,
-		indexPath,
 	});
-	await expect(buildTestSnapshot(repo, indexPath, temp.join("snapshot.tar"))).rejects.toThrow(
-		/symlinks and submodules/,
+	await repo.commitCreate("Turn backend into a symlink", { author });
+	await expect(GraphWorkspace.pin(repo.info().repoRoot, { allowDirty: true })).rejects.toThrow(
+		"Graph Tester requires regular tracked files and rejects symlinks and submodules",
 	);
+});
+
+test("a source that borrows objects from another repository is refused at pin", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
+	const lender = await fixture(temp.join("lender"));
+	const source = await fixture(temp.join("source"));
+	await Bun.write(
+		path.join(source.info().commonDir, "objects", "info", "alternates"),
+		`${path.join(lender.info().commonDir, "objects")}\n`,
+	);
+	await expect(GraphWorkspace.pin(source.info().repoRoot)).rejects.toThrow(
+		"Graph does not support repositories that borrow objects from another repository (git clone --shared/--reference)",
+	);
+});
+
+test("a scope that owns a base directory, or a path beneath a base file, is refused before any Coder runs", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
+	const source = await fixture(temp.join("source"));
+	await using workspace = await GraphWorkspace.pin(source.info().repoRoot);
+	expect(() => workspace.checkScopes(new Map([["code", ["src"]]]))).toThrow(
+		"Graph path src is a directory in the base snapshot",
+	);
+	expect(() => workspace.checkScopes(new Map([["code", ["src/backend.txt/inner.txt"]]]))).toThrow(
+		"Graph path src/backend.txt/inner.txt lies under src/backend.txt, which is a file in the base snapshot",
+	);
+	expect(() => workspace.checkScopes(new Map([["code", ["src/new.txt"]]]))).not.toThrow();
+});
+
+test("a patch that changes an existing file's mode is rejected at capture, but a new executable file is accepted", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
+	const source = await fixture(temp.join("source"));
+	await using workspace = await GraphWorkspace.pin(source.info().repoRoot);
+	const files = ["src/backend.txt"];
+	const header = "diff --git a/src/backend.txt b/src/backend.txt\nold mode 100644\nnew mode 100755\n";
+	const hunk = "--- a/src/backend.txt\n+++ b/src/backend.txt\n@@ -1 +1 @@\n-initial backend\n+new backend\n";
+	for (const patch of [header, header + hunk]) {
+		await expect(workspace.captureChangeSet("code", files, patch)).rejects.toThrow(
+			"Graph does not support file mode changes; submit content changes only",
+		);
+	}
+	const script =
+		"diff --git a/run.sh b/run.sh\nnew file mode 100755\n--- /dev/null\n+++ b/run.sh\n@@ -0,0 +1 @@\n+echo\n";
+	const captured = await workspace.captureChangeSet("code", ["run.sh"], script);
+	expect(captured.changes).toEqual([{ path: "run.sh", baseBlob: null, newBlob: expect.any(String) }]);
+});
+
+test("capture names the reason a patch is rejected so the Coder can fix it", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
+	const source = await fixture(temp.join("source"));
+	await using workspace = await GraphWorkspace.pin(source.info().repoRoot);
+	const files = ["src/backend.txt", "src/moved.txt"];
+	await expect(workspace.captureChangeSet("code", files, " \n")).rejects.toThrow(/^Graph patch is empty;/);
+	await expect(workspace.captureChangeSet("code", files, "x".repeat(1024 * 1024 + 1))).rejects.toThrow(
+		"Graph patch is 1048577 bytes, over the 1 MiB limit",
+	);
+	const rename =
+		"diff --git a/src/backend.txt b/src/moved.txt\nsimilarity index 100%\nrename from src/backend.txt\nrename to src/moved.txt\n";
+	await expect(workspace.captureChangeSet("code", files, rename)).rejects.toThrow(
+		"Graph does not support rename/copy changes (diff --git a/src/backend.txt b/src/moved.txt)",
+	);
+	const symlink =
+		"diff --git a/src/moved.txt b/src/moved.txt\nnew file mode 120000\n--- /dev/null\n+++ b/src/moved.txt\n@@ -0,0 +1 @@\n+backend.txt\n";
+	await expect(workspace.captureChangeSet("code", files, symlink)).rejects.toThrow(
+		"Graph does not support symlink changes (diff --git a/src/moved.txt b/src/moved.txt)",
+	);
+	expect(await source.isDirty()).toBe(false);
+});
+
+test("a submitted patch whose blank context line lost its leading space still applies", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-workspace-test-");
+	const source = await fixture(temp.join("source"), { "notes.txt": "one\n\nthree\n" });
+	await using workspace = await GraphWorkspace.pin(source.info().repoRoot);
+	const patch =
+		"diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1,3 +1,3 @@\n one\n\n-three\n+3\n";
+	const captured = await workspace.captureChangeSet("code", ["notes.txt"], patch);
+	expect(captured.patch).toContain("-three\n+3\n");
+	const candidate = await workspace.compose(new Map([["code", ["notes.txt"]]]), [captured]);
+	const file = await workspace.readCandidateFile(candidate, "notes.txt");
+	expect(new TextDecoder().decode(file.data)).toBe("one\n\n3\n");
+	expect(workspace.candidatePatch(candidate)).toContain("+3\n");
 });
 
 test("concurrent captures and compositions writing the same objects stay reproducible", async () => {

@@ -6,7 +6,7 @@ Kaynak kapsamı, paylaşılan konuşmadaki Planner, Context Manager, Coder, Test
 
 ## Entegrasyon sınırı
 
-- **Graph servisi** `desktop/graph/` altında ayrı bir Bun süreci olur. Scheduler, run deposu, çalışma alanları ve OMP adaptörü burada bulunur. Tauri servisin yaşam döngüsünü yönetir ve tek bir `graph_request` komutuyla istekleri satır başına bir JSON olarak sidecar’a iletir. WebView durumu `status` isteğiyle 800 ms’de bir sorgular; ayrı bir olay akışı yoktur. Graph istekleri sohbetin `rpc-frame` akışına girmez.
+- **Graph servisi** `desktop/graph/` altında ayrı bir Bun süreci olur. Scheduler, run deposu, çalışma alanları ve OMP adaptörü burada bulunur. Tauri servisin yaşam döngüsünü yönetir ve tek bir `graph_request` komutuyla istekleri satır başına bir JSON olarak sidecar’a iletir. WebView durumu `status` isteğiyle 800 ms’de bir sorgular; ayrı bir olay akışı yoktur. Graph istekleri sohbetin `rpc-frames` akışına girmez.
 - **OMP adaptörü** mevcut paketlenmiş runtime’ı kullanarak her agent denemesi için ayrı `omp --mode rpc --no-ui` süreci açar. Mevcut `RpcClient` üzerinden `setCustomTools()` ile role özel host araçları kaydedilir. Düğüm sonucu için `promptAndWait()` ve ardından `waitForSettled()` kullanılır. Kapanış, timeout ve iptal worker’ın süreç ağacını kapsar. Protokol veya worker profili doğrulanamazsa Graph çalışmayı başlatmaz.
 - **Core sınırı** `packages/`, `crates/` ve OMP RPC şeması Graph için değişmez. Yerleşik `/vibe`, `task`, plan ve goal modları Graph tarafından etkinleştirilmez. Yerleşik `task` otomatik uygulama açıldığında ebeveyn checkout’ına değişiklik taşıyabildiği için Graph yazma veya birleştirme yolu olarak kullanılmaz.
 - **Worker profili** Graph işlerine özel, kullanıcı oturumundan ayrı bir profil ve çalışma dizini kullanır. Gerekli model/kimlik doğrulama yetkisi ayrı sağlanır. Uzantı, MCP, komut, skill ve proje kaynaklarının yüklenmesi mevcut desteklenen kontrollerle sınırlandırılır. İlk spike, paketlenmiş Windows sürümünde bu profilin gerçekten sadece beklenen araçları sunabildiğini ve RPC host çağrılarının çalıştığını doğrular. `--no-ui` ve uzantı allowlist’i tek başına izolasyon sağlamaz.
@@ -82,7 +82,7 @@ Faz tamamlandı. Aşağıdaki hazırlık ve kararlar uygulandı.
 
 **Uygulananlar:**
 1. **Host’ta dispatch anı kontrolü:** Store, bir Coder’ı ancak dosya kapsamı çalışan diğer Coder’larınkiyle Windows anahtarları düzeyinde ayrıksa alır. Kapsam `run.context.tasks` kaydından yeniden türetilir. Planın daha önce doğrulanmış olmasına güvenilmez. Eski tek Coder’lı kayıtlar değişmeden çalışır.
-2. **Eşzamanlılık sınırı:** `runApprovedGraph()` sabit 1 yerine `profile.json` içindeki isteğe bağlı `maxCoders` değeriyle çalışır. Değer 1–4 arasında bir tam sayıdır, verilmezse 2 kullanılır. Bu alan profil hash’ine yalnızca tanımlıysa girer. Böylece mevcut kayıtların hash’i değişmez ve retry’ları çalışmaya devam eder.
+2. **Eşzamanlılık sınırı:** `runApprovedGraph()` sabit 1 yerine `profile.json` içindeki isteğe bağlı `maxCoders` değeriyle çalışır. Değer 1–4 arasında bir tam sayıdır, verilmezse 2 kullanılır. Bu alan Faz 11’den beri profil hash’ine girmez; eski formülle kaydedilmiş hash’ler de kabul edilir.
 3. **Workspace eşzamanlılığı:** `captureChangeSet()` ve `compose()` her çağrıda ayrı bir private index kullanıyor. Aynı scratch nesne veritabanına eşzamanlı yazmanın güvenli olduğu testle doğrulandı.
 4. **Worker profili:** Her deneme ayrı bir geçici `HOME` alır. `profile-home/.omp/agent` bu dizine kopyalanır, `TEMP` ve `TMP` de bu dizini gösterir. Deneme bitince dizin silinir. Kaynak profil yalnızca okunur. Paylaşılan dizinin eşzamanlı kullanımda güvenli olduğu doğrulanmadığı için kopya tercih edildi. Bunun bedeli, denemede yenilenen OAuth token’larının kaynak profile geri yazılmamasıdır. API anahtarlı profiller etkilenmez.
 5. **İptal ve restart:** İptal, çalışan bütün Coder’ların süreç ağaçlarını kapatır. Restart sonrasında yarım kalan bütün denemeler `interrupted` olur.
@@ -129,3 +129,23 @@ Yeni planlarda Context Manager, sabit Git tabanındaki onaylı dosyaları tarar.
 ## Faz 10: Jev gözlem modu
 
 İsteğe bağlı Jev sonucu Tester denemesine bağlanır ve sidecar yeniden başladığında okunabilir. İstek yalnızca çıkış kodu ve sabit tanı etiketlerini içerir. Model ve ulaşım hataları için denemenin gözlem durumu kaydedilir. Test artifact kimliği ile Coder seçimi ve patch onayı deterministik kalır.
+
+## Faz 11: Sağlamlaştırma
+
+Graph modu baştan sona denetlendi; bulunan hatalar ve eksikler giderildi. OMP çekirdeği (`packages/`, `crates/`) değişmedi.
+
+- **Köprü:** Her isteğin zaman aşımı var (30 sn; `edit` ve `delete` için 300 sn). Yanıt vermeyen sidecar öldürülür, sonraki istek yenisini başlatır. Uygulamadan çıkış ve güncelleme, yanıt bekleyen bir isteğin arkasında beklemez. Bozuk bir yanıt satırı yalnızca o isteği başarısız kılar.
+- **Kapanış ve devam:** Uygulama kapanırken çalışan denemeler `cancelled` değil `interrupted` olur. **Continue queued work** yarım kalan run’ı, **Resume cancelled run** iptal edilen run’ı o ana kadarki sonuçlarıyla sürdürür. İptal edilen veya yarıda kesilen deneme, düğümün deneme hakkından düşmez. İşi bitmiş bir run’ı iptal etmek doğrulanmış patch’i artık gizlemez.
+- **Deneme bütçesi:** Planlı Coder’ların beş deneme hakkı vardır. İki otomatik düzeltmeden sonra kullanıcı, kanıtla birlikte elle yeniden deneyebilir.
+- **Profil:** Kaydedilen plan ve run’lar yalnızca sağlayıcıya, modele ve Tester ayarlarına bağlıdır. `maxCoders`, `failureJudge` ve `allowDirty` değişince geçerliliklerini korurlar. Tester ayarları kaydederken ve her plan, onay, retry ve resume öncesinde doğrulanır.
+- **Erken ret:** Symlink veya submodule içeren, 16.384’ten fazla izlenen dosyası olan ya da nesnelerini başka bir repodan ödünç alan repolar planlama başlamadan reddedilir. Tabandaki bir dizinin kendisine veya bir dosyanın altındaki yola sahiplik verilemez.
+- **Patch kabulü:** Ret mesajı neyin düzeltileceğini söyler. Yalnızca mod değiştiren patch’ler gönderim anında reddedilir. Baştaki boşluğunu yitirmiş boş bağlam satırları onarılır. Rename algılama kullanıcının Git ayarına bağlı değildir.
+- **Worker’lar:** Uygulamada oturum açılmış hesaplar kullanılacaksa `agent.db`’nin tutarlı bir anlık kopyası alınır. Büyük dosyalar satır aralıklarıyla okunur. Sonuç aracını çağırmadan duran worker’a aynı denemede iki kez hatırlatma yapılır. Host’un kaydetmediği bir aracı çalıştıran deneme durdurulur. Reviewer adayın diff’ini görür.
+- **Tester:** Zaman aşımı (çıkış kodu 124) ve bellek sınırı (137) başarısız test sayılır ve o ana kadarki çıktı saklanır. Test komutundan önceki bootstrap hatası (111) altyapı hatasıdır. stdout’un başı ve sonu saklanır. Öldürülen bir sidecar’dan kalan container’lar sonraki testten önce silinir.
+- **Geçici dosyalar:** Sidecar kendi geçici dizininde (`%TEMP%\kostomp-graph-scratch`) çalışır ve açılışta, öldürülen bir sidecar’dan kalanları temizler.
+- **Context Manager:** Yalnızca görevin terimlerinden birini içeren satırlar referans olur. Büyük/küçük harf ve aksan farkı eşleşmeyi engellemez (`İstek`, `istek`, `ISTEK`).
+- **Paketleme:** Graph sidecar’ı her build’de, yalnızca kabuk içeren güncellemede de paketlenir; böylece yeni arayüz eski `runtime\graph` ile çalışmaz. Sidecar’ın yazıldığı OMP sürümü `runtime\graph\OMP_VERSION` dosyasına kaydedilir. Kurulu `runtime\OMP_VERSION` bundan farklıysa Graph başlamaz ve tam build ister; sohbet çalışmaya devam eder.
+- **Veri dizini:** Graph verisi `%LOCALAPPDATA%\dev.kostomp.desktop\graph` altındadır. Eski `%APPDATA%` konumundaki veri, ilk sidecar başlangıcında tek bir dizin taşımasıyla aktarılır; taşıma başarısız olursa eski konum kullanılır ve sonraki başlangıçta yeniden denenir.
+- **Run listesi:** `list` 50’şer sayfa döndürür; arayüz **Load older runs** ile eski run’ları yükler. Kenar çubuğundaki açık run satırları arayüzde saklanır ve listeye göre silinmez.
+- **Arka plan bildirimi:** Graph panosu ekranda değilken biten run veya plan için bildirim gösterilir; bildirime tıklamak ilgili run’ı açar. Kullanıcının durdurduğu işler bildirilmez.
+- **Mod geçişi:** Bir tıklamanın sohbete geçiş sayılıp sayılmayacağı tek bir yerde (`app.js`) belirlenir; Graph ve Design modları aynı kuralı kullanır.

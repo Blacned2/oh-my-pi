@@ -69,8 +69,10 @@
     let current = "";
     let selected = "";
     let token = 0;
+    let loadSeq = 0;
     const opener = document.activeElement;
     const done = (v) => {
+      token++; // an in-flight preview must not create a blob URL after close
       if (blobUrl) URL.revokeObjectURL(blobUrl);
       document.removeEventListener("keydown", onKey, true);
       veil.remove();
@@ -146,13 +148,16 @@
       showPreview(e);
     };
     async function load(path) {
+      const mine = ++loadSeq;
       let res;
       try {
         res = await invoke("list_dir", { path, images: imgMode });
       } catch (err) {
+        if (mine !== loadSeq) return;
         list.replaceChildren(mk("div", "fb-empty", "Cannot open this folder: " + errText(err)));
         return;
       }
+      if (mine !== loadSeq) return; // a later load superseded this one
       current = res.path;
       selected = current;
       syncOk();

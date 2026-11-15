@@ -181,7 +181,7 @@ describe("TUI input/render scheduling", () => {
 			}
 		});
 
-		it("keeps adaptive backpressure for keystroke frames: slow frames still rate-limit typing", () => {
+		it("paints navigation without inheriting a slow background frame's adaptive delay", () => {
 			setMaxFps(4);
 			const term = new VirtualTerminal(20, 4);
 			const scheduler = new DeferredRenderScheduler();
@@ -206,8 +206,16 @@ describe("TUI input/render scheduling", () => {
 				expect(scheduler.nowMs).toBe(150);
 				term.sendInput("x");
 				scheduler.immediates.shift()?.();
-				// Input cadence alone would allow a paint now; the adaptive floor holds it until t=200.
-				expect(scheduler.timers.shift()?.delayMs).toBe(50);
+				// Already past the input cadence: do not inherit the previous frame's cost.
+				const input = scheduler.timers.shift();
+				expect(input?.delayMs).toBe(0);
+				input?.callback();
+				expect(events).toEqual(["render", "input", "render"]);
+
+				// Background work still yields after the input frame.
+				tui.requestComponentRender(probe);
+				scheduler.immediates.shift()?.();
+				expect(scheduler.timers.shift()?.delayMs).toBe(100);
 			} finally {
 				tui.stop();
 			}

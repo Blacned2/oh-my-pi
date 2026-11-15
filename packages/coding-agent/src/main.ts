@@ -137,6 +137,7 @@ import {
 	loadSystemPromptTemplateFile,
 	resolvePromptInput,
 } from "./system-prompt";
+import { discoverAgents, getAgent } from "./task/discovery";
 import { createPersistedSubagentReviverFactory } from "./task/persisted-revive";
 import { type RestoreOutcome, restoreSession } from "./task/restore";
 import { createTelemetryExportConfig, initTelemetryExport, isTelemetryExportEnabled } from "./telemetry-export";
@@ -1470,7 +1471,19 @@ export async function buildSessionOptions(
 		parsed.systemPromptTemplate ?? (discoveredOverride?.kind === "template" ? discoveredOverride.path : undefined);
 	const appendPromptSource = parsed.appendSystemPrompt ?? discoverAppendSystemPromptFile();
 	const titleSystemPromptSource = discoverTitleSystemPromptFile(cwd);
-	const [resolvedSystemPrompt, resolvedAppendPrompt, titleSystemPrompt, resolvedSystemPromptTemplate] =
+	let agentPromptBody: string | undefined;
+	if (parsed.appendAgentPrompt !== undefined) {
+		const { agents } = await discoverAgents(cwd ?? getProjectDir());
+		const agent = getAgent(agents, parsed.appendAgentPrompt);
+		if (!agent) {
+			process.stderr.write(
+				`${chalk.red(`Error: --append-agent-prompt: unknown agent "${parsed.appendAgentPrompt}"`)}\n`,
+			);
+			process.exit(1);
+		}
+		agentPromptBody = agent.systemPrompt;
+	}
+	const [resolvedSystemPrompt, resolvedUserAppendPrompt, titleSystemPrompt, resolvedSystemPromptTemplate] =
 		await Promise.all([
 			discoveredOverride?.kind === "text"
 				? Promise.resolve(discoveredOverride.content)
@@ -1485,6 +1498,10 @@ export async function buildSessionOptions(
 					? Promise.resolve(undefined)
 					: loadSystemPromptTemplateFile(templatePath),
 		]);
+	const resolvedAppendPrompt =
+		[resolvedUserAppendPrompt, agentPromptBody]
+			.filter((part): part is string => !!part && part.trim().length > 0)
+			.join("\n\n") || undefined;
 
 	if (sessionManager) {
 		options.sessionManager = sessionManager;
@@ -1505,6 +1522,7 @@ export async function buildSessionOptions(
 			parsed.systemPrompt !== undefined ||
 			parsed.systemPromptTemplate !== undefined ||
 			parsed.appendSystemPrompt !== undefined ||
+			parsed.appendAgentPrompt !== undefined ||
 			parsed.tools !== undefined ||
 			parsed.noTools === true;
 		if (!forkCacheShapeChanged && header?.providerPromptCacheKey) {

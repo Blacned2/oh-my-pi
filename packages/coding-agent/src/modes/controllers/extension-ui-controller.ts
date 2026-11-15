@@ -42,6 +42,7 @@ import {
 import { installExtensionComposerShape } from "@oh-my-pi/pi-tui/overlays/composer-shape-registry";
 import {
 	choiceValue,
+	fieldContexts,
 	fieldError,
 	fieldQuestions,
 	type HtmlFormData,
@@ -933,10 +934,14 @@ export class ExtensionUiController {
 		signal: AbortSignal,
 	): Promise<ExtensionFormDialogResult | "unavailable" | undefined> {
 		const questions = fieldQuestions(form);
+		const contexts = fieldContexts(form);
 		const data: HtmlFormData = Object.fromEntries(form.hidden);
 		for (const field of form.fields) {
 			if (!field.name) continue;
-			const question = sanitizeCarriageReturns(questions.get(field) ?? field.name);
+			// Dialog titles show their first line as the heading and the rest as detail.
+			const context = contexts.get(field);
+			const label = questions.get(field) ?? field.name;
+			const question = sanitizeCarriageReturns(context ? `${label}\n${context}` : label);
 			const result =
 				field.kind === "choice"
 					? await this.#runGuestFormChoice(host, field, question, signal)
@@ -1050,7 +1055,8 @@ export class ExtensionUiController {
 		while (true) {
 			const input = await this.#requestGuestUiString(
 				host,
-				{ kind: "editor", title: error ? `${question} (${error})` : question, prefill: text },
+				// The error joins the heading line, ahead of any context lines.
+				{ kind: "editor", title: error ? question.replace(/(?=\n)|$/, ` (${error})`) : question, prefill: text },
 				signal,
 			);
 			if (input.kind !== "answered") return input;

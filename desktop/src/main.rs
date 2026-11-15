@@ -1,8 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod design;
 mod graph;
 mod notify;
 mod omp_config;
+mod panels;
 mod rpc;
 mod runtime;
 mod tray;
@@ -93,6 +95,7 @@ fn main() {
         .manage(StatsStatus(Mutex::new(None)))
         .manage(rpc::RpcState::default())
         .manage(graph::GraphBridge::default())
+        .manage(panels::TerminalState::default())
         .on_window_event(|window, event| {
             // Closing the main window hides it to the tray; "Exit" in the tray menu quits.
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -124,7 +127,37 @@ fn main() {
             window_style::window_style_set,
             omp_config::omp_config_list,
             omp_config::omp_config_set,
-            omp_config::omp_config_reset
+            omp_config::omp_config_reset,
+            design::design_root,
+            design::design_board_open,
+            design::design_boards,
+            design::design_board_save,
+            design::design_board_delete,
+            design::design_cards,
+            design::design_html,
+            design::design_card_delete,
+            design::design_doc_read,
+            design::design_doc_write,
+            design::design_critique_clear,
+            design::design_export,
+            design::design_open_external,
+            design::design_skills,
+            design::design_skill_set,
+            design::design_skill_remove,
+            design::design_skill_import_folder,
+            design::design_skill_write
+            ,
+            panels::term_start,
+            panels::term_write,
+            panels::term_resize,
+            panels::term_stop,
+            panels::git_status,
+            panels::git_diff,
+            panels::git_action,
+            panels::git_commit,
+            panels::fs_list,
+            panels::fs_read,
+            panels::fs_write
         ])
         .setup(move |app| {
             if let Ok(dir) = app.path().resource_dir() {
@@ -175,4 +208,5 @@ pub fn shutdown_children(handle: &tauri::AppHandle) {
     }
     rpc::shutdown(handle);
     graph::shutdown(handle);
+    panels::shutdown(handle);
 }

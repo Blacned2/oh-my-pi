@@ -17,8 +17,9 @@ import { editorKey, editorKeys } from "@oh-my-pi/pi-tui/chrome/keybinding-hints"
 import {
 	choiceValue,
 	defaultFormData,
-	fieldQuestions,
+	fieldContexts,
 	fieldError,
+	fieldQuestions,
 	formAnswers,
 	type HtmlFormData,
 	type OptionNote,
@@ -277,7 +278,8 @@ async function askText(
 	let error: string | undefined;
 	let current = field.value;
 	while (true) {
-		const title = `${progress}${error ? `${question} (${error})` : question}`;
+		// The error joins the heading line, ahead of any context lines.
+		const title = `${progress}${error ? question.replace(/(?=\n)|$/, ` (${error})`) : question}`;
 		let outcome: PromptOutcome<string>;
 		if (useEditor) {
 			// The editor has no countdown: typing a long answer must not race a deadline.
@@ -310,12 +312,16 @@ async function askFieldByField(
 ): Promise<{ data: HtmlFormData; timedOut: boolean } | undefined> {
 	const data = defaultFormData(form);
 	const questions = fieldQuestions(form);
+	const contexts = fieldContexts(form);
 	const named = form.fields.filter(field => field.name);
 	let position = 0;
 	for (const field of named) {
 		position++;
 		const progress = named.length > 1 ? `(${position}/${named.length}) ` : "";
-		const question = questions.get(field) ?? field.name!;
+		// Dialog titles show their first line as the heading and the rest as detail.
+		const context = contexts.get(field);
+		const label = questions.get(field) ?? field.name!;
+		const question = context ? `${label}\n${context}` : label;
 		if (field.kind === "choice") {
 			const outcome = await askChoice(ui, field, question, timeout, signal, progress);
 			if (outcome.value !== undefined) {

@@ -6,6 +6,9 @@ export type GraphExecutor = (attempt: GraphAttempt, signal: AbortSignal) => Prom
 
 type Outcome = { attempt: GraphAttempt } & ({ content: string } | { error: string });
 
+/** Abort reason for host shutdown: live attempts become interrupted and the run stays resumable. */
+export const GRAPH_SHUTDOWN = "shutdown";
+
 /** Drive a run until it has no runnable work. Retries are admitted by the store. */
 export async function driveGraphRun(
 	store: GraphRunStore,
@@ -40,7 +43,8 @@ export async function driveGraphRun(
 		}
 	} catch (error) {
 		if (!signal?.aborted) throw error;
-		store.cancel(runId);
+		if (signal.reason === GRAPH_SHUTDOWN) store.recoverInterrupted(runId);
+		else store.cancel(runId);
 	} finally {
 		workers.abort();
 		await Promise.allSettled(jobs.values());

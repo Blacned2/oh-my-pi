@@ -25,9 +25,9 @@
   }
 
   // ---- window material --------------------------------------------------
-  // State: { settings: { material, glassType, blur, tint, tintColor, sheen, rim, grain, paneBlur,
-  // saturation, glow, accent, opaqueWhenUnfocused, followSystem }, glass, systemTransparency }.
-  const { TYPES } = window.kostompMaterial;
+  // State: { settings: { material, glassType, blur, tint, tintColor, sheen, rim, grain, glow, accent,
+  // opaqueWhenUnfocused, followSystem }, glass, systemTransparency }.
+  const { TYPES, paint } = window.kostompMaterial;
   let material = window.__KOSTOMP_MATERIAL__ || null;
   let wanted = material ? { ...material.settings } : null; // last settings sent, ahead of the echo
   const statsFrame = $("stats-frame");
@@ -119,6 +119,7 @@
     extensions: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17.5h7M17.5 14v7"/>',
     providers: '<path d="M12 22v-5M9 8V2M15 8V2M18 8v5a6 6 0 0 1-12 0V8z"/>',
     graph: '<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.5 6h7M7.2 8.2l3.6 7.6M16.8 8.2l-3.6 7.6"/>',
+    design: '<path d="M12 19l7-7 3 3-7 7z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18z"/><path d="M2 2l7.6 7.6"/><circle cx="11" cy="11" r="2"/>',
     other: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   };
   const PAGE_KEY = "kostomp-settings-page";
@@ -143,6 +144,7 @@
   navButton("agents", "Agents");
   navButton("extensions", "Extensions");
   navButton("graph", "Graph");
+  navButton("design", "Design");
   nav.append(h("div", { class: "set-sep", role: "separator" }));
   for (const [id, label] of OMP_TABS) navButton(id, label);
 
@@ -194,6 +196,7 @@
     else if (id === "models") renderModelsPage();
     else if (id === "agents") renderAgentsPage();
     else if (id === "graph") renderGraphPage();
+    else if (id === "design") renderDesignPage();
     else if (id === "extensions") renderExtensionsPage();
     else renderOmpPage(id);
   }
@@ -235,14 +238,12 @@
   // Sliders of the glass: [setting key, name, description, min, max, label].
   const BACKDROPS = ["Off", "Mica", "Acrylic", "Mica Alt"];
   const PARAMS = [
-    ["blur", "Backdrop", "System material behind the window. Off keeps it fully clear.", 0, 3, (v) => BACKDROPS[v]],
+    ["blur", "Backdrop", "System material behind the window. Off keeps it fully clear; Acrylic costs the most GPU.", 0, 3, (v) => BACKDROPS[v]],
     ["tint", "Tint", "How much colour covers the glass. Higher keeps text easier to read.", 0, 100, (v) => v + "%"],
     ["sheen", "Top light", "Soft highlight washing down from the top edge.", 0, 100, (v) => v + "%"],
     ["rim", "Edge light", "Bright hairline around the window edge.", 0, 100, (v) => v + "%"],
     ["grain", "Grain", "Fine frosted texture over the glass.", 0, 100, (v) => v + "%"],
-    ["paneBlur", "Pane blur", "Blur behind floating panes such as the command palette.", 0, 40, (v) => v + "px"],
-    ["saturation", "Pane saturation", "Colour of what shows through floating panes.", 50, 250, (v) => v + "%"],
-    ["glow", "Ambient glow", "Colour glow drifting behind the glass.", 0, 100, (v) => v + "%"],
+    ["glow", "Ambient glow", "Colour glow behind the glass.", 0, 100, (v) => v + "%"],
   ];
   const DEFAULT_TYPE = TYPES[0];
 
@@ -261,8 +262,7 @@
     const typeTile = (t) => {
       const pv = preview("glass");
       const v = t.v;
-      pv.style.cssText = `--pv-a:${v.tint / 100};--pv-sat:${v.saturation / 100};` +
-        `--pv-blur:${[0, 6, 14, 9][v.blur] + v.paneBlur / 4}px;` +
+      pv.style.cssText = `--pv-a:${v.tint / 100};` +
         `--pv-sheen:rgb(255 255 255 / ${Math.min(1, v.sheen / 100 * 2.2)});` +
         (v.tintColor ? `--pv-rgb:${window.kostompMaterial.rgbOf(v.tintColor)};` : "");
       const b = h("button", {
@@ -513,7 +513,10 @@
       if (!shown) list.append(h("p", { class: "set-empty", text: "No model matches the filter." }));
     }
 
-    search.addEventListener("input", drawList);
+    let listFrame = 0;
+    search.addEventListener("input", () => {
+      if (!listFrame) listFrame = requestAnimationFrame(() => { listFrame = 0; drawList(); });
+    });
     clear.addEventListener("click", () => {
       exact.clear();
       patterns = [];
@@ -603,6 +606,7 @@
           }
           stored.append(row);
         }
+        window.kostompRefreshAccounts?.(); // keep the sidebar chip in step with what this page shows
       };
       draw();
     }
@@ -924,7 +928,10 @@
       list.append(section);
     };
     pick.addEventListener("change", () => { kind = pick.value; localStorage.setItem(EXT_KIND_KEY, kind); drawList(); });
-    search.addEventListener("input", drawList);
+    let listFrame = 0;
+    search.addEventListener("input", () => {
+      if (!listFrame) listFrame = requestAnimationFrame(() => { listFrame = 0; drawList(); });
+    });
     body.append(h("div", { class: "models-bar" }, pick, search, refresh), list,
       h("p", { class: "set-foot", text: "MCP servers are switched in their mcp.json; the others are listed under disabledExtensions in your omp config, the same settings the CLI /extensions dashboard edits." }));
     drawList();
@@ -1024,9 +1031,11 @@
   let config = null; // path -> { value?, redacted?, type, description, tab?, group?, label?, warning?, values?, options?, secret? }
   let configError = null;
   let loading = null;
+  let failedAt = 0; // a failed list is the answer for a while, so page visits do not keep spawning omp
 
   function loadConfig() {
     if (!loading) {
+      if (Date.now() - failedAt < 10000) return Promise.resolve();
       loading = invoke("omp_config_list")
         .then((text) => {
           config = JSON.parse(text);
@@ -1034,7 +1043,7 @@
           // An omp build without section metadata: everything lands in "Other".
           if (Object.values(config).some((e) => !e.tab) && !navButtons.has("other")) navButton("other", "Other");
         })
-        .catch((err) => { configError = String(err); loading = null; });
+        .catch((err) => { configError = String(err); failedAt = Date.now(); loading = null; });
     }
     return loading;
   }
@@ -1052,7 +1061,7 @@
         if (page !== tab) return;
         if (config) return showPage(tab);
         body.replaceChildren(h("div", { class: "row-err", text: "Could not read omp settings: " + configError }),
-          h("button", { type: "button", class: "btn", text: "Try again", onclick: () => showPage(tab) }));
+          h("button", { type: "button", class: "btn", text: "Try again", onclick: () => { failedAt = 0; showPage(tab); } }));
       });
       return;
     }
@@ -1114,6 +1123,14 @@
     return JSON.stringify(value);
   }
 
+  // Each `omp config` write rewrites the same file: run them one at a time, in call order.
+  let configWrites = Promise.resolve();
+  function configWrite(cmd, args) {
+    const run = configWrites.then(() => invoke(cmd, args));
+    configWrites = run.catch(() => {});
+    return run;
+  }
+
   function settingRow(key) {
     const e = config[key];
     const err = h("div", { class: "row-err", hidden: true });
@@ -1123,7 +1140,7 @@
     async function commit(value) {
       err.hidden = true;
       try {
-        const out = JSON.parse(await invoke("omp_config_set", { key, value: encode(e.type, value) }));
+        const out = JSON.parse(await configWrite("omp_config_set", { key, value: encode(e.type, value) }));
         if (out.redacted) { e.redacted = true; delete e.value; } else e.value = "value" in out ? out.value : value;
         const by = out.overriddenBy || out.fallbackEnv;
         if (by) { e.note = (out.overriddenBy ? "Saved, but overridden by " : "Saved; falls back to ") + by + "."; }
@@ -1143,7 +1160,7 @@
     }
     async function reset() {
       try {
-        const out = JSON.parse(await invoke("omp_config_reset", { key }));
+        const out = JSON.parse(await configWrite("omp_config_reset", { key }));
         if (out.redacted) { e.redacted = true; delete e.value; } else { delete e.redacted; e.value = out.value; }
         delete e.note;
         if (!out.redacted && !out.overriddenBy) {
@@ -1273,6 +1290,23 @@
       (err) => { if (page === "graph") failBox(body, err, () => showPage("graph")); });
   }
 
+  // Container command field: one argument per line (each trimmed, blank lines skipped) or a JSON array of strings.
+  // The line form is shown only when it reads back as the same arguments.
+  function graphCommandText(args) {
+    if (!Array.isArray(args)) return "";
+    const lineSafe = args.every((a) => typeof a === "string" && a !== "" && a === a.trim() && !/[\r\n]/.test(a))
+      && !(args[0] || "").startsWith("[");
+    return lineSafe ? args.join("\n") : JSON.stringify(args);
+  }
+  function graphCommandArgs(value) {
+    const v = value.trim();
+    if (!v.startsWith("[")) return value.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== "");
+    let args;
+    try { args = JSON.parse(v); } catch { throw new Error("Container command is not a valid JSON array. Use a JSON array of strings, or one argument per line."); }
+    if (!Array.isArray(args) || !args.every((a) => typeof a === "string")) throw new Error("Container command must be a JSON array of strings.");
+    return args;
+  }
+
   function drawGraph(body, { path, profile, error }) {
     body.replaceChildren();
     const p = profile && typeof profile === "object" ? profile : {};
@@ -1297,11 +1331,13 @@
     const dockerPath = input("text", "Docker executable", tester.dockerPath);
     const imageId = input("text", "Docker image ID", tester.imageId);
     const command = h("textarea", { class: "field json", spellcheck: false, rows: 3, "aria-label": "Container command",
-      placeholder: "/bin/sh\n-c\nbun test", value: Array.isArray(tester.command) ? tester.command.join("\n") : "" });
+      placeholder: "/bin/sh\n-c\nbun test", value: graphCommandText(tester.command) });
     const timeout = input("number", "Tester timeout (ms)", tester.timeoutMs, "field num");
+    Object.assign(timeout, { min: 1, max: 300000, step: 1 });
     const judgeProvider = input("text", "Judge provider", judge?.provider);
     const judgeModel = input("text", "Judge model", judge?.model);
     const judgeTimeout = input("number", "Judge timeout (ms)", judge?.timeoutMs, "field num");
+    Object.assign(judgeTimeout, { min: 1, max: 5000, step: 1 });
     const judgeUrl = input("text", "Judge base URL", judge?.baseUrl);
     judgeUrl.placeholder = "Provider default";
 
@@ -1317,41 +1353,55 @@
         for (const c of r.querySelectorAll("input")) c.disabled = !judgeOn;
       }
     };
-    const commandRow = row("Container command", "One argument per line. The first is the executable.", command);
+    const commandRow = row("Container command", "One argument per line, or a JSON array of strings when an argument contains a line break, is empty or starts or ends with spaces. The first argument is the absolute path of the executable in the container.", command);
     commandRow.classList.add("wide");
 
     const status = h("div", { class: "row-err", hidden: true });
     const save = h("button", { type: "button", class: "btn", text: "Save" });
 
+    // A field error carries the element to focus.
+    const invalid = (el, message) => Object.assign(new Error(message), { field: el });
     function collect() {
       const text = (el, name) => {
         const v = el.value.trim();
-        if (!v) throw new Error(name + " is required.");
+        if (!v) throw invalid(el, name + " is required.");
         return v;
       };
-      const whole = (el, name) => {
+      const whole = (el, name, max) => {
         const v = Number(el.value);
-        if (el.value.trim() === "" || !Number.isInteger(v)) throw new Error(name + " must be a whole number.");
+        if (el.value.trim() === "" || !Number.isInteger(v)) throw invalid(el, `${name} must be a whole number between 1 and ${max} ms.`);
+        if (v < 1 || v > max) throw invalid(el, `${name} must be between 1 and ${max} ms.`);
         return v;
       };
+      const agentProvider = text(provider, "Provider");
+      const agentModel = text(model, "Model");
+      const docker = text(dockerPath, "Docker executable");
+      if (!/^[a-zA-Z]:[/\\]/.test(docker) && !/^[\\/]{2}[^\\/]/.test(docker))
+        throw invalid(dockerPath, "Docker executable must be an absolute Windows path, such as C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe.");
+      const image = text(imageId, "Docker image ID");
+      if (!/^sha256:[a-f0-9]{64}$/.test(image))
+        throw invalid(imageId, "Docker image ID must be sha256: followed by 64 lowercase hex digits, as shown by docker images --no-trunc.");
+      let args;
+      try { args = graphCommandArgs(command.value); } catch (x) { throw invalid(command, x.message); }
+      if (!args.length) throw invalid(command, "Container command is required.");
+      if (!args[0].startsWith("/")) throw invalid(command, "The container command's first argument must be an absolute path inside the container, such as /bin/sh.");
       const out = {
-        provider: text(provider, "Provider"),
-        model: text(model, "Model"),
+        provider: agentProvider,
+        model: agentModel,
         tester: {
-          dockerPath: text(dockerPath, "Docker executable"),
-          imageId: text(imageId, "Docker image ID"),
-          command: command.value.split(/\r?\n/).filter((line) => line.trim() !== ""),
-          timeoutMs: whole(timeout, "Tester timeout"),
+          dockerPath: docker,
+          imageId: image,
+          command: args,
+          timeoutMs: whole(timeout, "Tester timeout", 300000),
         },
       };
-      if (!out.tester.command.length) throw new Error("Container command is required.");
       if (maxCoders.value) out.maxCoders = Number(maxCoders.value);
       if (allowDirty) out.allowDirty = true;
       if (judgeOn) {
         out.failureJudge = {
           provider: text(judgeProvider, "Judge provider"),
           model: text(judgeModel, "Judge model"),
-          timeoutMs: whole(judgeTimeout, "Judge timeout"),
+          timeoutMs: whole(judgeTimeout, "Judge timeout", 5000),
         };
         if (judgeUrl.value.trim()) out.failureJudge.baseUrl = judgeUrl.value.trim();
       }
@@ -1360,14 +1410,23 @@
     const show = (text, ok) => {
       status.hidden = false;
       status.className = ok ? "set-foot" : "row-err";
+      status.setAttribute("role", ok ? "status" : "alert");
       status.textContent = text;
     };
+    const banner = error ? h("div", { class: "row-err", text: "The saved profile is not usable: " + error }) : null;
     save.addEventListener("click", async () => {
       let next;
-      try { next = collect(); } catch (x) { show(x.message, false); return; }
+      try {
+        next = collect();
+      } catch (x) {
+        show(x.message, false);
+        x.field?.focus();
+        return;
+      }
       save.disabled = true;
       try {
         await graphRequest("configure", next);
+        banner?.remove();
         show("Saved.", true);
       } catch (x) {
         show(rpcErrorText(x), false);
@@ -1376,14 +1435,14 @@
       }
     });
 
-    if (error) body.append(h("div", { class: "row-err", text: "The saved profile is not usable: " + error }));
+    if (banner) body.append(banner);
     body.append(
       group("Source",
         row("Allow uncommitted changes", "Plan and run on a dirty checkout. Graph still works from the committed HEAD only, so uncommitted edits are invisible to the agents, and a patch may conflict with them when applied.",
           switchOf("Allow uncommitted changes", allowDirty, (on) => { allowDirty = on; }))),
       group("Agents",
         row("Provider", "Catalog provider the Planner, Coders and Reviewer run on.", provider),
-        row("Model", "Model ID. Credentials live in the Graph profile-home agent directory.", model),
+        row("Model", "Model ID. Uses the Graph profile-home agent directory when it has credentials, otherwise the accounts signed in to this app.", model),
         row("Parallel Coders", "How many Coders with disjoint files run at once.", maxCoders)),
       group("Tester",
         row("Docker executable", "Absolute path to docker.exe.", dockerPath),
@@ -1397,6 +1456,260 @@
       h("div", { class: "models-bar" }, save, status),
       h("p", { class: "set-foot", text: "Saved to " + path + ". Changing the agents, tester, parallel Coders or failure judge makes saved plans and runs ask for a new plan; the source option does not. Settings cannot be saved while a Graph plan or run is active." }));
     syncJudge();
+  }
+
+  // ---- design page (desktop/src/design.rs: the skill pool every Design board's agent picks from) ----
+  // Skills pinned to the "Recommended" group: owner/repo/path in their GitHub repo, read from the default branch.
+  const DESIGN_CATALOG = [
+    { name: "ui-ux-pro-max", owner: "nextlevelbuilder", repo: "ui-ux-pro-max-skill", path: ".claude/skills/ui-ux-pro-max",
+      best: "Styles, palettes, type pairings and UX rules for web and mobile UI.", needs: "Needs Python 3 for its search script." },
+    { name: "impeccable", owner: "pbakaus", repo: "impeccable", path: ".claude/skills/impeccable",
+      best: "Design vocabulary, critique and polish playbooks that steer away from generic AI looks.", needs: "Works as plain instructions; its bundled scripts are optional." },
+    { name: "hallmark", owner: "Nutlope", repo: "hallmark", path: "skills/hallmark",
+      best: "Opinionated visual direction with themes and a slop linter, best for landing pages.", needs: "Scripts need Node 18+." },
+    { name: "frontend-design", owner: "anthropics", repo: "skills", path: "skills/frontend-design",
+      best: "Anthropic's plan-then-build guidance for distinctive production-grade front ends.", needs: "No dependencies." },
+    { name: "taste-skill", owner: "Leonxlnx", repo: "taste-skill", path: "skills/taste-skill",
+      best: "Taste-driven front-end design with references and a visual checker.", needs: "Scripts need Node 22+ and Chrome." },
+    { name: "web-design-guidelines", owner: "vercel-labs", repo: "agent-skills", path: "skills/web-design-guidelines",
+      best: "Reviews a design against Vercel's web interface guidelines.", needs: "Fetches its rules online when used." },
+    { name: "baseline-ui", owner: "ibelick", repo: "ui-skills", path: "skills/baseline-ui",
+      best: "Baseline constraints for polished Tailwind/React interfaces.", needs: "No dependencies." },
+    { name: "gsap-core", owner: "greensock", repo: "gsap-skills", path: "skills/gsap-core",
+      best: "GSAP fundamentals for animated pages: tweens, easing, stagger.", needs: "No dependencies." },
+    { name: "gsap-timeline", owner: "greensock", repo: "gsap-skills", path: "skills/gsap-timeline",
+      best: "Sequenced GSAP animation with timelines.", needs: "No dependencies." },
+    { name: "gsap-scrolltrigger", owner: "greensock", repo: "gsap-skills", path: "skills/gsap-scrolltrigger",
+      best: "Scroll-driven GSAP animation with ScrollTrigger.", needs: "No dependencies." },
+  ];
+  const SKILL_MAX_FILES = 500;
+  const SKILL_MAX_BYTES = 25 * 1024 * 1024;
+
+  // `https://github.com/<owner>/<repo>` or `.../tree/<ref>/<sub/path>`; a ref containing "/" is not supported.
+  function parseGithubUrl(text) {
+    const m = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:\/tree\/([^/\s?#]+)(?:\/([^\s?#]+?))?)?\/?(?:[?#].*)?$/.exec(text.trim());
+    if (!m) throw new Error("Use https://github.com/<owner>/<repo> or https://github.com/<owner>/<repo>/tree/<ref>/<folder>.");
+    return { owner: m[1], repo: m[2], ref: m[3] || "HEAD", sub: (m[4] || "").replace(/^\/+|\/+$/g, "") };
+  }
+  const githubSource = ({ owner, repo, ref, sub }) =>
+    `https://github.com/${owner}/${repo}` + (sub || ref !== "HEAD" ? `/tree/${ref}${sub ? "/" + sub : ""}` : "");
+
+  async function githubFetch(url, what) {
+    let res;
+    try { res = await fetch(url, { headers: url.startsWith("https://api.github.com/") ? { Accept: "application/vnd.github+json" } : {} }); }
+    catch (x) { throw new Error(`Could not reach GitHub for ${what}: ${x && x.message ? x.message : x}`); }
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).message || ""; } catch { /* body is not JSON */ }
+      throw new Error(`GitHub answered ${res.status} for ${what}${detail ? ": " + detail : ""}`);
+    }
+    return res;
+  }
+
+  // Downloads one skill folder into the pool through design_skill_write and returns { dir, truncated }.
+  // progress(done, total) reports files; any failure removes the half-written skill folder.
+  async function importGithubSkill(spec, progress) {
+    const { owner, repo, ref, sub } = spec;
+    const dir = (sub ? sub.split("/").pop() : repo).replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, 64);
+    if (!dir) throw new Error("Cannot derive a skill folder name from that address.");
+    const installed = await invoke("design_skills");
+    if (installed.some((s) => s.dir === dir)) throw new Error(`A skill named "${dir}" is already installed. Remove it first.`);
+
+    const tree = await (await githubFetch(
+      `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`, `${owner}/${repo}`)).json();
+    const prefix = sub ? sub + "/" : "";
+    const files = (Array.isArray(tree.tree) ? tree.tree : []).filter((e) => e.type === "blob" && e.path.startsWith(prefix));
+    if (!files.some((e) => e.path === prefix + "SKILL.md")) {
+      throw new Error(tree.truncated
+        ? "The repository is too large for GitHub to list in full, so SKILL.md was not found. Clone it and use From folder."
+        : `No SKILL.md found in ${sub || "the repository root"}.`);
+    }
+    if (files.length > SKILL_MAX_FILES) throw new Error(`The folder has ${files.length} files; the limit is ${SKILL_MAX_FILES}.`);
+    if (files.reduce((sum, e) => sum + (e.size || 0), 0) > SKILL_MAX_BYTES) throw new Error("The folder is larger than 25 MiB.");
+
+    let done = 0;
+    let next = 0;
+    let failure = null;
+    progress(0, files.length);
+    const worker = async () => {
+      while (!failure && next < files.length) {
+        const entry = files[next++];
+        try {
+          const rel = entry.path.slice(prefix.length);
+          const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${entry.path.split("/").map(encodeURIComponent).join("/")}`;
+          const bytes = new Uint8Array(await (await githubFetch(url, entry.path)).arrayBuffer());
+          await invoke("design_skill_write", bytes, { headers: { "x-skill": dir, "x-path": encodeURIComponent(rel) } });
+          progress(++done, files.length);
+        } catch (x) {
+          failure = x;
+        }
+      }
+    };
+    try {
+      await Promise.all(Array.from({ length: Math.min(4, files.length) }, worker));
+      if (failure) throw failure;
+      await invoke("design_skill_set", { dir, active: true, source: githubSource(spec) });
+    } catch (x) {
+      try { await invoke("design_skill_remove", { dir }); } catch { /* nothing was written */ }
+      throw x;
+    }
+    return { dir, truncated: tree.truncated === true };
+  }
+
+  let designBusy = false; // one skill change at a time, across page redraws
+  let designNote = null; // { text, ok } shown above the groups
+  let designView = null; // { note, body } of the rendered page
+  const designChanged = () => window.dispatchEvent(new Event("kostomp-design-skills-changed"));
+
+  function paintDesignNote() {
+    const el = designView && designView.note;
+    if (!el) return;
+    el.hidden = !designNote;
+    if (!designNote) return;
+    el.className = designNote.ok ? "set-foot" : "row-err";
+    el.textContent = designNote.text;
+  }
+  const setDesignNote = (text, ok = true) => { designNote = { text, ok }; paintDesignNote(); };
+
+  // Runs `work(progress)`; its returned text (or the error) lands in the note, then the lists are re-read.
+  async function designRun(start, work) {
+    if (designBusy) return;
+    designBusy = true;
+    setDesignNote(start);
+    for (const b of pageEl.querySelectorAll("button")) b.disabled = true;
+    try {
+      setDesignNote(await work((text) => setDesignNote(text)));
+    } catch (x) {
+      setDesignNote(String(x && x.message ? x.message : x), false);
+    } finally {
+      designBusy = false;
+      designChanged();
+      if (page === "design" && designView) drawDesign();
+    }
+  }
+
+  const installFromGithub = async (spec, label, note) => {
+    const { dir, truncated } = await importGithubSkill(spec, (n, total) => note(`Installing ${label}: ${n}/${total} files…`));
+    return `Installed ${dir}.` + (truncated ? " GitHub truncated the file list; some files may be missing." : "");
+  };
+
+  async function drawDesign() {
+    const view = designView;
+    let skills;
+    try { skills = await invoke("design_skills"); }
+    catch (x) { if (view === designView) view.body.replaceChildren(h("div", { class: "row-err", text: String(x && x.message ? x.message : x) }),
+      h("button", { type: "button", class: "btn", text: "Try again", onclick: () => drawDesign() })); return; }
+    let root = "";
+    try { root = await invoke("design_root"); } catch { /* the footer just omits the location */ }
+    if (view !== designView || page !== "design") return;
+
+    const { body } = view;
+    const group = (title, ...rows) => h("section", { class: "set-group" }, h("h2", { text: title }), ...rows);
+    const lock = designBusy;
+
+    const list = skills.map((s) => {
+      const on = s.active !== false;
+      const sw = toggle(`Use ${s.name || s.dir}`, async (want) => {
+        sw.setAttribute("aria-checked", String(want));
+        try {
+          await invoke("design_skill_set", { dir: s.dir, active: want });
+          s.active = want;
+          designChanged();
+        } catch (x) {
+          sw.setAttribute("aria-checked", String(!want));
+          setDesignNote(String(x && x.message ? x.message : x), false);
+        }
+      });
+      sw.setAttribute("aria-checked", String(on));
+      sw.disabled = lock;
+      const rm = h("button", { type: "button", class: "btn", text: "Remove", disabled: lock, onclick: async () => {
+        const title = `Remove skill "${s.name || s.dir}"?`;
+        const detail = `This deletes ${s.path || s.dir} from the Design skill pool. Designs already made keep their files.`;
+        const ok = window.kostompConfirmDelete ? await window.kostompConfirmDelete(title, detail) : confirm(title + "\n" + detail);
+        if (!ok) return;
+        await designRun(`Removing ${s.dir}…`, async () => {
+          await invoke("design_skill_remove", { dir: s.dir });
+          return `Removed ${s.dir}.`;
+        });
+      } });
+      const label = s.name && s.name !== s.dir ? `${s.name} (${s.dir})` : s.dir;
+      const r = row(label, [s.description, s.source ? "Source: " + s.source : "Added by hand"].filter(Boolean).join("\n"), sw, rm);
+      r.querySelector(".desc")?.style.setProperty("white-space", "pre-wrap");
+      r.classList.toggle("off", !on);
+      return r;
+    });
+
+    const installedDirs = new Set(skills.map((s) => s.dir));
+    const missing = DESIGN_CATALOG.filter((c) => !installedDirs.has(c.name));
+
+    const urlField = h("input", { class: "field wide", type: "text", spellcheck: false, disabled: lock,
+      placeholder: "https://github.com/owner/repo/tree/main/skills/name", "aria-label": "GitHub skill address" });
+    const fromGithub = async () => {
+      let spec;
+      try { spec = parseGithubUrl(urlField.value); } catch (x) { setDesignNote(x.message, false); return; }
+      await designRun("Reading GitHub…", async (note) => {
+        const out = await installFromGithub(spec, spec.sub ? spec.sub.split("/").pop() : spec.repo, note);
+        urlField.value = "";
+        return out;
+      });
+    };
+    urlField.addEventListener("keydown", (e) => { if (e.key === "Enter") fromGithub(); });
+    const fromFolder = h("button", { type: "button", class: "btn", text: "From folder…", disabled: lock, onclick: async () => {
+      let path;
+      try { path = await invoke("pick_folder", { start: null }); } catch (x) { setDesignNote(String(x && x.message ? x.message : x), false); return; }
+      if (!path) return;
+      await designRun("Copying the skill…", async () => {
+        const dir = await invoke("design_skill_import_folder", { path });
+        await invoke("design_skill_set", { dir, active: true, source: path });
+        return `Installed ${dir}.`;
+      });
+    } });
+
+    const installRow = (c) => row(c.name, `${c.best} ${c.needs}`,
+      h("button", { type: "button", class: "btn", text: "Install", disabled: lock, onclick: () =>
+        designRun(`Reading ${c.owner}/${c.repo}…`, (note) =>
+          installFromGithub({ owner: c.owner, repo: c.repo, ref: "HEAD", sub: c.path }, c.name, note)) }));
+    const installAllBtn = h("button", { type: "button", class: "btn", text: `Install all (${missing.length})`, disabled: lock,
+      onclick: () => designRun("Installing recommended skills…", async (note) => {
+        const failed = [];
+        let ok = 0;
+        for (const c of missing) {
+          try {
+            await installFromGithub({ owner: c.owner, repo: c.repo, ref: "HEAD", sub: c.path }, c.name, (t) => note(`${t} (${ok + failed.length + 1}/${missing.length})`));
+            ok++;
+          } catch (x) {
+            failed.push(`${c.name}: ${x && x.message ? x.message : x}`);
+          }
+        }
+        if (failed.length) throw new Error(`Installed ${ok} of ${missing.length}. ${failed.join(" ")}`);
+        return `Installed ${ok} skills.`;
+      }) });
+
+    body.replaceChildren(
+      group("Installed",
+        ...(list.length ? list : [h("p", { class: "set-empty", text: "No skills yet. Add one below; Design mode cannot work without at least one active skill." })])),
+      group("Add a skill",
+        row("From a folder", "A folder that contains SKILL.md. It is copied into the pool.", fromFolder),
+        row("From GitHub", "A repository or a folder inside it, for example https://github.com/owner/repo/tree/main/skills/name. The default branch is used when no branch is given.",
+          urlField, h("button", { type: "button", class: "btn", text: "Add", disabled: lock, onclick: fromGithub }))),
+      group("Recommended",
+        ...(missing.length ? [missing.length > 1 && row("Install all", "Installs every skill below one after another.", installAllBtn), ...missing.map(installRow)] : [h("p", { class: "set-empty", text: "Every recommended skill is installed." })])),
+      h("p", { class: "set-foot", text: (root ? "The pool lives in " + root + ". " : "") +
+        "Open Design (an app) and design-md-chrome (a Chrome extension that generates SKILL.md files) are not skills themselves; a SKILL.md folder generated with design-md-chrome can be added with From a folder." }));
+    paintDesignNote();
+  }
+
+  function renderDesignPage() {
+    const note = h("div", { hidden: true });
+    const body = h("div", { class: "set-body" });
+    pageEl.append(
+      h("h1", { text: "Design" }),
+      h("p", { class: "set-lead", text: "Design mode picks one skill from this pool for every prompt, or uses the one you choose. Turn a skill off to keep it installed but out of the pool." }),
+      note, body);
+    designView = { note, body };
+    paintDesignNote();
+    body.append(waitBox("Reading the skill pool…"));
+    drawDesign();
   }
 
   // ---- start ------------------------------------------------------------

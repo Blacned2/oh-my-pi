@@ -3,6 +3,10 @@
 # desktop/runtime, which tauri.conf.json bundles into the installer. The omp installed on the
 # machine is never used: the source is the repo root's node_modules (workspace links resolved).
 # Requires `bun install` at the repo root and a built natives addon (packages/natives/native/*.node).
+# The Graph sidecar (desktop/graph) is staged on every run, also shell-only: NSIS never deletes files
+# of an earlier install, so an update that skipped it would leave the old sidecar talking to the new
+# UI. graph\OMP_VERSION records the omp it was written for; the app refuses to start it against a
+# runtime\OMP_VERSION that differs.
 #   -NoOmp    leave the agent (pi-coding-agent) and the packages only it needs out
 #   -NoStats  leave the dashboard (omp-stats) and the packages only it needs out
 param(
@@ -65,14 +69,12 @@ foreach ($r in $roots) { [void]$wanted.Add($r) }
 if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
 New-Item -ItemType Directory -Path $dest | Out-Null
 if ($roots.Count -gt 0) { Copy-Item -LiteralPath $Bun -Destination (Join-Path $dest "bun.exe") }
-if (-not $NoOmp) {
-    $graphSource = Join-Path $PSScriptRoot "..\graph"
-    $graphDest = Join-Path $dest "graph"
-    New-Item -ItemType Directory -Path $graphDest | Out-Null
-    Get-ChildItem -LiteralPath $graphSource -File -Filter "*.ts" | Copy-Item -Destination $graphDest
-    foreach ($part in "prompts", "questions", "tester-bootstrap.sh") {
-        Copy-Item -LiteralPath (Join-Path $graphSource $part) -Destination $graphDest -Recurse
-    }
+$graphSource = Join-Path $PSScriptRoot "..\graph"
+$graphDest = Join-Path $dest "graph"
+New-Item -ItemType Directory -Path $graphDest | Out-Null
+Get-ChildItem -LiteralPath $graphSource -File -Filter "*.ts" | Copy-Item -Destination $graphDest
+foreach ($part in "prompts", "questions", "tester-bootstrap.sh") {
+    Copy-Item -LiteralPath (Join-Path $graphSource $part) -Destination $graphDest -Recurse
 }
 
 $copied = 0
@@ -111,6 +113,7 @@ if (Test-Path -LiteralPath $nativesDest) {
 }
 
 $version = (Get-Content (Join-Path (Get-PkgDir $ompPkg) "package.json") -Raw | ConvertFrom-Json).version
+Set-Content -Path (Join-Path $graphDest "OMP_VERSION") -Value $version -NoNewline
 $parts = @()
 if (-not $NoOmp) { $parts += "omp" }
 if (-not $NoStats) { $parts += "stats" }

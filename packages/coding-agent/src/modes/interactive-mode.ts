@@ -4962,6 +4962,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	#composerHint(): string | undefined {
 		return resolveComposerHint({
 			runningAgents: this.#runningSubagentCount,
+			streaming: this.viewSession.isStreaming,
 			focusedOnAgent: this.focusedAgentId !== undefined,
 			conversationStarted: this.viewSession.messages.length > 0,
 			keybindings: this.keybindings,

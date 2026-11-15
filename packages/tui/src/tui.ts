@@ -2949,7 +2949,9 @@ export class TUI extends Container {
 		// before we allow the follow-up render to fire. Capped so a
 		// pathological one-off spike doesn't lock the UI (#4145).
 		const adaptiveFloor = Math.min(TUI.#MAX_ADAPTIVE_RENDER_MS, this.#lastFrameCostMs * 2);
-		const adaptiveDelay = Math.max(0, adaptiveFloor - elapsed);
+		// Navigation must not inherit an unrelated expensive background paint's
+		// delay. Input keeps its cadence; terminal output backpressure still applies.
+		const adaptiveDelay = this.#inputRenderPending ? 0 : Math.max(0, adaptiveFloor - elapsed);
 		const inputGraceDelay = Math.max(0, this.#inputRenderGraceUntilMs - now);
 		// Native frames are paced by the terminal's acknowledgements (credits),
 		// not by the row renderer's cadence.

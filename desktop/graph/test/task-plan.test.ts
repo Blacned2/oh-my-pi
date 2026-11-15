@@ -44,6 +44,16 @@ test.each([
 		/a and b both write SRC\/Backend.txt/,
 	],
 	["a repeated task id", [task("a", ["src/backend.txt"]), task("a", ["docs/api.md"])], /repeats task a/],
+	[
+		"a task listing one file twice",
+		[task("a", ["src/backend.txt", "src/backend.txt"])],
+		/task a lists src\/backend.txt twice/,
+	],
+	[
+		"a path longer than 260 characters",
+		[task("a", [`src/${"x".repeat(260)}.txt`])],
+		/task a lists a path longer than 260/,
+	],
 	["a parent traversal", [task("a", ["src/../src/backend.txt"])], /portable/],
 	["an absolute Windows path", [task("a", ["C:/repo/src/backend.txt"])], /portable/],
 	["a Windows short-name alias", [task("a", ["src/BACKEN~1.TXT"])], /short-name alias/],

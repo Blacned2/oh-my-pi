@@ -10,12 +10,14 @@
 
   const call = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, { label: "main", ...args });
 
+  // The shell's titlebar floats with a margin, so its strip ends at the bar's bottom edge.
   // Events from inside the closed shadow root are retargeted to its host, so exclude the host.
-  const inDragStrip = (e, host) =>
-    e.button === 0 && e.clientY <= STRIP_HEIGHT && e.target !== host && !e.target.closest?.(INTERACTIVE);
+  const inDragStrip = (e, host, topbar) =>
+    e.button === 0 && e.clientY <= (topbar ? topbar.getBoundingClientRect().bottom : STRIP_HEIGHT) &&
+    e.target !== host && !e.target.closest?.(INTERACTIVE);
 
-  const ICON_MAX = '<rect x="2.5" y="2.5" width="7" height="7" rx="1"/>';
-  const ICON_RESTORE = '<path d="M4.5 2.5h5v5M2.5 4.5h5v5h-5z" stroke-linejoin="round"/>';
+  const ICON_MAX = '<rect x="5" y="5" width="14" height="14" rx="2.5"/>';
+  const ICON_RESTORE = '<rect x="5" y="9" width="10" height="10" rx="2"/><path d="M9 9V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2"/>';
 
   const mount = () => {
     const host = document.createElement("div");
@@ -30,30 +32,34 @@
       <style>
         :host { font:inherit; }
         .bar {
-          display:flex; align-items:center; gap:8px;
+          display:flex; align-items:center; gap:6px;
           user-select:none; -webkit-user-select:none;
         }
-        button.glass-control {
+        .bar.in-topbar { margin-left:6px; padding-left:10px; border-left:1px solid var(--line-2); }
+        .bar button.bead {
           box-sizing:border-box; display:grid; place-items:center; padding:0;
-          width:36px; height:36px; border-radius:10px;
-          color:var(--ink-2); cursor:pointer;
-          transition:transform 160ms var(--ease),opacity 160ms var(--ease);
+          width:34px; height:34px; border:0; border-radius:50%;
+          background:var(--hover, rgb(255 255 255 / .08)); color:var(--ink-1); cursor:pointer;
+          box-shadow:inset 0 1px 1px rgb(255 255 255 / .45), inset 0 -2px 3px rgb(0 0 0 / .16);
         }
-        button:hover { color:var(--ink-1); }
-        button:active { transform:scale(.97); }
-        button:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
-        button.close:hover { background:var(--bad-soft); color:var(--bad); }
-        svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; }
+        .bar button.bead:hover { background:var(--press, rgb(255 255 255 / .14)); }
+        .bar button.bead:active { transform:scale(.9); }
+        .bar button.bead:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+        .bar button.close:hover { background:var(--bad); color:#fff; }
+        svg { width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
       </style>
-      <div class="bar">
-        <button class="min glass-control" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 12 12"><path d="M2.5 6h7"/></svg></button>
-        <button class="max glass-control" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 12 12">${ICON_MAX}</svg></button>
-        <button class="close glass-control" title="Close" aria-label="Close"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
+      <div class="bar${topbar ? " in-topbar" : ""}">
+        <button class="min bead" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+        <button class="max bead" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 24 24">${ICON_MAX}</svg></button>
+        <button class="close bead" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>`;
 
     const maxBtn = root.querySelector(".max");
+    let shownMaximized = false; // the markup starts with the maximize icon
     const syncMaxIcon = async () => {
-      const maximized = await call("plugin:window|is_maximized");
+      const maximized = !!(await call("plugin:window|is_maximized"));
+      if (maximized === shownMaximized) return;
+      shownMaximized = maximized;
       maxBtn.querySelector("svg").innerHTML = maximized ? ICON_RESTORE : ICON_MAX;
       maxBtn.title = maxBtn.ariaLabel = maximized ? "Restore" : "Maximize";
     };
@@ -70,11 +76,16 @@
     // start_dragging hands the mouse to the OS and swallows the click/dblclick events, so the
     // double-click is detected on the second mousedown (detail === 2) and must not start a drag.
     document.addEventListener("mousedown", (e) => {
-      if (!inDragStrip(e, host)) return;
+      if (!inDragStrip(e, host, topbar)) return;
       if (e.detail === 2) toggleMaximize();
       else if (e.detail < 2) call("plugin:window|start_dragging");
     });
-    window.addEventListener("resize", syncMaxIcon);
+    // Resize fires every frame while an edge is dragged: sync once it settles.
+    let resizeTimer = 0;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(syncMaxIcon, 120);
+    });
 
     // Invisible edge/corner grips: a frameless window has no native resize border to grab.
     const GRIP = 5;
@@ -102,7 +113,7 @@
     }
     document.documentElement.appendChild(gripHost);
 
-    (topbar || document.documentElement).appendChild(host);
+    (topbar?.querySelector(".tb-r") || topbar || document.documentElement).appendChild(host);
     syncMaxIcon();
   };
 

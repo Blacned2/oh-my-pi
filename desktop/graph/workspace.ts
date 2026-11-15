@@ -3,16 +3,20 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { VcsGitRepo } from "@oh-my-pi/pi-natives";
 import * as vcs from "@oh-my-pi/pi-natives/vcs";
-import { TempDir } from "@oh-my-pi/pi-utils";
+import { removeWithRetries, TempDir } from "@oh-my-pi/pi-utils";
 import { createScratchGit } from "./git-scratch";
 import { repoPathPrefixes } from "./repo-path";
-import { buildTestSnapshot } from "./test-snapshot";
+import { buildTestSnapshot, readSnapshotEntries } from "./test-snapshot";
 
 const maxPatchBytes = 1024 * 1024;
 const maxReadBytes = 1024 * 1024;
 const sha1 = /^[a-f0-9]{40}$/;
 const unsupportedMetadata =
 	/^(?:rename (?:from|to) |copy (?:from|to) |(?:old mode|new mode|deleted file mode|new file mode|index [a-f0-9]+\.\.[a-f0-9]+) (?:120000|160000)$)/m;
+const modeChange = /^(?:old|new) mode /m;
+const hunkHeader = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/;
+const maxListedPaths = 20;
+const maxListedPathChars = 200;
 
 export interface GraphBlobChange {
 	path: string;
@@ -46,6 +50,8 @@ export interface GraphSourceOptions {
 	signal?: AbortSignal;
 	/** Accept uncommitted changes. Graph still reads only the committed `HEAD`, so they never reach a run. */
 	allowDirty?: boolean;
+	/** Keeps the copied object database of a disposed workspace for the next pin of the same commit. */
+	objectCache?: GraphObjectCache;
 }
 
 export async function graphBaseIsCurrent(
@@ -73,6 +79,72 @@ export async function inspectGraphSource(sourceDirectory: string, { signal, allo
 	return { sourceRoot, gitDir, commonDir, baseSha };
 }
 
+/** Name the first rename, copy, symlink or submodule change in a patch, with its file header. */
+function unsupportedChange(patch: string): string | undefined {
+	const match = unsupportedMetadata.exec(patch);
+	if (!match) return undefined;
+	const line = match[0];
+	const kind = /^(?:rename|copy) /.test(line) ? "rename/copy" : line.endsWith("120000") ? "symlink" : "submodule";
+	const start = patch.lastIndexOf("\ndiff --git ", match.index) + 1;
+	const end = patch.indexOf("\n", start);
+	const header = bounded(patch.slice(start, end < 0 ? undefined : end));
+	return `Graph does not support ${kind} changes (${header}); submit content changes to regular files only`;
+}
+
+function bounded(text: string): string {
+	return text.length > maxListedPathChars ? `${text.slice(0, maxListedPathChars)}…` : text;
+}
+
+function listPaths(paths: readonly string[]): string {
+	const shown = paths.slice(0, maxListedPaths).map(bounded).join(", ");
+	return paths.length > maxListedPaths ? `${shown} and ${paths.length - maxListedPaths} more` : shown;
+}
+
+/**
+ * Restore the leading space of blank context lines, which models often drop and which end a hunk early.
+ * Only an empty line inside a hunk that still expects old and new lines is rewritten.
+ */
+export function restoreBlankContextLines(patch: string): string {
+	const lines = patch.split("\n");
+	let oldLines = 0;
+	let newLines = 0;
+	// The last element follows the final newline (or is an unterminated line); it is never a blank line.
+	for (let i = 0; i < lines.length - 1; i++) {
+		const line = lines[i];
+		const header = hunkHeader.exec(line);
+		if (header) {
+			oldLines = header[1] === undefined ? 1 : Number(header[1]);
+			newLines = header[2] === undefined ? 1 : Number(header[2]);
+			continue;
+		}
+		if (oldLines <= 0 && newLines <= 0) continue;
+		if (line === "" && oldLines > 0 && newLines > 0) lines[i] = " ";
+		switch (lines[i][0]) {
+			case " ":
+				oldLines--;
+				newLines--;
+				break;
+			case "-":
+				oldLines--;
+				break;
+			case "+":
+				newLines--;
+				break;
+			case "\\":
+				break;
+			default:
+				oldLines = 0;
+				newLines = 0;
+		}
+	}
+	return lines.join("\n");
+}
+
+async function borrowsObjects(commonDir: string): Promise<boolean> {
+	const alternates = Bun.file(path.join(commonDir, "objects", "info", "alternates"));
+	return (await alternates.exists()) && /^\s*[^#\s]/m.test(await alternates.text());
+}
+
 interface CandidateData {
 	patch: string;
 	spellings: ReadonlyMap<string, string>;
@@ -98,8 +170,10 @@ function pathDirectories(spellings: ReadonlyMap<string, string>): Set<string> {
 
 function checkOwnership(
 	scopes: ReadonlyMap<string, readonly string[]>,
-	spellings: Map<string, string>,
+	base: ReadonlyMap<string, string>,
+	baseDirectories: ReadonlySet<string>,
 ): Map<string, string> {
+	const spellings = new Map(base);
 	const owners = new Map<string, string>();
 	const directories = new Set<string>();
 	for (const [owner, files] of scopes) {
@@ -107,6 +181,13 @@ function checkOwnership(
 			const prefixes = repoPathPrefixes(file);
 			registerSpelling(spellings, prefixes);
 			const [key] = prefixes.at(-1)!;
+			if (baseDirectories.has(key)) {
+				throw new Error(`Graph path ${file} is a directory in the base snapshot; list the files inside it instead`);
+			}
+			const baseFile = prefixes.slice(0, -1).find(([prefix]) => base.has(prefix) && !baseDirectories.has(prefix));
+			if (baseFile) {
+				throw new Error(`Graph path ${file} lies under ${baseFile[1]}, which is a file in the base snapshot`);
+			}
 			if (directories.has(key) || prefixes.some(([prefix]) => owners.has(prefix))) {
 				throw new Error("Graph file ownership overlaps");
 			}
@@ -117,9 +198,50 @@ function checkOwnership(
 	return owners;
 }
 
+/** Holds at most one spare scratch repository whose object database was copied from a source repository. */
+export class GraphObjectCache implements AsyncDisposable {
+	#spare: { key: string; scratch: TempDir; repo: VcsGitRepo } | undefined;
+	#disposed = false;
+
+	/** The spare for `key`, which leaves the cache; a spare for another key stays. */
+	take(key: string): { scratch: TempDir; repo: VcsGitRepo } | undefined {
+		const spare = this.#spare;
+		if (spare?.key !== key) return undefined;
+		this.#spare = undefined;
+		return spare;
+	}
+
+	/** Keep `scratch` as the spare for `key`, deleting the previous spare. After disposal `scratch` is deleted instead. */
+	async give(key: string, scratch: TempDir, repo: VcsGitRepo): Promise<void> {
+		if (this.#disposed) return scratch.remove();
+		const previous = this.#spare;
+		this.#spare = { key, scratch, repo };
+		await previous?.scratch.remove();
+	}
+
+	async [Symbol.asyncDispose](): Promise<void> {
+		this.#disposed = true;
+		const spare = this.#spare;
+		this.#spare = undefined;
+		await spare?.scratch.remove();
+	}
+}
+
+interface TestArchive {
+	treeId: string;
+	path: string;
+	/** The signal of the caller that started the build. */
+	signal?: AbortSignal;
+	/** A build that fails deletes its partial file before rejecting. */
+	build: Promise<Bun.BunFile>;
+}
+
 /** Pins read-only Git inputs and owns the independent object database and candidate indexes. */
 export class GraphWorkspace implements AsyncDisposable {
 	readonly #candidates = new WeakMap<GraphCandidate, CandidateData>();
+	readonly #directories: ReadonlySet<string>;
+	#archive: TestArchive | undefined;
+	#disposal: Promise<void> | undefined;
 
 	private constructor(
 		readonly baseSha: string,
@@ -128,11 +250,19 @@ export class GraphWorkspace implements AsyncDisposable {
 		private readonly scratch: TempDir,
 		private readonly repo: VcsGitRepo,
 		private readonly spellings: ReadonlyMap<string, string>,
-	) {}
+		private readonly objects?: { cache: GraphObjectCache; key: string },
+	) {
+		this.#directories = pathDirectories(spellings);
+	}
 
 	static async pin(sourceDirectory: string, options: GraphSourceOptions = {}): Promise<GraphWorkspace> {
 		const { signal, allowDirty = false } = options;
 		const { sourceRoot, gitDir, commonDir, baseSha } = await inspectGraphSource(sourceDirectory, options);
+		if (await borrowsObjects(commonDir)) {
+			throw new Error(
+				"Graph does not support repositories that borrow objects from another repository (git clone --shared/--reference)",
+			);
+		}
 		const temporaryRoot = await fs.realpath(os.tmpdir());
 		const metadataRoots = await Promise.all([gitDir, commonDir].map(directory => fs.realpath(directory)));
 		if (
@@ -144,27 +274,55 @@ export class GraphWorkspace implements AsyncDisposable {
 		) {
 			throw new Error("Graph scratch storage must be outside Git checkouts and metadata");
 		}
-		const scratch = await TempDir.create(path.join(temporaryRoot, "kostomp-graph-workspace-"));
+		// The scratch holds nothing from the source but its objects, so a copy serves every pin of the same commit.
+		const objects = options.objectCache && { cache: options.objectCache, key: `${metadataRoots[1]}\n${baseSha}` };
+		const spare = objects?.cache.take(objects.key);
+		const scratch = spare?.scratch ?? (await TempDir.create(path.join(temporaryRoot, "kostomp-graph-workspace-")));
 		try {
-			const repo = await createScratchGit(scratch.path());
-			await vcs.copyGitObjects(sourceRoot, scratch.path());
+			let repo = spare?.repo;
+			if (!repo) {
+				repo = await createScratchGit(scratch.path());
+				await vcs.copyGitObjects(sourceRoot, scratch.path());
+			}
 			signal?.throwIfAborted();
+			await using index = await TempDir.create(scratch.join("pin-"));
+			const indexPath = index.join("index");
+			await repo.readTree(baseSha, indexPath, signal);
+			await readSnapshotEntries(indexPath);
 			const spellings = new Map<string, string>();
 			for (const file of await repo.lsTree(baseSha, [], signal)) registerSpelling(spellings, repoPathPrefixes(file));
-			return new GraphWorkspace(baseSha, sourceRoot, allowDirty, scratch, repo, spellings);
+			return new GraphWorkspace(baseSha, sourceRoot, allowDirty, scratch, repo, spellings, objects);
 		} catch (error) {
 			await scratch[Symbol.asyncDispose]();
 			throw error;
 		}
 	}
 
-	async [Symbol.asyncDispose](): Promise<void> {
-		await this.scratch.remove();
+	/** With an object cache the scratch goes back to it, holding only its object database. */
+	[Symbol.asyncDispose](): Promise<void> {
+		this.#disposal ??= this.#dispose();
+		return this.#disposal;
+	}
+
+	async #dispose(): Promise<void> {
+		const { objects } = this;
+		let reusable = objects !== undefined;
+		const archive = this.#archive;
+		this.#archive = undefined;
+		try {
+			// A build in progress settles first, so nothing is written into the archives after their removal.
+			await archive?.build.catch(() => undefined);
+			await removeWithRetries(this.scratch.join("archives"));
+		} catch {
+			reusable = false;
+		}
+		if (objects && reusable) await objects.cache.give(objects.key, this.scratch, this.repo);
+		else await this.scratch.remove();
 	}
 
 	/** Reject write scopes that overlap or collide with a differently spelled path in the pinned tree. */
 	checkScopes(scopes: ReadonlyMap<string, readonly string[]>): void {
-		checkOwnership(scopes, new Map(this.spellings));
+		checkOwnership(scopes, this.spellings, this.#directories);
 	}
 
 	/** Immediate children of a directory (`""` is the root) in the pinned base or a composed candidate. Directories end with `/`. */
@@ -206,12 +364,62 @@ export class GraphWorkspace implements AsyncDisposable {
 		return this.#readFile(candidate.treeId, data.spellings, file, signal);
 	}
 
-	async testSnapshot(candidate: GraphCandidate, archivePath: string, signal?: AbortSignal): Promise<Bun.BunFile> {
+	/** The export patch of a composed candidate. */
+	candidatePatch(candidate: GraphCandidate): string {
+		const data = this.#candidates.get(candidate);
+		if (!data) throw new Error("Unknown Graph candidate");
+		return data.patch;
+	}
+
+	/** The Tester's tar of a candidate, built once per candidate tree and kept until another tree replaces it. */
+	async testSnapshot(candidate: GraphCandidate, signal?: AbortSignal): Promise<Bun.BunFile> {
 		if (!this.#candidates.has(candidate)) throw new Error("Unknown Graph candidate");
-		await using index = await TempDir.create(this.scratch.join("test-"));
-		const indexPath = index.join("index");
-		await this.repo.readTree(candidate.treeId, indexPath, signal);
-		return await buildTestSnapshot(this.repo, indexPath, archivePath, signal);
+		for (;;) {
+			const current = this.#archive;
+			const archive = current?.treeId === candidate.treeId ? current : this.#buildArchive(candidate.treeId, signal);
+			try {
+				return await archive.build;
+			} catch (error) {
+				// A shared build that another caller aborted starts over for this one.
+				if (archive.signal === signal || !archive.signal?.aborted) throw error;
+				signal?.throwIfAborted();
+			}
+		}
+	}
+
+	#buildArchive(treeId: string, signal?: AbortSignal): TestArchive {
+		const previous = this.#archive;
+		const archivePath = this.scratch.join("archives", `${crypto.randomUUID()}.tar`);
+		const build = this.#writeArchive(treeId, archivePath, previous, signal);
+		const archive = { treeId, path: archivePath, signal, build };
+		this.#archive = archive;
+		build.catch(() => {
+			if (this.#archive === archive) this.#archive = undefined;
+		});
+		return archive;
+	}
+
+	async #writeArchive(
+		treeId: string,
+		archivePath: string,
+		previous: TestArchive | undefined,
+		signal?: AbortSignal,
+	): Promise<Bun.BunFile> {
+		if (previous) {
+			await previous.build.catch(() => undefined);
+			// One that cannot be deleted now goes with the archives directory when the workspace is disposed.
+			await fs.rm(previous.path, { force: true }).catch(() => undefined);
+		}
+		try {
+			await fs.mkdir(path.dirname(archivePath), { recursive: true });
+			await using index = await TempDir.create(this.scratch.join("test-"));
+			const indexPath = index.join("index");
+			await this.repo.readTree(treeId, indexPath, signal);
+			return await buildTestSnapshot(this.repo, indexPath, archivePath, signal);
+		} catch (error) {
+			await fs.rm(archivePath, { force: true }).catch(() => undefined);
+			throw error;
+		}
 	}
 
 	async #readFile(tree: string, spellings: ReadonlyMap<string, string>, file: string, signal?: AbortSignal) {
@@ -232,33 +440,47 @@ export class GraphWorkspace implements AsyncDisposable {
 		patch: string,
 		signal?: AbortSignal,
 	): Promise<GraphChangeSet> {
-		const owners = checkOwnership(new Map([[nodeId, files]]), new Map(this.spellings));
-		if (!patch.trim() || Buffer.byteLength(patch) > maxPatchBytes || unsupportedMetadata.test(patch)) {
-			throw new Error("Graph patch is empty, too large, or contains unsupported changes");
+		const owners = checkOwnership(new Map([[nodeId, files]]), this.spellings, this.#directories);
+		if (!patch.trim()) throw new Error("Graph patch is empty; submit a unified diff that changes the approved files");
+		const bytes = Buffer.byteLength(patch);
+		if (bytes > maxPatchBytes) {
+			throw new Error(`Graph patch is ${bytes} bytes, over the 1 MiB limit; submit a smaller patch`);
 		}
+		const unsupported = unsupportedChange(patch);
+		if (unsupported) throw new Error(unsupported);
 		await using index = await TempDir.create(this.scratch.join("capture-"));
 		const indexPath = index.join("index");
 		const apply = { cached: true, indexPath, threeWay: false };
 		await this.repo.readTree(this.baseSha, indexPath, signal);
-		await this.repo.applyPatch(patch, apply, signal);
+		await this.repo.applyPatch(restoreBlankContextLines(patch), apply, signal);
 		const tree = await this.repo.writeTree(indexPath, signal);
 		const diff = { base: this.baseSha, head: tree, binary: true, maxBytes: maxPatchBytes };
 		const changed = await this.repo.changedFiles(diff, signal);
-		if (
-			changed.length === 0 ||
-			changed.some(file => !files.includes(file) || !owners.has(repoPathPrefixes(file).at(-1)![0]))
-		) {
-			throw new Error("Graph patch must change only approved files");
+		if (changed.length === 0) {
+			throw new Error("Graph patch does not change any file; submit a unified diff that changes the approved files");
+		}
+		const outside = changed.filter(file => !files.includes(file) || !owners.has(repoPathPrefixes(file).at(-1)![0]));
+		if (outside.length > 0) {
+			throw new Error(
+				`Graph patch must change only approved files; remove the changes to ${listPaths(outside)}. Approved files: ${listPaths(files)}`,
+			);
 		}
 		const rendered = await this.repo.diffText(diff, signal);
-		if (unsupportedMetadata.test(rendered)) throw new Error("Graph patch contains unsupported changes");
+		const renderedUnsupported = unsupportedChange(rendered);
+		if (renderedUnsupported) throw new Error(renderedUnsupported);
+		if (modeChange.test(rendered)) {
+			throw new Error("Graph does not support file mode changes; submit content changes only");
+		}
 		const changes: GraphBlobChange[] = [];
 		for (const path of changed) {
-			changes.push({
-				path,
-				baseBlob: (await this.repo.resolveRef(`${this.baseSha}:${path}`, signal)) ?? null,
-				newBlob: (await this.repo.resolveRef(`${tree}:${path}`, signal)) ?? null,
-			});
+			const baseBlob = (await this.repo.resolveRef(`${this.baseSha}:${path}`, signal)) ?? null;
+			const newBlob = (await this.repo.resolveRef(`${tree}:${path}`, signal)) ?? null;
+			if (baseBlob === newBlob) {
+				throw new Error(
+					`Graph patch leaves the content of ${bounded(path)} unchanged; submit content changes only`,
+				);
+			}
+			changes.push({ path, baseBlob, newBlob });
 		}
 		return { nodeId, changes, patch: rendered };
 	}
@@ -269,7 +491,7 @@ export class GraphWorkspace implements AsyncDisposable {
 		changeSets: readonly GraphChangeSet[],
 		signal?: AbortSignal,
 	): Promise<GraphCandidate> {
-		const owners = checkOwnership(scopes, new Map(this.spellings));
+		const owners = checkOwnership(scopes, this.spellings, this.#directories);
 		const sets = changeSets.map(set => ({ ...set, changes: set.changes.map(change => ({ ...change })) }));
 		const seen = new Set<string>();
 		let bytes = 0;

@@ -8,7 +8,7 @@
  * const data = defaultFormData(form);   // { db: "sqlite", notes: "" }
  * formAnswers(form, data);              // [{ name: "db", question: "Database", answer: "SQLite" }, …]
  */
-import { type ChoiceField, type FormField, type HtmlForm, spansText, type TextField } from "./parse";
+import { type ChoiceField, type FormBlock, type FormField, type HtmlForm, spansText, type TextField } from "./parse";
 
 /** Submitted value of one control: text, a number for `number`/`range` inputs, or a group's checked values. */
 export type HtmlFormValue = string | number | string[];
@@ -154,6 +154,60 @@ export function fieldQuestions(form: HtmlForm): Map<FormField, string> {
 		}
 	}
 	return questions;
+}
+
+/** Plain text of a context block (paragraph, list, preformatted text, table); empty for fields and pictures. */
+export function blockText(block: FormBlock): string {
+	switch (block.kind) {
+		case "text":
+			return spansText(block.spans);
+		case "pre":
+			return block.text;
+		case "list":
+			return block.items
+				.map((item, index) => `${block.ordered ? `${index + 1}.` : "-"} ${spansText(item)}`)
+				.join("\n");
+		case "table":
+			return block.rows.map(cells => cells.map(cell => spansText(cell)).join(" | ")).join("\n");
+		default:
+			return "";
+	}
+}
+
+/**
+ * The context each named field needs when the form is asked one field at a
+ * time: section titles and context blocks since the previous named field, as
+ * plain text, minus whatever already became its question
+ * ({@link fieldQuestions}). Fields with no such context are absent.
+ */
+export function fieldContexts(form: HtmlForm): Map<FormField, string> {
+	const contexts = new Map<FormField, string>();
+	let parts: string[] = [];
+	for (const section of form.sections) {
+		const title = spansText(section.title).trim();
+		// Indices into `parts` of the section title and of the text block right before a field.
+		let titlePart = title ? parts.push(title) - 1 : undefined;
+		let captionPart: number | undefined;
+		for (const block of section.blocks) {
+			if (block.kind !== "field") {
+				const text = blockText(block);
+				const index = text.trim() ? parts.push(text) - 1 : undefined;
+				captionPart = block.kind === "text" ? index : undefined;
+				continue;
+			}
+			const field = block.field;
+			if (field.name) {
+				// Mirror fieldQuestions: the question is the own label, else the caption, else the title.
+				const used = spansText(field.label) ? undefined : (captionPart ?? titlePart);
+				const context = parts.filter((_, index) => index !== used).join("\n\n");
+				if (context) contexts.set(field, context);
+				parts = [];
+				titlePart = undefined;
+			}
+			captionPart = undefined;
+		}
+	}
+	return contexts;
 }
 
 /** Answers of every named field, in form order, with option values shown as their labels. */

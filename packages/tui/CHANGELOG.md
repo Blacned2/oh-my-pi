@@ -5,6 +5,14 @@
 ### Added
 
 - Completion and error notifications also ring the terminal bell when the terminal reports it lost focus (DEC 1004 focus reporting), so a finished turn is audible while the window is in the background
+
+### Fixed
+
+- Keyboard navigation and typing no longer inherit the extra background-render delay after an expensive frame.
+- Long streaming code blocks reuse completed rows instead of wrapping and padding them again on every frame.
+- Moving the search cursor in the session picker no longer restarts searching or temporarily hides prompt-history matches.
+- Status-line PR lookups are spaced during streaming activity while branch changes still refresh immediately.
+
 ## [18.18.8] - 2026-11-11
 
 - The live transcript reuses its per-block walk list across each frame's readers instead of rebuilding it three times per frame, so settled transcripts cost fewer short-lived allocations per frame ([#18705](https://github.com/can1357/oh-my-pi/pull/18705) by [@yuzu-octopus](https://github.com/yuzu-octopus))

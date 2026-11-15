@@ -23,6 +23,10 @@ interface NodeState {
 	artifact?: string;
 	error?: string;
 	repair?: CoderRepair;
+	/** Epoch ms of the latest claim. */
+	startedAt?: number;
+	/** Epoch ms the latest attempt stopped; absent while it runs. */
+	endedAt?: number;
 }
 
 export interface GraphRun {
@@ -85,15 +89,25 @@ export interface GraphAttempt {
 
 export interface GraphRunEvent {
 	sequence: number;
-	kind: "created" | "claimed" | "succeeded" | "failed" | "interrupted" | "retried" | "invalidated" | "cancelled";
+	kind:
+		| "created"
+		| "claimed"
+		| "succeeded"
+		| "failed"
+		| "interrupted"
+		| "retried"
+		| "invalidated"
+		| "cancelled"
+		| "resumed";
 	nodeId?: string;
 	attempt?: number;
 }
 
 type RecordEvent = (kind: GraphRunEvent["kind"], nodeId?: string) => void;
-const MAX_ARTIFACT_BYTES = 1024 * 1024;
+const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
 const MAX_LOG_CHARS = 256 * 1024;
 const MAX_AUTOMATIC_REPAIRS = 2;
+const RUN_PAGE_SIZE = 50;
 
 function boundedLog(text: string): string {
 	return text.length > MAX_LOG_CHARS ? `[Earlier log output omitted]\n${text.slice(-MAX_LOG_CHARS)}` : text;
@@ -180,6 +194,11 @@ export class GraphRunStore implements Disposable {
 			.immediate();
 	}
 
+	/** Keep the latest planning log but drop its error once the user moves past it. */
+	clearPlanningError(): void {
+		this.#db.run("UPDATE graph_planning SET snapshot = json_remove(snapshot, '$.error') WHERE slot = 1");
+	}
+
 	/** When approving a proposal, creating the run and consuming the proposal commit together. */
 	create(input: unknown, context?: GraphRunContext, approval?: DraftIdentity): GraphRun {
 		const plan = parseGraphPlan(input);
@@ -222,14 +241,28 @@ export class GraphRunStore implements Disposable {
 		return row ? (JSON.parse(row.snapshot) as GraphRun) : null;
 	}
 
-	recent(): Pick<GraphRun, "id" | "context">[] {
-		return this.#db
-			.query<{ snapshot: string }, []>("SELECT snapshot FROM graph_runs ORDER BY rowid DESC LIMIT 50")
-			.all()
-			.map(({ snapshot }) => {
+	/** Up to 50 runs, newest first, strictly older than `after` when given; `more` says whether older runs remain. */
+	recent(after?: string): { runs: Pick<GraphRun, "id" | "context">[]; more: boolean } {
+		let before = Number.MAX_SAFE_INTEGER;
+		if (after !== undefined) {
+			const cursor = this.#db
+				.query<{ rowid: number }, [string]>("SELECT rowid FROM graph_runs WHERE id = ?")
+				.get(after);
+			if (!cursor) throw new Error("Unknown Graph run");
+			before = cursor.rowid;
+		}
+		const rows = this.#db
+			.query<{ snapshot: string }, [number, number]>(
+				"SELECT snapshot FROM graph_runs WHERE rowid < ? ORDER BY rowid DESC LIMIT ?",
+			)
+			.all(before, RUN_PAGE_SIZE + 1);
+		return {
+			runs: rows.slice(0, RUN_PAGE_SIZE).map(({ snapshot }) => {
 				const { id, context } = JSON.parse(snapshot) as GraphRun;
 				return { id, context };
-			});
+			}),
+			more: rows.length > RUN_PAGE_SIZE,
+		};
 	}
 
 	/** Permanently remove a run and everything keyed to it. Drafts and planning records are not run data. */
@@ -247,6 +280,13 @@ export class GraphRunStore implements Disposable {
 
 	readyNodes(run: GraphRun): string[] {
 		return run.cancelled ? [] : this.#walk(run).ready.map(([node]) => node.id);
+	}
+
+	/** Nodes `resume()` would make ready, without changing the run. */
+	resumableNodes(run: GraphRun): string[] {
+		const preview = structuredClone(run);
+		this.#requeueForResume(preview);
+		return this.#walk(preview).ready.map(([node]) => node.id);
 	}
 
 	retryableNodes(run: GraphRun): string[] {
@@ -303,17 +343,23 @@ export class GraphRunStore implements Disposable {
 
 	/** Nodes whose latest attempt has a log, in plan order. */
 	loggedNodes(run: GraphRun): string[] {
-		const logged = new Set(
+		return Object.keys(this.logSizes(run));
+	}
+
+	/** Character length (SQLite `length`) of each latest-attempt log, keyed in `loggedNodes` order. */
+	logSizes(run: GraphRun): Record<string, number> {
+		const sizes = new Map(
 			this.#db
-				.query<{ node_id: string; attempt: number }, [string]>(
-					"SELECT node_id, attempt FROM graph_logs WHERE run_id = ?",
+				.query<{ node_id: string; attempt: number; size: number }, [string]>(
+					"SELECT node_id, attempt, length(content) AS size FROM graph_logs WHERE run_id = ?",
 				)
 				.all(run.id)
 				.filter(row => row.attempt === (run.nodes[row.node_id]?.attempt ?? (row.node_id === "planner" ? 0 : -1)))
-				.map(row => row.node_id),
+				.map(row => [row.node_id, row.size] as const),
 		);
-		const nodes = run.plan.nodes.filter(node => logged.has(node.id)).map(node => node.id);
-		return logged.has("planner") && !run.nodes.planner ? ["planner", ...nodes] : nodes;
+		const nodes = run.plan.nodes.filter(node => sizes.has(node.id)).map(node => node.id);
+		const ordered = sizes.has("planner") && !run.nodes.planner ? ["planner", ...nodes] : nodes;
+		return Object.fromEntries(ordered.map(id => [id, sizes.get(id)!]));
 	}
 
 	/** The log of the node's latest attempt. */
@@ -386,6 +432,8 @@ export class GraphRunStore implements Disposable {
 				state.attempt++;
 				state.usedAttempts++;
 				state.inputs = inputs;
+				state.startedAt = Date.now();
+				delete state.endedAt;
 				slots--;
 				record("claimed", nodeId);
 				claims.push({
@@ -407,7 +455,8 @@ export class GraphRunStore implements Disposable {
 			if (!state) return false;
 			if (Buffer.byteLength(content) > MAX_ARTIFACT_BYTES) {
 				state.status = "failed";
-				state.error = "Graph artifact exceeds 1 MiB";
+				state.error = "Graph artifact exceeds 4 MiB";
+				state.endedAt = Date.now();
 				record("failed", attempt.nodeId);
 				return true;
 			}
@@ -419,6 +468,7 @@ export class GraphRunStore implements Disposable {
 			]);
 			state.status = "succeeded";
 			state.artifact = id;
+			state.endedAt = Date.now();
 			delete state.repair;
 			record("succeeded", attempt.nodeId);
 			this.#walk(run, record);
@@ -432,6 +482,7 @@ export class GraphRunStore implements Disposable {
 			if (!state) return false;
 			state.status = "failed";
 			state.error = error.slice(0, 2048);
+			state.endedAt = Date.now();
 			record("failed", attempt.nodeId);
 			return true;
 		});
@@ -460,11 +511,15 @@ export class GraphRunStore implements Disposable {
 		});
 	}
 
+	/** Stop live and pending work. A run with nothing running or ready is left as it is, so its result survives. */
 	cancel(runId: string): void {
 		this.#update(runId, (run, record) => {
 			if (run.cancelled) return;
+			const states = Object.values(run.nodes);
+			if (!states.some(state => state.status === "running") && this.#walk(run).ready.length === 0) return;
 			run.cancelled = true;
-			for (const state of Object.values(run.nodes)) {
+			for (const state of states) {
+				if (state.status === "running") this.#stopAttempt(state);
 				if (state.status === "queued" || state.status === "running") state.status = "cancelled";
 			}
 			record("cancelled");
@@ -476,10 +531,52 @@ export class GraphRunStore implements Disposable {
 		this.#update(runId, (run, record) => {
 			for (const [nodeId, state] of Object.entries(run.nodes)) {
 				if (state.status !== "running") continue;
+				this.#stopAttempt(state);
 				state.status = "interrupted";
 				record("interrupted", nodeId);
 			}
 		});
+	}
+
+	/**
+	 * Continue a cancelled or interrupted run: cancelled nodes and interrupted nodes whose dependencies are current
+	 * return to the queue. True when any node is ready afterwards.
+	 */
+	resume(runId: string): boolean {
+		return this.#update(runId, (run, record) => {
+			if (this.#requeueForResume(run)) record("resumed");
+			return this.#walk(run).ready.length > 0;
+		});
+	}
+
+	/** An attempt stopped by cancel or shutdown did not fail, so it does not spend the node's budget. */
+	#stopAttempt(state: NodeState): void {
+		state.usedAttempts = Math.max(0, state.usedAttempts - 1);
+		state.endedAt = Date.now();
+	}
+
+	#requeueForResume(run: GraphRun): boolean {
+		let changed = run.cancelled;
+		run.cancelled = false;
+		for (const state of Object.values(run.nodes)) {
+			if (state.status !== "cancelled") continue;
+			state.status = "queued";
+			changed = true;
+		}
+		const { current } = this.#walk(run);
+		for (const node of run.plan.nodes) {
+			const state = run.nodes[node.id];
+			if (
+				state.status !== "interrupted" ||
+				state.usedAttempts >= node.maxAttempts ||
+				!node.dependsOn.every(id => current.has(id))
+			) {
+				continue;
+			}
+			state.status = "queued";
+			changed = true;
+		}
+		return changed;
 	}
 
 	#walk(run: GraphRun, record?: RecordEvent) {

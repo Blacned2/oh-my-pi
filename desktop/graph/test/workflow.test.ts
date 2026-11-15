@@ -117,7 +117,13 @@ test("an approved plan runs dependent Coders on upstream results and a same-resu
 			).toThrow(/itself/);
 			return {
 				tasks: [
-					{ id: "ui", title: "Client", brief: "Follow the API", dependsOn: ["api"], files: [frontend] },
+					{
+						id: "ui",
+						title: "Client",
+						brief: "Follow the API in the frontend",
+						dependsOn: ["api"],
+						files: [frontend],
+					},
 					{ id: "api", title: "API", brief: "Bump the API", dependsOn: [], files: [backend] },
 				],
 			};
@@ -337,7 +343,9 @@ test("a parallel Coder that writes outside its scope fails alone and its sibling
 	const { id } = store.create(graphPlanForTasks({ version: 1, tasks }), { ...context, profileHash: "", tasks });
 	await runApprovedGraph(store, id, workspace, graphWork(store.get(id)!.context!), executors, { maxCoders: 2 });
 	const nodes = store.get(id)!.nodes;
-	expect(nodes["code-back"]).toMatchObject({ status: "failed", error: "Graph patch must change only approved files" });
+	expect(nodes["code-back"].status).toBe("failed");
+	expect(nodes["code-back"].error).toContain("only approved files");
+	expect(nodes["code-back"].error).toContain(frontend);
 	expect(nodes["code-front"].status).toBe("succeeded");
 	expect(tested).toBe(false);
 });
@@ -383,6 +391,43 @@ test("test output is kept as a sanitized log, and a rerun with new output but th
 	expect(store.log(run, "test")).toContain("second run");
 	expect(reviews).toBe(1);
 	expect(readGraphRelease(store, id)?.status).toBe("ready_to_export");
+});
+
+test("after two automatic repairs of a planned Coder, a manual retry with evidence is still admitted", async () => {
+	await using temp = await TempDir.create("@kostomp-graph-manual-retry-");
+	const source = await fixture(temp.join("source"));
+	const sourceRoot = source.info().repoRoot;
+	const { patch } = await changeSet(await fixture(temp.join("edited")), "x", { [backend]: "still failing\n" });
+	const tasks = [{ id: "api", title: "API", brief: "Change the API", dependsOn: [], files: [backend] }];
+	const repairs: CoderRepairFeedback[] = [];
+	const executors: ApprovedGraphExecutors = {
+		plan: unusedPlanner,
+		async code(_view, _task, _work, _signal, _log, repair) {
+			if (repair) repairs.push(repair.feedback);
+			return patch;
+		},
+		test: async (_workspace, candidate) => ({
+			treeId: candidate.treeId,
+			exitCode: 1,
+			elapsedMs: 1,
+			stdout: "",
+			stderr: "still failing",
+		}),
+		review: async () => ({ verdict: "accepted", findings: [] }),
+	};
+	using store = new GraphRunStore(":memory:");
+	await using workspace = await GraphWorkspace.pin(sourceRoot);
+	const context = { sourceRoot, baseSha: workspace.baseSha, objective: "Fix", files: [], profileHash: "", tasks };
+	const { id } = store.create(graphPlanForTasks({ version: 1, tasks }), context);
+	const work = graphWork(context);
+	await runApprovedGraph(store, id, workspace, work, executors);
+	expect(readGraphRelease(store, id)?.status).toBe("needs_input");
+	expect(repairs).toHaveLength(2);
+	// A Coder budget of three attempts is spent by the automatic repairs and would refuse this retry.
+	expect(retryGraphNode(store, id, work, "code-api")).toBe(true);
+	await runApprovedGraph(store, id, workspace, work, executors);
+	expect(repairs).toHaveLength(3);
+	expect(repairs[2]).toMatchObject({ testExitCode: 1 });
 });
 
 test("a failed Coder keeps its sanitized worker log with the attempt", async () => {

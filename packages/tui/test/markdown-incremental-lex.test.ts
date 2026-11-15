@@ -1181,3 +1181,26 @@ describe("Locked streaming tables", () => {
 		});
 	}
 });
+
+describe("open code fence row memo", () => {
+	const fence = `\`\`\`ts\n${Array.from({ length: 12 }, (_, i) => `const row_${i} = "${"x".repeat(i * 9)}";`).join("\n")}\n\`\`\`\n`;
+	for (const paddingX of [0, 2]) {
+		it(`matches a cold render across frames and a mid-stream width change (paddingX=${paddingX})`, () => {
+			const live = new Markdown("", paddingX, 0, THEME);
+			live.transientRenderCache = true;
+			for (let end = 7; end <= fence.length; end += 7) {
+				const width = end > fence.length / 2 ? 30 : 60;
+				live.setText(fence.slice(0, end));
+				const streamed = live.render(width);
+				expect(streamed).toEqual(
+					(() => {
+						clearRenderCache();
+						const cold = new Markdown(fence.slice(0, end), paddingX, 0, THEME);
+						cold.transientRenderCache = true;
+						return cold.render(width);
+					})(),
+				);
+			}
+		});
+	}
+});

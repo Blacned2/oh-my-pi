@@ -174,6 +174,7 @@ See [providers](./providers.md) and [models](./models.md) for model resolution.
 | `--system-prompt <text\|file>`        | Plain-text system prompt override (default: coding assistant prompt). See [system prompt customization](./system-prompt-customization.md).                                     |
 | `--system-prompt-template <path>`     | Strictly read `<path>` as a Handlebars system-prompt template; mutually exclusive with `--system-prompt`. See [system prompt customization](./system-prompt-customization.md). |
 | `--append-system-prompt <text\|file>` | Append plain text or file contents to the system prompt.                                                                                                                       |
+| `--append-agent-prompt <name>`        | Append the instructions of the named task agent (bundled, user, or project; e.g. `designer`) to the system prompt after any `--append-system-prompt` text. Unknown names exit 1.   |
 
 #### Output mode
 

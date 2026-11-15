@@ -16,6 +16,7 @@ use crate::CREATE_NO_WINDOW;
 
 /// Each part is bundled independently: the installer may leave either one out.
 struct Bundled {
+    dir: PathBuf,
     bun: PathBuf,
     cli: Option<PathBuf>,
     stats: Option<PathBuf>,
@@ -28,6 +29,7 @@ pub fn init(dir: &Path) {
     let bun = dir.join("bun.exe");
     let part = |rel: &str| Some(dir.join(rel)).filter(|p| p.is_file());
     let bundled = bun.is_file().then(|| Bundled {
+        dir: dir.to_path_buf(),
         bun,
         cli: part("node_modules/@oh-my-pi/pi-coding-agent/src/cli.ts"),
         stats: part("node_modules/@oh-my-pi/omp-stats/src/index.ts"),
@@ -56,11 +58,22 @@ pub fn omp_command() -> Result<Command, String> {
 }
 
 pub fn graph_command(data: &Path) -> Result<Command, String> {
-    let runtime = bundled().ok_or("Graph requires the bundled OMP runtime")?;
-    let cli = runtime.cli.as_ref().ok_or("Graph requires the bundled OMP entry")?;
-    let script = runtime.bun.with_file_name("graph").join("service.ts");
+    const NOT_FULL: &str = "Graph needs the full Kostomp build with the bundled OMP runtime (build.ps1 full)";
+    let runtime = bundled().ok_or(NOT_FULL)?;
+    let cli = runtime.cli.as_ref().ok_or(NOT_FULL)?;
+    let script = runtime.dir.join("graph").join("service.ts");
     if !script.is_file() {
-        return Err("Graph sidecar is missing from the bundled runtime".into());
+        return Err("The bundled runtime has no Graph sidecar; install the full Kostomp build (build.ps1 full)".into());
+    }
+    // Installs staged before the Graph stamp existed lack it; they are not checked.
+    let stamp = |path: PathBuf| std::fs::read_to_string(path).ok().map(|text| text.trim().to_string());
+    let installed = stamp(runtime.dir.join("OMP_VERSION"));
+    if let (Some(installed), Some(graph)) = (installed, stamp(runtime.dir.join("graph").join("OMP_VERSION"))) {
+        if installed != graph {
+            return Err(format!(
+                "Graph was built for OMP {graph} but the installed runtime is OMP {installed}; install the full Kostomp build (build.ps1 full)"
+            ));
+        }
     }
     let mut cmd = Command::new(&runtime.bun);
     cmd.arg("--no-env-file")

@@ -12,8 +12,10 @@ const DEFAULT_RECENT_LIMIT = 10;
 
 function serviceJobStatus(daemon: DaemonSnapshot): AsyncJobSnapshotItem["status"] {
 	if (!TERMINAL_STATES[daemon.state]) return "running";
-	if (daemon.state === "failed" || (daemon.exitCode !== undefined && daemon.exitCode !== 0)) return "failed";
-	return "completed";
+	// The broker marks a nonzero exit "failed" only when no stop was requested; "exited" with a
+	// nonzero code is a deliberate stop (SIGTERM/kill), not a failure.
+	if (daemon.state === "failed") return "failed";
+	return daemon.exitCode !== undefined && daemon.exitCode !== 0 ? "cancelled" : "completed";
 }
 
 function serviceJobRow(daemon: DaemonSnapshot): AsyncJobSnapshotItem {
