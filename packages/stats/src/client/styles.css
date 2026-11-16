@@ -57,7 +57,7 @@
 	--r-panel: var(--radius-pane);
 	--r-pill: var(--radius-pill);
 
-	--topbar-h: 78px;
+	--topbar-h: 56px;
 	--sidebar-w: 274px;
 	--gutter: 28px;
 
@@ -327,8 +327,8 @@ kbd {
 }
 
 /* ==========================================================================
-   Shell: floating glass topbar + glass sidebar framing one opaque panel over
-   the Aurora sky. The document scrolls; the panel is not a scroll container.
+   Shell: flush topbar, sidebar and read surface. The document scrolls;
+   the content panel is not a scroll container.
    ========================================================================== */
 .shell-ambient {
 	position: fixed;
@@ -345,44 +345,66 @@ kbd {
 .topbar.glass,
 .topbar {
 	position: fixed;
-	top: 10px;
-	left: 12px;
-	right: 12px;
+	top: 0;
+	left: 0;
+	right: 0;
 	height: 56px;
 	z-index: 40;
 	display: flex;
 	align-items: center;
 	gap: 12px;
 	padding: 0 8px 0 18px;
-	border-radius: var(--r-panel);
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
 }
 
-/* The desktop shell already supplies the outer top margin. */
-:root.kostomp-frame { --topbar-h: 68px; }
-.kostomp-frame .topbar.glass { top: 0; }
-/* The host sidebar already leaves its own gap and window edge: drop the dashboard's 12px left
-   inset so the seam between the two is one gap, as in the chat view. */
-.kostomp-frame .topbar.glass,
-.kostomp-frame .sidebar.glass {
-	left: 0;
-	right: 6px;
+/* Shell surfaces are contiguous sheets, not floating glass cards. */
+.topbar.glass::before,
+.sidebar.glass::before {
+	display: none;
 }
-/* The desktop window controls float over the top-right corner (34px x3, 8px gaps, 12px inset). */
+
+/* Reserve space for the desktop host's floating window controls. */
 .kostomp-frame .topbar.glass {
 	padding-right: 140px;
 }
-.kostomp-frame .sidebar.glass {
-	right: auto;
-	bottom: 6px;
+
+/* Desktop Stats is a window onto the same wallpaper as Chat, with one quiet read sheet. */
+:root:root.kostomp-frame {
+	color-scheme: dark;
 }
+.kostomp-frame,
+.kostomp-frame body {
+	background: transparent;
+}
+.kostomp-frame .shell-ambient {
+	display: none;
+}
+.kostomp-frame .topbar.glass {
+	background: var(--panel);
+}
+.kostomp-frame .sidebar.glass,
 .kostomp-frame .shell-panel {
-	margin-right: 6px;
-	margin-bottom: 6px;
+	background: var(--workspace-sheet, none), var(--panel);
 }
-@media (min-width: 901px) {
-	.kostomp-frame .shell-panel {
-		margin-left: calc(var(--sidebar-w) - 12px);
-	}
+.kostomp-frame .nav-row {
+	border: 0;
+	border-radius: 0;
+	background: none;
+	box-shadow: none;
+}
+.kostomp-frame .nav-row:hover {
+	background: var(--hover);
+}
+.kostomp-frame .nav-row[data-active="true"] {
+	background: var(--selected);
+	color: var(--ink-1);
+}
+.kostomp-frame .sidebar-foot {
+	border-radius: 0;
+	background: none;
+	box-shadow: none;
 }
 
 .topbar-brand {
@@ -456,9 +478,9 @@ kbd {
 .sidebar {
 	position: fixed;
 	top: var(--topbar-h);
-	left: 12px;
-	bottom: 8px;
-	width: calc(var(--sidebar-w) - 26px);
+	left: 0;
+	bottom: 0;
+	width: var(--sidebar-w);
 	padding: 12px 10px 10px;
 	overflow-y: auto;
 	scrollbar-width: none;
@@ -466,7 +488,9 @@ kbd {
 	flex-direction: column;
 	gap: 18px;
 	z-index: 30;
-	border-radius: var(--r-panel);
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
 }
 
 .sidebar::-webkit-scrollbar {
@@ -561,12 +585,12 @@ kbd {
 .shell-panel {
 	position: relative;
 	z-index: 1;
-	margin: var(--topbar-h) 12px 8px var(--sidebar-w);
-	min-height: calc(100dvh - var(--topbar-h) - 8px);
+	margin: var(--topbar-h) 0 0 var(--sidebar-w);
+	min-height: calc(100dvh - var(--topbar-h));
 	background: var(--panel);
-	border-radius: var(--r-panel);
-	border: 1px solid var(--line-2);
-	box-shadow: var(--shadow-2);
+	border-radius: 0;
+	border: 0;
+	box-shadow: none;
 	overflow: clip;
 }
 
@@ -617,7 +641,7 @@ kbd {
 	}
 
 	.shell-panel {
-		margin-left: 8px;
+		margin-left: 0;
 	}
 
 	.topbar-hide-narrow {
@@ -631,7 +655,7 @@ kbd {
 .page {
 	display: flex;
 	flex-direction: column;
-	gap: 20px;
+	gap: 0;
 }
 
 .page-header {
@@ -640,7 +664,7 @@ kbd {
 	justify-content: space-between;
 	gap: 16px;
 	flex-wrap: wrap;
-	padding-bottom: 4px;
+	padding-bottom: 20px;
 }
 
 .page-title {
@@ -666,7 +690,7 @@ kbd {
 /* Grid helpers for page layouts. */
 .grid {
 	display: grid;
-	gap: 16px;
+	gap: 0;
 }
 
 .grid-2 {
@@ -704,16 +728,14 @@ kbd {
 }
 
 /* ==========================================================================
-   Card: top-lit gradient hairline over one surface step.
+   Content sections share the page surface without card chrome.
    ========================================================================== */
 .card {
 	position: relative;
-	border-radius: var(--r-card);
-	border: 1px solid transparent;
-	background:
-		linear-gradient(var(--card), var(--card)) padding-box,
-		linear-gradient(180deg, var(--line-3), var(--line-1) 40%) border-box;
-	box-shadow: var(--shadow-1);
+	border-radius: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
 	min-width: 0;
 	display: flex;
 	flex-direction: column;
@@ -783,12 +805,10 @@ kbd {
 .stat-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(var(--stat-min, 170px), 1fr));
-	border-radius: var(--r-card);
-	border: 1px solid transparent;
-	background:
-		linear-gradient(var(--card), var(--card)) padding-box,
-		linear-gradient(180deg, var(--line-3), var(--line-1) 40%) border-box;
-	box-shadow: var(--shadow-1);
+	border-radius: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
 	overflow: hidden;
 }
 
@@ -799,9 +819,7 @@ kbd {
 	flex-direction: column;
 	gap: 6px;
 	min-width: 0;
-	box-shadow:
-		1px 0 0 var(--line-1),
-		0 1px 0 var(--line-1);
+	box-shadow: none;
 }
 
 .stat-label {

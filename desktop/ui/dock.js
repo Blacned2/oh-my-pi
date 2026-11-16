@@ -216,6 +216,17 @@
       bar,
       host,
       toggle,
+      showFile(path) {
+        let entry = open.get("files");
+        if (!entry) {
+          entry = build(TOOLS.find((tool) => tool.kind === "files"));
+          open.set("files", entry);
+        }
+        entry.card.hidden = false;
+        buttons.get("files").setAttribute("aria-pressed", "true");
+        if (path) entry.api.openFile(path);
+        else entry.api.focus?.();
+      },
       dispose() {
         for (const { api, card } of open.values()) {
           api.dispose?.();

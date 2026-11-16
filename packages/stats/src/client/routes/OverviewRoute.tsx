@@ -99,7 +99,7 @@ export function OverviewRoute({ active, range, onRequestClick }: OverviewRoutePr
 
 			<QueryView query={overview} skeleton={<ChartSkeleton height={112} />}>
 				{({ overall }) => (
-					<div data-stale={overview.stale} className="stack" style={{ gap: 16 }}>
+					<div data-stale={overview.stale} className="stack" style={{ gap: 0 }}>
 						<StatGrid min={190}>
 							<Stat
 								label="API-equivalent cost"

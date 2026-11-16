@@ -5,8 +5,8 @@
 :root{--mono:ui-monospace,"Cascadia Mono","JetBrains Mono",Consolas,monospace;--sans:"Segoe UI",system-ui,sans-serif}
 /* Panels sit flush: no window edge spacing; the sidebar/content seam is a 1px line (the sidebar's resize handle) */
 :root{--edge:0px;--side-gap:1px}
-/* the window controls float top-right: 3 x 13px beads + 2 x 8px gaps + 8px padding + 14px inset + 10px breathing room */
-:root{--wc-w:96px}
+/* Floating window controls: 96px for traffic lights/inset/breathing room + 42px for the quiet drag handle. */
+:root{--wc-w:138px}
 .pane.corner{--pane-rsv:var(--wc-w)}
 
 *{box-sizing:border-box}
@@ -446,6 +446,9 @@ main{position:relative;z-index:1}
 .messages>.tool{contain-intrinsic-block-size:auto 34px}
 .messages>.ledger{contain-intrinsic-block-size:auto 18px}
 .messages>.msg.note{contain-intrinsic-block-size:auto 28px}
+/* Divider notes ("previous session restored"): centered label, rules run out to both edges of the transcript sheet (same inset as .messages-wrap::before) */
+.messages>.msg.note.divider{display:flex;align-items:center;gap:12px;white-space:nowrap;margin-inline:max(8px,calc((100% - 900px)/2 - 20px))}
+.msg.note.divider::before,.msg.note.divider::after{content:"";flex:1;height:1px;background:var(--line-2)}
 .msg{white-space:pre-wrap;font-size:14px;line-height:1.6}
 /* Flat transcript, no bubbles: a turn starts at its prompt, and a hairline separates it from the turn before. */
 .msg.user{padding:0;border-radius:0;background:none;color:var(--ink-1);font-weight:500;animation:pop-in 340ms var(--ease) backwards}
@@ -707,7 +710,7 @@ details.thinking[open] .peek{display:none}
 .composer.shell textarea{font-family:var(--mono)}
 .palette .item .cmd.dir{color:var(--ink-2)}
 
-/* ---- new-chat welcome: a command-palette style list, hidden once the transcript has content ---- */
+/* ---- new-chat welcome: an open heading and quick-start cards, hidden with transcript content ---- */
 .messages>.welcome{flex:1;display:flex;align-items:center;justify-content:center;margin:0;padding:0 20px 40px}
 .messages:has(>:not(.welcome):not(.note))>.welcome{display:none}
 /* Empty chats center the welcome and composer together; transcript content restores the bottom dock. */
@@ -715,20 +718,32 @@ details.thinking[open] .peek{display:none}
 .session:has(> .messages-wrap > .messages > .welcome):not(:has(> .messages-wrap > .messages > :not(.welcome):not(.note))) > .messages-wrap > .messages{padding-top:20px}
 .session:has(> .messages-wrap > .messages > .welcome):not(:has(> .messages-wrap > .messages > :not(.welcome):not(.note))) > .messages-wrap > .messages > .welcome{flex:none;padding-bottom:12px}
 .session:has(> .messages-wrap > .messages > .welcome):not(:has(> .messages-wrap > .messages > :not(.welcome):not(.note))) > .prompt-area{margin-bottom:auto}
-.wl-card{width:min(640px,100%);background:var(--panel);border:1px solid var(--line-2);border-radius:16px;box-shadow:0 24px 60px -28px rgba(8,4,30,.55);overflow:hidden}
-.wl-q{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line-1);font-size:15px;color:var(--ink-2)}
-.wl-mark{width:26px;height:26px;flex:none;border-radius:8px;background:var(--c-sun);color:#2a1a00;font:800 15px var(--sans);display:grid;place-items:center}
-.wl-group{padding:10px 8px 8px}
-.wl-label{padding:6px 12px;font-size:12px;color:var(--ink-3)}
-.wl-item{display:flex;align-items:center;gap:12px;width:100%;min-height:44px;padding:8px 12px;border:0;border-radius:10px;background:none;color:var(--ink-1);font:inherit;text-align:left;cursor:pointer}
-.wl-item+.wl-item{margin-top:6px}
-.wl-item:hover,.wl-item:focus-visible{background:var(--press)}
-.wl-item:focus-visible{outline:2px solid var(--c-violet);outline-offset:-2px}
-.wl-ico{width:26px;height:26px;flex:none;border-radius:8px;background:var(--bg);display:grid;place-items:center;color:var(--accent)}
-.wl-item kbd,.wl-foot kbd{font:11px var(--mono);border:1px solid var(--line-2);border-radius:6px;padding:2px 7px;color:var(--ink-2)}
-.wl-item kbd{margin-left:auto}
-.wl-foot{display:flex;flex-wrap:wrap;gap:18px;padding:11px 20px;border-top:1px solid var(--line-1);background:var(--bg);color:var(--ink-3);font-size:12px}
-.wl-foot kbd{margin-right:5px;border:0;padding:0}
+.wl-card{width:min(680px,100%);color:var(--ink-1)}
+.wl-heading{text-align:center;padding:0 12px 28px}
+.wl-brand{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:20px;color:var(--ink-2);font:500 10px var(--mono);letter-spacing:.16em}
+.wl-mark{width:30px;height:30px;flex:none;border-radius:10px;background:var(--c-sun);color:#2a1a00;font:800 17px var(--sans);display:grid;place-items:center;box-shadow:0 4px 18px -8px var(--c-sun)}
+.wl-heading h1{margin:0;font:500 clamp(25px,4.8cqi,38px)/1.15 var(--sans);letter-spacing:-.045em;text-wrap:balance}
+.wl-heading p{margin:12px 0 0;color:var(--ink-2);font-size:13px;line-height:1.6;text-wrap:balance}
+.wl-group{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.wl-group>.wl-item{position:relative;display:flex;align-items:flex-start;gap:12px;min-width:0;min-height:104px;padding:20px 16px 30px;border:1px solid var(--line-2);border-radius:16px;background:var(--panel);color:var(--ink-1);font:inherit;text-align:left;cursor:pointer;box-shadow:inset 0 1px 0 var(--glass-rim),0 8px 24px -16px rgba(8,4,30,.4);transition:border-color .15s,background .15s}
+.wl-group>.wl-item:hover{background:var(--press);border-color:var(--accent)}
+.wl-group>.wl-item:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.wl-ico{width:30px;height:30px;flex:none;border-radius:9px;background:var(--hover);display:grid;place-items:center;color:var(--accent)}
+.wl-text{display:flex;flex-direction:column;gap:6px;min-width:0}
+.wl-text strong{font-size:13px;font-weight:600;line-height:1.5}
+.wl-text>span{color:var(--ink-2);font-size:11px;line-height:1.5}
+.wl-item kbd{position:absolute;right:14px;bottom:10px;font:10px var(--mono);color:var(--ink-3)}
+.wl-foot{display:flex;justify-content:center;flex-wrap:wrap;gap:20px;padding:18px 0 4px;color:var(--ink-2);font-size:11px}
+.wl-foot kbd{margin-right:5px;font:11px var(--mono);color:var(--ink-1)}
+@container (max-width:480px){
+  .wl-heading{padding-bottom:20px}
+  .wl-brand{font-size:9px;letter-spacing:.1em;margin-bottom:14px}
+  .wl-group{grid-template-columns:1fr;gap:8px}
+  .wl-group>.wl-item{min-height:76px;padding:12px 58px 12px 12px;align-items:center}
+  .wl-item kbd{bottom:auto;top:16px}
+  .wl-foot{gap:14px}
+}
+@media (prefers-reduced-motion:reduce){.wl-group>.wl-item{transition:none}}
 
 
 @media (prefers-reduced-motion:reduce){
@@ -786,7 +801,7 @@ details.thinking[open] .peek{display:none}
 
 /* ---- ask sheet: extension requests (ask/confirm/select/input/editor) dock above the yielded composer ---- */
 .dialog.ask-sheet.glass{--well:rgb(8 4 26/.35);--ok-soft:color-mix(in srgb,var(--ok) 14%,transparent);--warn-soft:color-mix(in srgb,var(--warn) 14%,transparent);--accent-strong:color-mix(in srgb,var(--accent) 72%,#3d22d6);
-  display:flex;flex-direction:column;margin:0 max(24px,calc((100% - 932px)/2)) 8px;padding:0;overflow:hidden;border-radius:18px;background:var(--raised);border:1px solid var(--line-3);
+  display:flex;flex-direction:column;flex:none;max-height:calc(100% - 96px);margin:0 max(24px,calc((100% - 932px)/2)) 8px;padding:0;overflow:hidden;border-radius:18px;background:var(--raised);border:1px solid var(--line-3);
   box-shadow:0 20px 50px -16px rgb(6 2 28/.85),0 4px 14px rgb(6 2 28/.4);animation:ask-in 180ms var(--ease)}
 [data-theme="light"] .dialog.ask-sheet.glass{--well:rgb(60 40 140/.05);--accent-strong:color-mix(in srgb,var(--accent) 86%,#2a1499);box-shadow:0 18px 44px -16px rgb(74 47 208/.22),0 4px 12px rgb(74 47 208/.08)}
 @keyframes ask-in{from{opacity:0;transform:translateY(8px)}}
@@ -1010,7 +1025,7 @@ details.thinking[open] .peek{display:none}
 /* Tool panels (terminal, changes, browser, files) float in the chat like the activity deck.
    Every floating panel, the deck included, resizes from its left edge, bottom edge or bottom-left corner. */
 .stack-tools{display:flex;gap:2px;padding:3px;border:1px solid var(--line-2);border-radius:99px;background:var(--overlay);box-shadow:var(--shadow-2);pointer-events:auto}
-.stack .dock-btn{width:28px;height:28px;padding:0;border:0;border-radius:50%;background:none;display:grid;place-items:center;color:var(--ink-2);cursor:pointer}
+.stack .dock-btn{width:28px;height:28px;padding:0;border:0;border-radius:50%;background:none;box-shadow:none;display:grid;place-items:center;color:var(--ink-2);cursor:pointer}
 .stack .dock-btn svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .stack .dock-btn:hover{background:var(--raised);color:var(--ink-1)}
 .stack .dock-btn[aria-pressed=true]{background:color-mix(in srgb,var(--accent) 24%,transparent);color:var(--accent)}
@@ -1049,8 +1064,6 @@ details.thinking[open] .peek{display:none}
 .fb-list,.fb-prev,.dialog .sub-log{background:var(--panel)}
 .fb-veil,.lightbox{border:0;border-radius:0}
 .lightbox figure{padding:12px;border-radius:var(--radius-pane);background:var(--panel)}
-.wl-card.glass-control{border-radius:var(--radius-pane);background:var(--panel);box-shadow:inset 0 1px 0 var(--glass-rim),var(--glass-shadow)}
-.wl-foot{background:var(--raised)}
 .side-panel.glass-control{background:var(--raised)}
 .chip.glass-pill,.statusline .glass-pill{color:var(--ink-2)}
 .tool summary.glass-pill.glass-pill{border:0;border-radius:0;background:none;box-shadow:none}
@@ -1223,11 +1236,12 @@ details.thinking[open] .peek{display:none}
 .sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .sidebar.glass{width:clamp(240px,var(--side-w,332px),50vw);gap:0;padding:0;overflow:hidden;border-radius:0;--r-ctl:14px;--r-card:18px;--display:"Segoe UI Variable Display",var(--sans);
   --well:rgb(8 4 26/.35);--well-shadow:inset 0 1px 3px rgb(0 0 0/.35);
-  background:linear-gradient(165deg,var(--glass-sheen),transparent 38%),var(--glass-tint);
+  background:none;
   box-shadow:none}
 [data-theme="light"] .sidebar.glass{--well:rgb(60 40 140/.06);--well-shadow:inset 0 1px 3px rgb(60 40 140/.14)}
 .sidebar.glass.collapsed{width:68px}
 .sidebar.glass>*{position:relative;z-index:1}
+:root:root .sidebar.glass{background:none}
 
 /* resize handle: the 1px seam between the sidebar and the content; ::before widens the hit area */
 .side-resize{position:relative;z-index:3;flex:none;width:var(--side-gap);background:var(--line-2);cursor:col-resize;touch-action:none;outline:0}
@@ -1437,16 +1451,13 @@ body.side-resizing .sidebar{transition:none !important}
 .sidebar.collapsed .side-accounts{padding:10px 6px 12px}
 .sidebar.collapsed :is(.acct,.sacct){justify-content:center;padding:6px 0}
 .sidebar.collapsed :is(.acct-text,.acct-chev,.sacct-name){display:none}
-/* shell tools (theme, layout, settings): a row above the account footer; the collapsed rail stacks them */
-.sidebar .side-tools{flex:none;display:flex;align-items:center;gap:8px;padding:10px 16px 0}
+/* Fixed-size tool group: aligned with the account avatar, never spread across the sidebar. */
+.sidebar .side-tools{flex:none;align-self:flex-start;display:flex;align-items:center;gap:8px;margin:10px 21px 0;padding:4px;border:1px solid var(--line-1);border-radius:14px;background:var(--well);box-shadow:inset 0 1px 0 var(--glass-rim)}
 .sidebar .side-tools .layout-anchor{flex:none;display:flex}
-.sidebar .side-tools{justify-content:space-between}
-.sidebar .side-tools #gear{margin-left:0}
+.sidebar .side-tools #gear{margin:0}
 .sidebar>nav.tabs{margin-top:12px}
-.sidebar .side-tools #layout-btn .layout-dot{position:absolute;top:8px;right:8px}
-.sidebar.collapsed .side-tools{flex-direction:column;justify-content:center;gap:8px;padding:10px 0 0}
-.sidebar.collapsed .side-tools #gear{margin:0}
-.sidebar.collapsed .side-tools .layout-anchor{flex:none}
+.sidebar .side-tools #layout-btn .layout-dot{position:absolute;top:4px;right:4px}
+.sidebar.collapsed .side-tools{align-self:center;flex-direction:column;margin:10px 0 0}
 /* head: the window's drag strip with the update offer and the window controls (mounted by window-controls.js) */
 .sidebar .side-head{flex:none;display:flex;align-items:center;gap:8px;min-height:0;padding:0 16px;user-select:none}
 .sidebar .side-head .update{min-width:0;margin-right:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1471,10 +1482,10 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
 .tb-pop.glass>*{position:relative;z-index:3}
 .side-tools .bead:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
-/* beads: round glass buttons */
-.side-tools .bead{position:relative;display:inline-grid;place-items:center;width:42px;height:42px;padding:0;border:0;border-radius:50%;background:none;box-shadow:none;color:var(--ink-1)}
+/* Compact, non-shrinking targets keep spacing stable while the sidebar resizes. */
+.side-tools .bead{position:relative;flex:none;display:inline-grid;place-items:center;width:32px;height:32px;min-width:32px;min-height:32px;padding:0;border:0;border-radius:10px;background:none;box-shadow:none;color:var(--ink-1)}
 .side-tools .bead svg{width:18px;height:18px}
-.side-tools .bead:hover{color:var(--ink-1)}
+.side-tools .bead:hover{background:var(--hover);color:var(--ink-1)}
 .side-tools .bead:active{transform:scale(.9);background:var(--press)}
 .side-tools .bead.on,.side-tools .bead[aria-expanded=true]{background:radial-gradient(circle at 32% 24%,rgb(255 255 255/.28),rgb(255 255 255/.05) 55%),var(--hover);box-shadow:inset 0 1px 1px rgb(255 255 255/.5),inset 0 -2px 4px rgb(0 0 0/.18)}
 
@@ -1512,12 +1523,13 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
 
 
 /* =====================================================================================
-   Nebula chat: the chat pane is a dark liquid-glass island with a nebula and a dot screen behind a flat
-   transcript (no bubbles). The pane carries its own dark tokens, so it looks the same under the light and
-   dark app themes. The system backdrop shows through the translucent base. The only backdrop-filter is the static
-   transcript panel below: it sits under the scrolling rows, so the blur is not re-run when the transcript changes.
+   Nebula workspace: Chat and Stats share one dark liquid-glass background. The nebula, dot screen and highlight paint on the
+   whole shell, so the background runs under the (backgroundless) sidebar and the flat, borderless chat pane. The
+   shell carries its own dark tokens, so it looks the same under the light and dark app themes. The system backdrop
+   shows through the translucent base. The only backdrop-filter is the static transcript panel below: it sits under
+   the scrolling rows, so the blur is not re-run when the transcript changes. Graph and Design keep the app theme.
    ===================================================================================== */
-.pane:has(> .pane-body > .session) {
+.shell:has(> .stage > :is(#chat:not([hidden], .graph-mode, .design-mode), #stats:not([hidden]))) {
   color-scheme: dark;
   color: var(--ink-1);
   --nb-base: rgb(10 5 20 / .74);
@@ -1528,6 +1540,8 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
     radial-gradient(120% 46% at 28% 34%, rgb(112 60 204 / .82), transparent 74%),
     radial-gradient(140% 50% at 42% -4%, rgb(48 58 214 / .95), transparent 72%));
   --dots: radial-gradient(circle at 1.5px 1.5px, rgb(0 0 0 / .26) .9px, transparent 1.4px) 0 0 / 4px 4px;
+  /* liquid highlight: specular bloom top-left, a faint return light bottom-right, over the nebula */
+  --bloom: radial-gradient(120% 60% at 8% -20%, rgb(255 255 255 / .16), transparent 46%), radial-gradient(70% 46% at 96% 122%, rgb(255 255 255 / .07), transparent 60%);
   --bg: #0b0614; --panel: rgb(14 7 24 / .6); --raised: rgb(8 3 16 / .44); --overlay: rgb(20 10 32 / .94);
   --line-1: rgb(255 255 255 / .07); --line-2: rgb(255 255 255 / .12); --line-3: rgb(255 255 255 / .22);
   --ink-1: #f3eefc; --ink-2: #cdc5df; --ink-3: #a79dbd; --ink-inverse: #140f2e;
@@ -1535,19 +1549,32 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
   --c-coral: #ff8a7a; --c-mint: #3be0b5; --c-sun: #ffc233; --c-sky: #6ea8ff; --c-violet: var(--accent);
   --hover: rgb(255 255 255 / .07); --press: rgb(255 255 255 / .12); --bad-soft: rgb(255 107 120 / .16);
   --glass-tint: rgb(14 7 26 / .5); --glass-sheen: rgb(255 255 255 / .12); --glass-rim: rgb(255 255 255 / .5);
+  --workspace-sheet: radial-gradient(120% 40% at 12% 0%, rgb(255 255 255 / .2), transparent 60%), linear-gradient(180deg, rgb(255 255 255 / .09), rgb(255 255 255 / .03) 45%, rgb(255 255 255 / .06));
   --nb-dim: .4;
-  background: var(--dots), linear-gradient(rgb(0 0 0 / var(--nb-dim)), rgb(0 0 0 / var(--nb-dim))), var(--nebula), var(--nb-base);
+  background: var(--bloom), var(--dots), linear-gradient(rgb(0 0 0 / var(--nb-dim)), rgb(0 0 0 / var(--nb-dim))), var(--nebula), var(--nb-base);
 
-  /* liquid highlight: specular bloom top-left, a faint return light bottom-right, both under the content */
-  &::after {
-    content: ""; position: absolute; inset: 0; z-index: 0; border-radius: inherit; pointer-events: none;
-    background:
-      radial-gradient(120% 60% at 8% -20%, rgb(255 255 255 / .16), transparent 46%),
-      radial-gradient(70% 46% at 96% 122%, rgb(255 255 255 / .07), transparent 60%);
+  /* the sidebar sits on the dark sheet: dark wells and tab track even under the light theme; no seam line against the chat */
+  & .sidebar.glass { --well: rgb(8 4 26 / .35); --well-shadow: inset 0 1px 3px rgb(0 0 0 / .35); }
+  & .sidebar .tabs { background: rgb(0 0 0 / .16); box-shadow: inset 0 2px 5px rgb(0 0 0 / .3), inset 0 -1px 0 rgb(255 255 255 / .12); }
+  & .side-resize { background: transparent; }
+  /* frosted-glass sheet behind the whole sidebar: same material as the transcript sheet, flush (no radius), static under the scrolling lists */
+  & .sidebar.glass::before {
+    display: block; content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+    padding: 0; border: 0; border-radius: 0; -webkit-mask: none; mask: none;
+    background: var(--workspace-sheet);
+    -webkit-backdrop-filter: blur(16px) saturate(190%) brightness(1.12) contrast(1.05); backdrop-filter: blur(16px) saturate(190%) brightness(1.12) contrast(1.05);
   }
+}
+/* flush chat pane: no frame, no radius, no rim; it is transparent over the shell's sheet */
+.pane.glass { border: 0; border-radius: 0; box-shadow: none; }
+.pane.glass::before { display: none; }
+.pane:has(> .pane-body > .session) {
+  background: none;
   & > .pane-body { position: relative; z-index: 1; }
   & .messages { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / .2) transparent; }
-  /* one frosted-glass sheet behind the whole transcript column (same width as the rows), fixed while rows scroll */
+  /* Todos sit directly on the chat background, without a separate tinted sheet. */
+  & .todos { background: none; border: 1px solid var(--line-2); border-radius: 22px; box-shadow: none; }
+  /* One frosted-glass sheet behind the transcript content. */
   & .messages-wrap::before {
     content: ""; position: absolute; z-index: 0; pointer-events: none;
     inset: 0 max(8px, calc((100% - 900px) / 2 - 20px));
@@ -1560,7 +1587,7 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
   }
   /* flush with the pane's top edge: no top border, no top radius */
   & .messages-wrap.at-top::before { border-top-width: 0; border-radius: 0 0 22px 22px; }
-  /* empty chat: the welcome card carries its own glass, so the big sheet behind it is dropped */
+  /* empty chat: the quick-start cards carry their own glass, so the transcript sheet is dropped */
   & .messages-wrap:has(> .messages > .welcome):not(:has(> .messages > :not(.welcome):not(.note)))::before { display: none; }
   /* the sheet hugs the transcript: the wrap sizes to its rows (scrolling once they fill the pane) and docks above the composer */
   & .messages-wrap { flex: 0 1 auto; margin-top: auto; }
@@ -1600,18 +1627,17 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
   & .statusline .glass-pill, & .composer-meta .glass-pill, & .topinfo button.link, & button.link { background: none; border-color: transparent; box-shadow: none; }
   & button.link:hover, & button.link:focus-visible { background: var(--hover); }
 }
-:root[data-material="opaque"] .pane:has(> .pane-body > .session) { --nb-base: #0b0614; }
-@media (prefers-reduced-transparency: reduce) { .pane:has(> .pane-body > .session) { --nb-base: #0b0614; } }
+:root[data-material="opaque"] .shell:has(> .stage > :is(#chat:not([hidden], .graph-mode, .design-mode), #stats:not([hidden]))) { --nb-base: #0b0614; }
+@media (prefers-reduced-transparency: reduce) { .shell:has(> .stage > :is(#chat:not([hidden], .graph-mode, .design-mode), #stats:not([hidden]))) { --nb-base: #0b0614; } }
 /* Right-hand stack (deck, changes, terminal, files) and the top pills share the chat sheet's liquid glass. The sheet is a
    ::before at z-index -1 inside an isolated panel, so the blur samples only the pane behind it, never the panel's own content. */
-.pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .topinfo) {
+.pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .dialog.ask-sheet.glass) {
   position: relative; isolation: isolate; background: none;
   border: 1px solid rgb(255 255 255 / .26);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / .55), inset 0 -1px 0 rgb(255 255 255 / .12), inset 0 0 36px -12px rgb(255 255 255 / .22), 0 22px 44px -26px rgb(0 0 0 / .55);
 }
-.pane:has(> .pane-body > .session) .topinfo.topinfo { position: absolute; } /* outranks the `position: relative` of the shared glass rule above, which would drop the strip into the layout flow */
 .pane:has(> .pane-body > .session) .stack .act-peek.act-peek { position: absolute; }
-.pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .topinfo)::before {
+.pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .dialog.ask-sheet.glass)::before {
   content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
   background:
     radial-gradient(120% 40% at 12% 0%, rgb(255 255 255 / .2), transparent 60%),
@@ -1619,8 +1645,17 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
     rgb(14 7 26 / .42);
   -webkit-backdrop-filter: blur(16px) saturate(190%) brightness(1.12) contrast(1.05); backdrop-filter: blur(16px) saturate(190%) brightness(1.12) contrast(1.05);
 }
-:root[data-material="opaque"] .pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .topinfo)::before { background: var(--overlay); -webkit-backdrop-filter: none; backdrop-filter: none; }
-@media (prefers-reduced-transparency: reduce) { .pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .topinfo)::before { background: var(--overlay); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+:root[data-material="opaque"] .pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .dialog.ask-sheet.glass)::before { background: var(--overlay); -webkit-backdrop-filter: none; backdrop-filter: none; }
+@media (prefers-reduced-transparency: reduce) { .pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .dialog.ask-sheet.glass)::before { background: var(--overlay); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+/* The ask sheet shares the transcript sheet's width and glass; its bars and option cards are translucent tints on top of it. */
+.pane:has(> .pane-body > .session) .dialog.ask-sheet.glass { margin: 0 max(8px, calc((100% - 900px) / 2 - 20px)) 8px; }
+.pane:has(> .pane-body > .session) .ask-sheet :is(.ask-head, .ask-foot) { background: rgb(255 255 255 / .05); border-color: rgb(255 255 255 / .14); }
+.pane:has(> .pane-body > .session) .ask-sheet .ask-steps { border-color: rgb(255 255 255 / .14); }
+.pane:has(> .pane-body > .session) .ask-sheet .ask-opt { background: rgb(255 255 255 / .06); border-color: rgb(255 255 255 / .18); }
+.pane:has(> .pane-body > .session) .ask-sheet .ask-opt:hover { background: rgb(255 255 255 / .12); }
+.pane:has(> .pane-body > .session) .ask-sheet .ask-opt.selected { background: color-mix(in srgb, var(--accent) 22%, rgb(255 255 255 / .06)); border-color: var(--accent); }
+.pane:has(> .pane-body > .session) .ask-sheet .ask-btn:not(.primary) { background: rgb(255 255 255 / .08); border-color: rgb(255 255 255 / .2); }
+.pane:has(> .pane-body > .session) .ask-sheet .ask-btn.ghost { background: transparent; border-color: transparent; }
 /* Font size setting (Settings > Window): chat text scales with --font-scale (1 = default). */
 .msg{font-size:calc(14px*var(--font-scale,1))}
 .msg.note,.msg.recap,.msg.output{font-size:calc(12px*var(--font-scale,1))}
@@ -1645,16 +1680,89 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
 .rail-tip b{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rail-tip span{color:var(--ink-3);font:11px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* Project + context above the composer's right edge; usage and key hints in the pane's top strip, left of the tab pill. */
-.composer-meta{display:flex;justify-content:flex-end;align-items:center;gap:12px;min-width:0;padding:0 6px 6px;font:12px var(--sans);color:var(--ink-3)}
+/* Project tools on the left; usage and key hints beside them above the composer. */
+.composer-meta{display:flex;justify-content:flex-end;align-items:center;gap:8px;min-width:0;padding:0 6px 6px;font:12px var(--sans);color:var(--ink-3);flex-wrap:wrap}
 .composer-meta>*{flex:none}
-.composer-meta>.pick{flex:0 1 auto;min-width:0;max-width:60%;padding:2px 10px;border-radius:999px;font-weight:600;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.composer-meta>.pick:hover{color:var(--ink-1)}
 .composer-meta>.ctx{padding:2px 6px;font-weight:600;color:var(--ok)}
-.topinfo{position:absolute;top:8px;right:calc(12px + var(--pane-rsv,0px));z-index:3;display:flex;align-items:center;gap:12px;height:28px;max-width:calc(100% - var(--pill-w,0px) - var(--pane-rsv,0px) - 32px);padding:0 10px;border:1px solid var(--line-2);border-radius:999px;background:var(--overlay);color:var(--ink-3);font:12px var(--sans);white-space:nowrap;overflow:hidden}
+.topinfo{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;flex:0 1 auto;margin-left:auto;color:var(--ink-3);font:12px var(--sans);white-space:nowrap;overflow:hidden}
 .topinfo>*{flex:none}
 .topinfo>.hint{flex:0 1 auto;min-width:0}
 .topinfo>button.link{height:22px;padding:0 8px;border-radius:999px}
 .topinfo .link.on{color:var(--ink-1)}
 /* Nothing left to show below the composer: drop the strip instead of keeping an empty bar. */
 .statusline:not(:has(> :is(span,button):not([hidden]):not(.spacer))){display:none}
+
+/* Project controls remain available in both new and ongoing chats. */
+.composer-actions{display:flex;align-items:center;gap:2px;min-width:0;max-width:100%;margin-right:auto}
+.composer-action{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;flex:none;
+  min-height:32px;padding:6px 10px;border:0;border-radius:9px;background:transparent;box-shadow:none;
+  color:var(--ink-2);font:500 12px var(--sans);white-space:nowrap;cursor:pointer;
+}
+.composer-action svg{flex:none}
+.composer-action[data-ref="cwd"]{flex:0 1 auto;min-width:0}
+.composer-action [data-ref="cwdLabel"]{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.composer-action:hover{background:var(--hover);color:var(--ink-1)}
+.composer-action:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.composer-action:is([data-ref="extensions"],[data-ref="projectFiles"])[aria-expanded="true"]{background:var(--hover);color:var(--ink-1);border-radius:999px}
+.extensions-menu{
+  position:fixed;inset:auto;margin:0;width:242px;max-width:calc(100vw - 16px);padding:5px;
+  box-sizing:border-box;border:1px solid #ffffff0d;border-radius:18px;background:#2b2b2b;color:#f5f5f5;
+  box-shadow:0 12px 36px #0005;font:400 13px var(--sans);color-scheme:dark;
+}
+.extensions-menu:popover-open{display:flex;flex-direction:column}
+.extensions-search{display:flex;align-items:center;gap:8px;padding:5px 9px 9px;color:#989898;flex:none}
+.extensions-search input{width:100%;min-width:0;padding:0;border:0;outline:0;background:transparent;color:#f5f5f5;font:inherit;box-shadow:none}
+.extensions-search input::placeholder{color:#989898}
+.extensions-search:focus-within{color:#ddd}
+.extensions-list{min-height:0;max-height:174px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#555 transparent}
+.extensions-menu .extensions-item,.extensions-menu .extensions-connect{display:flex;align-items:center;gap:8px;width:100%;min-height:29px;padding:6px 9px;border:0;border-radius:10px;background:transparent;box-shadow:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.extensions-menu .extensions-item:hover,.extensions-menu .extensions-item:focus-visible,.extensions-menu .extensions-connect:hover,.extensions-menu .extensions-connect:focus-visible{background:#ffffff14;outline:none}
+.extensions-item:disabled{opacity:.45;cursor:default}
+.extensions-icon{display:grid;place-items:center;flex:none;width:16px;height:16px;border-radius:4px;background:#373340;color:#b9a1e7}
+.extensions-icon[data-kind="mcp"]{background:#293e4e;color:#67b5ee}
+.extensions-icon[data-kind="skill"]{background:#294434;color:#78c08f}
+.extensions-icon[data-kind="prompt"],.extensions-icon[data-kind="slash-command"]{background:#4a3c22;color:#e5ba5b}
+.extensions-icon svg{width:12px;height:12px}
+.extensions-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.extensions-check{font-size:12px;color:#a9c5b1}
+.extensions-menu .extensions-connect{flex:none;border-top:1px solid #ffffff10;border-radius:0 0 13px 13px;margin-top:5px;padding-top:10px;padding-bottom:8px}
+.extensions-connect>svg{flex:none;color:#aaa}
+.extensions-connect>svg:last-child{margin-left:auto;color:#888}
+.extensions-status{margin:6px 9px;color:#aaa;font-size:12px;line-height:1.45}
+.extensions-status[hidden]{display:none}
+.files-menu{width:280px}
+.files-menu .extensions-list{max-height:203px}
+.files-menu .files-back[hidden]{display:none}
+.files-menu .extensions-icon{background:transparent;color:#269de0}
+.files-menu .extensions-icon[data-kind="image"]{color:#ef63ac}
+.files-menu .extensions-icon[data-kind="pdf"]{color:#e9777a}
+.files-menu .extensions-icon[data-kind="folder"]{color:#dfb45f}
+@container (max-width:480px){
+  .composer-action{padding:6px;gap:5px;font-size:11px}
+  .composer-meta>.topinfo{flex-basis:100%}
+}
+/* New chats share one two-row input with the project toolbar attached above it. */
+.session:has(> .messages-wrap > .messages > .welcome):not(:has(> .messages-wrap > .messages > :not(.welcome):not(.note))){
+  & > .prompt-area > .composer-meta{
+    justify-content:flex-start;gap:8px;margin:0 12px;padding:5px 8px;
+    border:1px solid var(--line-2);border-bottom:0;border-radius:16px 16px 0 0;
+    background:var(--panel);box-shadow:inset 0 1px 0 var(--glass-rim);
+  }
+  & > .prompt-area > .composer.glass{
+    display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;
+    grid-template-areas:"field field field field" "attach . model send";
+    align-items:center;gap:8px;padding:14px 14px 10px;border-radius:22px;
+  }
+  & .composer.glass .input-wrap{grid-area:field;min-height:48px}
+  & .composer.glass textarea{align-self:stretch;padding:2px 6px}
+  & .composer.glass .attach{grid-area:attach}
+  & .composer.glass .composer-model{grid-area:model;margin:0;max-width:100%}
+  & .composer.glass .send{grid-area:send}
+  @container (max-width:480px){
+    & > .prompt-area > .composer-meta{margin:0 8px;padding:4px;gap:2px;flex-wrap:wrap}
+    & .composer-actions{flex:1}
+    & .composer-action{flex:1;padding:6px;gap:5px;font-size:11px}
+    & .composer.glass .composer-model{font-size:11px}
+  }
+}

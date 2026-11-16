@@ -84,7 +84,13 @@ Pages: Overview, Models, Providers, Costs, Requests, Errors, Traces, Tools, Frus
 
 Aurora chrome shares `src/client/glass.css` with collab-web. `desktop/build.rs` copies that canonical stylesheet into `desktop/ui/glass.css` for the packaged WebView. Use `.glass` for pane frames, `.glass-control` for controls and `.glass-pill` for capsules; buttons receive the control recipe by default. Message, code and data surfaces remain opaque. `data-material="opaque"` and reduced-transparency preferences remove blur, and reduced-motion preferences disable animations.
 
+Stats uses flush, square, borderless shell surfaces and continuous chart, table and metric sections without card backgrounds, shadows or inter-panel gaps. Controls retain their glass styling.
+
+Embedded Stats inherits the desktop workspace's resolved palette, fonts and accent. Chat and Stats use the same host-painted Nebula or selected wallpaper, with translucent read sheets and flat navigation rows; the iframe does not paint a second background. Standalone Stats keeps its own theme controls.
+
 In the desktop host, account/session rows and picker options stay stationary on hover; pickers keep glass on the outer menu, not each option. Ctrl+B explicitly opts into a 260 ms sidebar resize, while Chat–Stats uses a 220 ms crossfade without reloading the iframe. Permanent chat deletion is exposed in the Sessions list only; sidebar × buttons close tabs.
+
+The desktop window can be moved using the faint grip beside the top-right window controls, including when maximized; no full-width title bar is shown.
 
 ## License
 

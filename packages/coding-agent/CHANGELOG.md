@@ -14,11 +14,18 @@
 
 ### Changed
 
+- Desktop Files now opens a searchable, scrollable menu with file-type icons, folder navigation, file previews, and a “Browse all” shortcut to the file panel.
+- Desktop Extensions now opens a compact searchable menu with a scrollable project extension list, enable/disable controls, and a shortcut to connect extensions in Settings.
+- Desktop new chats now use a two-row message box with project selection, Files and Extensions shortcuts above it, styled to match the glass theme.
+- Desktop todo panel now uses a transparent background with a subtle border instead of a separate tinted glass surface.
+- Desktop welcome screen now offers an open heading and four quick-start cards, arranged in two columns or stacked in narrow panes
 - `ask` prompts show their position (`(2/3)`) when a form has several questions; the desktop UI renders it as a "Question 2 of 3" header with progress dots and stacked option cards
 - Desktop session status now glows and pulses around the initial avatar instead of a right-side badge; close buttons sit at the far right
 
 ### Fixed
 
+- Desktop workspace toolbar icons no longer show individual borders.
+- Desktop shows the selected project in the left composer picker and moves shortcut hints beside the composer instead of the top of the chat.
 - RPC `set_thinking_level` and `cycle_thinking_level` now save the pick into the `default` model role, so new desktop sessions start on the chosen effort instead of the stale `:high` suffix
 - Desktop model/effort chip shows plain text and only draws its card on hover, focus or open menu
 - Services you stop yourself now show as cancelled in the Jobs panel instead of failed

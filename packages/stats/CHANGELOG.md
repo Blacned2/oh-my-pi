@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Stats now uses adjoining, square, borderless panels instead of floating cards.
+- Desktop Stats now matches Chat's wallpaper, liquid-glass surfaces, typography and accent colours.
 - Added shared Aurora liquid-glass chrome and controls while keeping charts and tables opaque for reading.
 - Glass panels no longer blur what is behind them, so the dashboard stops redrawing a backdrop blur on every frame and uses far less GPU.
 - The live status dot is now a static halo instead of an endless ping, so an open dashboard no longer redraws on every display refresh.

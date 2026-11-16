@@ -127,9 +127,28 @@
   let statsUrl = null;
   function postStatsTheme() {
     if (statsOrigin) statsFrame.contentWindow?.postMessage({ type: "kostomp-theme", theme: themePref }, statsOrigin);
+    postStatsDesign();
   }
   // Re-sync after every dashboard load (the bridge ignores a preference it already has).
   statsFrame.addEventListener("load", postStatsTheme);
+  // The iframe shares the host's resolved workspace palette, not a second theme recipe.
+  function postStatsDesign() {
+    if (!statsOrigin || $("stats").hidden) return;
+    const style = getComputedStyle(document.querySelector(".shell"));
+    const names = [
+      "--bg", "--panel", "--raised", "--overlay", "--ink-1", "--ink-2", "--ink-3", "--ink-inverse",
+      "--line-1", "--line-2", "--line-3", "--accent", "--focus", "--ok", "--warn", "--bad",
+      "--c-violet", "--c-coral", "--c-mint", "--c-sun", "--c-sky",
+      "--glass-tint", "--glass-sheen", "--glass-rim", "--workspace-sheet",
+    ];
+    const variables = Object.fromEntries(names.map(name => [name, style.getPropertyValue(name).trim()]));
+    variables["--font-sans"] = style.getPropertyValue("--sans").trim();
+    variables["--font-mono"] = style.getPropertyValue("--mono").trim();
+    statsFrame.contentWindow?.postMessage({ type: "kostomp-design", variables }, statsOrigin);
+  }
+  document.addEventListener("kostomp-view", postStatsDesign);
+  window.addEventListener("kostomp-style-change", postStatsDesign);
+  window.addEventListener("kostomp-material-change", postStatsDesign);
   // Tell the dashboard whether the Stats view is shown: hidden, it stops polling (stats-bridge.js).
   function postStatsVisible() {
     if (statsOrigin) statsFrame.contentWindow?.postMessage({ type: "kostomp-visible", visible: !$("stats").hidden }, statsOrigin);
@@ -649,6 +668,8 @@
     sideSearch.select();
   });
   setSideView(Math.min(2, Math.max(0, Number(localStorage.getItem(SIDE_VIEW_KEY)) || 0)), false);
+  $("graph-new").addEventListener("click", () => setSideView(1));
+  $("design-new").addEventListener("click", () => setSideView(2));
 
   /** Compact age of the last turn, as in the sidebar mockup: şimdi, 12dk, 3s, 2g. */
   function sideAgo(at) {
@@ -892,6 +913,7 @@
   /** A fresh session in `from`'s folder. Without a zone it takes the focused pane (the old one keeps
    *  running as a tab); with one it opens beside `from`. */
   function newSession(from, zone) {
+    setSideView(0);
     const at = from ?? layout.focused;
     const src = sessions.get(at) ?? sessions.get(lastChatSid);
     const cwd = src?.api.cwd ?? null;

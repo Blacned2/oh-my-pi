@@ -1,5 +1,5 @@
 ﻿// Injected into every page of the main window (loading screen and the stats dashboard).
-// Draws glass window controls in the sidebar head and makes that strip draggable.
+// Draws floating window controls and a quiet drag handle beside them.
 // The shared control recipe is loaded inside the shadow root; theme tokens inherit from the page.
 (() => {
   if (window.top !== window || window.__kostompControls) return;
@@ -54,12 +54,13 @@
         .bar button.bead:active { filter:brightness(.82); transform:scale(.92); }
         .bar button.bead:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
         .bar button.grip {
-          display:grid; place-items:center; padding:0; width:30px; height:16px; margin-right:4px;
-          border:.5px solid var(--line-3, rgb(255 255 255 / .25)); border-radius:999px; cursor:grab;
-          background:var(--overlay, rgb(0 0 0 / .35)); color:var(--ink-2, #ccc);
+          display:grid; place-items:center; padding:0; width:30px; height:20px; margin-right:4px;
+          border:0; border-radius:999px; cursor:grab;
+          background:transparent; box-shadow:none; color:var(--ink-2, #ccc); transform:none;
         }
-        .bar button.grip[hidden] { display:none; }
-        .bar button.grip:hover { color:var(--ink-1, #fff); }
+        .bar button.grip svg { opacity:.25; transition:opacity .12s; }
+        .bar button.grip:hover svg, .bar button.grip:focus-visible svg { opacity:.8; }
+        .bar button.grip:focus-visible { outline:2px solid var(--accent, #a78bfa); outline-offset:2px; }
         .bar button.grip:active { cursor:grabbing; }
         .bar button.grip svg { width:14px; height:14px; fill:currentColor; stroke:none; }
         svg { width:9px; height:9px; stroke:currentColor; fill:none; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; }
@@ -72,7 +73,6 @@
       </div>`;
 
     const maxBtn = root.querySelector(".max");
-    const gripBtn = root.querySelector(".grip");
     let shownMaximized = false; // the markup starts with the maximize icon
     const syncMaxIcon = async () => {
       const maximized = !!(await call("plugin:window|is_maximized"));
@@ -80,7 +80,6 @@
       shownMaximized = maximized;
       maxBtn.querySelector("svg").innerHTML = maximized ? ICON_RESTORE : ICON_MAX;
       maxBtn.title = maxBtn.ariaLabel = maximized ? "Restore" : "Maximize";
-      gripBtn.hidden = maximized; // a maximized window cannot be moved
     };
     const toggleMaximize = async () => {
       await call("plugin:window|toggle_maximize");
@@ -90,7 +89,7 @@
     root.querySelector(".min").addEventListener("click", () => call("plugin:window|minimize"));
     maxBtn.addEventListener("click", toggleMaximize);
     root.querySelector(".close").addEventListener("click", () => call("plugin:window|close"));
-    // Explicit drag handle for the windowed state; mousedown hands the mouse to the OS (see below).
+    // Keep the handle available when maximized: the OS restores the window as it is dragged.
     root.querySelector(".grip").addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
       e.preventDefault();

@@ -67,6 +67,7 @@
     material = window.kostompMaterial.apply(state);
     if (!wanted) wanted = { ...state.settings };
     postStatsMaterial();
+    window.dispatchEvent(new Event("kostomp-style-change"));
     syncWindowPage();
   }
   window.addEventListener("kostomp-material-change", (e) => {

@@ -1536,6 +1536,10 @@
 
     return {
       el: root,
+      openFile: (path) => {
+        setViewerOpen(true);
+        return openFile(path);
+      },
       focus: () => (editing && editorArea ? editorArea.focus() : filterInput.focus()),
       // Mounting and focus changes land right after the constructor's or a toolbar refresh.
       onShow: () => {

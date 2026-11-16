@@ -10,6 +10,10 @@ The Graph pane sits flush against the sidebar, without a left-hand gutter, at ev
 
 The **Sessions**, **Graphs** and **Designs** sidebar tabs switch to icons only when the tab strip's content width is 260 px or less. Wider strips show the labels again; tooltips and accessible tab names remain available in both layouts.
 
+The **Theme**, **Layouts** and **Settings** controls stay in a compact group above the account footer, with fixed 32 px buttons and 8 px gaps as the sidebar resizes. Collapsing the sidebar stacks them vertically on the account avatar's centre line.
+
+**New chat**, **New graph** and **New design** also select the matching **Sessions**, **Graphs** or **Designs** sidebar tab.
+
 The objective composer is a compact command dock below the agent map: the top strip holds the project selector, repository path and **Browse…**, followed by a full-width objective field and **Propose plan** in the lower-right corner. On narrow panes the path and project badge are hidden to keep the controls usable. The dock follows the light or dark theme; proposing a plan still requires both a project and a non-empty objective.
 
 Chat rows in the sidebar and **Sessions** list, and Graph rows in the sidebar and **Graphs** list, have a **Delete session permanently** / **Delete graph run permanently** button. Deletion requires confirmation and stops the selected session's running work before removing its saved conversation or run, logs and artifacts. Deleting the last chat opens a fresh chat. Chats held by another OMP process cannot be deleted. The **×** buttons still only close rows; they do not delete saved history. Graph deletion does not modify the source repository.

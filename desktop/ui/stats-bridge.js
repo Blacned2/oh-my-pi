@@ -2,7 +2,7 @@
 // The shell owns the theme preference (system|light|dark). The dashboard is cross-origin, so this
 // script copies the preference into the dashboard's own storage key ("omp-stats-theme", read once
 // at startup by packages/stats useSystemTheme.ts) and hides the dashboard's own theme toggle.
-// The dashboard source stays untouched.
+// The host also supplies its resolved workspace palette; the background is painted only by the host.
 (() => {
   if (window.top === window) return;
   if (location.hostname !== "127.0.0.1" && location.hostname !== "localhost") return;
@@ -33,23 +33,25 @@
     location.reload();
   });
 
-  // Window material: under glass the dashboard drops its solid page background so the shell's tint
-  // (and the system blur under it) shows through; its panels keep a translucent fill for reading.
-  // Remembered in the frame's storage so a reload (theme change) paints right away.
+  // The host owns the whole background, including opaque mode and custom wallpapers.
   const MAT_KEY = "kostomp-material";
-  let glassStyle = null;
   const setGlass = (glass) => {
     document.documentElement.dataset.material = glass ? "glass" : "opaque";
-    if (glass && !glassStyle) {
-      glassStyle = document.createElement("style");
-      glassStyle.textContent =
-        "html,body{background:transparent !important}";
-      (document.head || document.documentElement).appendChild(glassStyle);
-    } else if (!glass && glassStyle) {
-      glassStyle.remove();
-      glassStyle = null;
-    }
   };
+  window.addEventListener("message", (e) => {
+    if (e.source !== window.parent || e.data?.type !== "kostomp-design") return;
+    const variables = e.data.variables;
+    if (!variables || typeof variables !== "object") return;
+    const names = [
+      "--bg", "--panel", "--raised", "--overlay", "--ink-1", "--ink-2", "--ink-3", "--ink-inverse",
+      "--line-1", "--line-2", "--line-3", "--accent", "--focus", "--ok", "--warn", "--bad",
+      "--c-violet", "--c-coral", "--c-mint", "--c-sun", "--c-sky",
+      "--glass-tint", "--glass-sheen", "--glass-rim", "--workspace-sheet", "--font-sans", "--font-mono",
+    ];
+    for (const name of names) {
+      if (typeof variables[name] === "string") document.documentElement.style.setProperty(name, variables[name]);
+    }
+  });
   window.addEventListener("message", (e) => {
     if (e.source !== window.parent || !e.data || e.data.type !== "kostomp-material") return;
     const glass = e.data.glass === true;

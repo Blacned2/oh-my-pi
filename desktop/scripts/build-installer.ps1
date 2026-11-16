@@ -26,6 +26,25 @@ $desktop = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $confPath = Join-Path $desktop "tauri.conf.json"
 $cargoPath = Join-Path $desktop "Cargo.toml"
 
+# The updater key pair must be ONE pair shared by every machine that builds releases: the app embeds
+# the public key (tauri.conf.json plugins.updater.pubkey) and rejects any update signed by another
+# private key ("signature was created with a different key"). The private key never goes into git;
+# copy ~\.kostomp\updater.key (and .pub) from the machine that owns the committed pubkey. Checked
+# before the version bump and staging so a wrong key fails in seconds, not after a full build.
+$keyPath = if ($env:KOSTOMP_UPDATER_KEY) { $env:KOSTOMP_UPDATER_KEY } else { Join-Path $env:USERPROFILE ".kostomp\updater.key" }
+if (Test-Path -LiteralPath $keyPath) {
+    $pubPath = "$keyPath.pub"
+    if (-not (Test-Path -LiteralPath $pubPath)) { throw "Updater key $keyPath has no $pubPath next to it, so it cannot be checked against tauri.conf.json. Copy the .pub file from the machine that generated the key." }
+    $localPub = (Get-Content -LiteralPath $pubPath -Raw).Trim()
+    $confPub = ((Get-Content $confPath -Raw | ConvertFrom-Json).plugins.updater.pubkey).Trim()
+    if ($localPub -ne $confPub) {
+        throw ("Updater key mismatch: $keyPath does not belong to the pubkey in tauri.conf.json, so installed apps would reject the update " +
+            "(signature was created with a different key).`n" +
+            "  Fix A (keeps installed apps working): copy updater.key and updater.key.pub from the other machine into $(Split-Path $keyPath).`n" +
+            "  Fix B (new shared key): run scripts\rotate-updater-key.ps1, commit tauri.conf.json, copy the key to the other machine, and reinstall once by hand on every machine.")
+    }
+}
+
 # Version bump: text replace (first match only) so the files keep their formatting; written without a BOM.
 if (-not $NoBump) {
     $current = (Get-Content $confPath -Raw | ConvertFrom-Json).version
@@ -54,7 +73,6 @@ $conf = Get-Content $confPath -Raw | ConvertFrom-Json
 & (Join-Path $PSScriptRoot "stage-runtime.ps1") -NoOmp:$NoOmp -NoStats:$NoStats
 if ($LASTEXITCODE -ne 0) { throw "stage-runtime failed" }
 
-$keyPath = if ($env:KOSTOMP_UPDATER_KEY) { $env:KOSTOMP_UPDATER_KEY } else { Join-Path $env:USERPROFILE ".kostomp\updater.key" }
 $updates = Test-Path -LiteralPath $keyPath
 $tauriArgs = @("build", "--bundles", "nsis")
 if ($updates) {

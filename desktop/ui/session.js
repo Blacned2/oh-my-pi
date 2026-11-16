@@ -947,6 +947,8 @@
   let navSummarize = false;
   let sessionFile = null; // current session file, from get_state
   let cwd = typeof opts.cwd === "string" && opts.cwd.trim() ? opts.cwd : null;
+  el.cwdLabel.textContent = cwd ? folderName(cwd) : "Proje seç";
+  el.cwd.title = cwd ? cwd + " (projeyi değiştir)" : "Çalışma projesini seç";
   let histNote = null; // note shown after the next get_messages render
   let seq = 0;
   const messages = new Map(); // messageId -> element
@@ -2699,6 +2701,225 @@
       return request("highlight_code", { code, lang }, 5000).then((d) => (Array.isArray(d?.tokens) ? d.tokens : null), () => null);
     },
   });
+  const extensionMenu = el.extensionsMenu;
+  let menuExtensions = [];
+  let extensionsLoad = 0;
+  function extensionStatus(message) {
+    el.extensionsStatus.textContent = message;
+    el.extensionsStatus.hidden = !message;
+  }
+  function bindComposerMenu(button, menu, search, onClose) {
+    menu.id = menu.dataset.ref + "-" + sid;
+    button.setAttribute("aria-controls", menu.id);
+    const position = () => {
+      if (!menu.matches(":popover-open")) return;
+      const box = button.getBoundingClientRect();
+      const below = innerHeight - box.bottom - 14;
+      const above = box.top - 14;
+      const downward = below >= 280 || below >= above;
+      menu.style.maxHeight = Math.max(0, downward ? below : above) + "px";
+      menu.style.left = Math.max(8, Math.min(box.left, innerWidth - menu.offsetWidth - 8)) + "px";
+      menu.style.top = downward ? box.bottom + 6 + "px" : "auto";
+      menu.style.bottom = downward ? "auto" : innerHeight - box.top + 6 + "px";
+    };
+    menu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        menu.hidePopover();
+        button.focus();
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      event.preventDefault();
+      const items = [search, ...menu.querySelectorAll("button:not(:disabled):not([hidden])")];
+      const index = items.indexOf(document.activeElement);
+      items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+    });
+    menu.addEventListener("toggle", (event) => {
+      const open = event.newState === "open";
+      button.setAttribute("aria-expanded", String(open));
+      if (open) {
+        window.addEventListener("resize", position);
+        document.addEventListener("scroll", position, true);
+      } else {
+        window.removeEventListener("resize", position);
+        document.removeEventListener("scroll", position, true);
+        onClose();
+      }
+    });
+    return position;
+  }
+  const positionExtensions = bindComposerMenu(el.extensions, extensionMenu, el.extensionsSearch, () => extensionsLoad++);
+  function drawExtensionMenu() {
+    const query = el.extensionsSearch.value.trim().toLocaleLowerCase("tr");
+    const rows = menuExtensions.filter((e) => [e.displayName, e.name, e.description]
+      .some((value) => String(value || "").toLocaleLowerCase("tr").includes(query)));
+    el.extensionsList.replaceChildren();
+    for (const entry of rows) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "extensions-item";
+      row.setAttribute("aria-pressed", String(entry.state === "active"));
+      row.disabled = entry.state === "shadowed";
+      row.title = entry.description || entry.displayName || entry.name || "";
+      const icon = document.createElement("span");
+      icon.className = "extensions-icon";
+      icon.dataset.kind = entry.kind;
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v4h3M6 9h4M6 11h3"/></svg>';
+      const name = document.createElement("span");
+      name.className = "extensions-name";
+      name.textContent = entry.displayName || entry.name;
+      const check = document.createElement("span");
+      check.className = "extensions-check";
+      check.setAttribute("aria-hidden", "true");
+      check.textContent = entry.state === "active" ? "✓" : "";
+      row.append(icon, name, check);
+      row.addEventListener("click", async () => {
+        const enabled = entry.state !== "active";
+        row.disabled = true;
+        extensionStatus("");
+        try {
+          const result = await request("set_extension_enabled", { extension: entry.id, enabled }, 60000);
+          entry.state = enabled ? "active" : "disabled";
+          if (disposed || !row.isConnected) return;
+          row.setAttribute("aria-pressed", String(enabled));
+          check.textContent = enabled ? "✓" : "";
+          extensionStatus(result?.live ? "" : "Değişiklik yeni oturumda veya /reload sonrasında uygulanır.");
+        } catch (error) {
+          if (!disposed && row.isConnected) extensionStatus("Eklenti değiştirilemedi: " + errText(error));
+        } finally {
+          row.disabled = entry.state === "shadowed";
+        }
+      });
+      el.extensionsList.append(row);
+    }
+    extensionStatus(rows.length ? "" : menuExtensions.length ? "Eşleşen eklenti bulunamadı." : "Bu projede eklenti bulunamadı.");
+  }
+  el.extensionsSearch.addEventListener("input", drawExtensionMenu);
+  const filesMenu = el.filesMenu;
+  let filesLoad = 0;
+  let menuFiles = [];
+  const fileFolders = [];
+  const positionFiles = bindComposerMenu(el.projectFiles, filesMenu, el.filesSearch, () => filesLoad++);
+  function filesStatus(message) {
+    el.filesStatus.textContent = message;
+    el.filesStatus.hidden = !message;
+  }
+  function drawFilesMenu() {
+    const query = el.filesSearch.value.trim().toLocaleLowerCase("tr");
+    const rows = menuFiles.filter((entry) => entry.name.toLocaleLowerCase("tr").includes(query));
+    el.filesList.replaceChildren();
+    for (const entry of rows) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "extensions-item";
+      row.title = entry.path;
+      const icon = document.createElement("span");
+      icon.className = "extensions-icon";
+      icon.setAttribute("aria-hidden", "true");
+      const image = /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(entry.name);
+      icon.dataset.kind = entry.isDir ? "folder" : image ? "image" : /\.pdf$/i.test(entry.name) ? "pdf" : "file";
+      const mark = entry.isDir ? '<path d="M2 5V3h5l2 2h5v9H2z"/>'
+        : image ? '<rect x="2" y="2" width="12" height="12" rx="2"/><circle cx="10.5" cy="5.5" r="1"/><path d="m2 12 4-4 6 6"/>'
+        : '<rect x="3" y="2" width="10" height="12" rx="2"/><path d="M6 6h4M6 9h3"/>';
+      icon.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">' + mark + '</svg>';
+      const name = document.createElement("span");
+      name.className = "extensions-name";
+      name.textContent = entry.name;
+      row.append(icon, name);
+      row.addEventListener("click", () => {
+        if (entry.isDir) {
+          fileFolders.push(entry.path);
+          loadMenuFiles(entry.path);
+        } else {
+          filesMenu.hidePopover();
+          renderStack();
+          toolDock.showFile(entry.path);
+        }
+      });
+      el.filesList.append(row);
+    }
+    filesStatus(rows.length ? "" : query ? "Eşleşen dosya bulunamadı." : "Bu klasörde dosya bulunamadı.");
+  }
+  async function loadMenuFiles(path) {
+    const load = ++filesLoad;
+    menuFiles = [];
+    el.filesSearch.value = "";
+    el.filesList.replaceChildren();
+    el.filesBack.hidden = fileFolders.length < 2;
+    filesStatus("Dosyalar yükleniyor…");
+    positionFiles();
+    try {
+      const result = await invoke("fs_list", { path, showHidden: false });
+      if (disposed || load !== filesLoad || !filesMenu.matches(":popover-open")) return;
+      menuFiles = result.entries || [];
+      drawFilesMenu();
+      positionFiles();
+    } catch (error) {
+      if (!disposed && load === filesLoad && filesMenu.matches(":popover-open")) {
+        filesStatus("Dosyalar yüklenemedi: " + errText(error));
+      }
+    }
+  }
+  el.filesSearch.addEventListener("input", drawFilesMenu);
+  el.filesBack.addEventListener("click", () => {
+    fileFolders.pop();
+    loadMenuFiles(fileFolders[fileFolders.length - 1]);
+  });
+  el.projectFiles.addEventListener("click", () => {
+    if (filesMenu.matches(":popover-open")) {
+      filesMenu.hidePopover();
+      return;
+    }
+    fileFolders.length = 0;
+    el.filesSearch.value = "";
+    el.filesList.replaceChildren();
+    el.filesBack.hidden = true;
+    filesMenu.showPopover();
+    positionFiles();
+    el.filesSearch.focus();
+    if (cwd) {
+      fileFolders.push(cwd);
+      loadMenuFiles(cwd);
+    } else filesStatus("Dosyaları görmek için bir proje seçin.");
+  });
+  el.filesBrowse.addEventListener("click", () => {
+    filesMenu.hidePopover();
+    renderStack();
+    toolDock.showFile();
+  });
+  el.extensions.addEventListener("click", async () => {
+    if (extensionMenu.matches(":popover-open")) {
+      extensionMenu.hidePopover();
+      return;
+    }
+    const load = ++extensionsLoad;
+    menuExtensions = [];
+    el.extensionsSearch.value = "";
+    el.extensionsList.replaceChildren();
+    extensionStatus("Eklentiler yükleniyor…");
+    extensionMenu.showPopover();
+    positionExtensions();
+    el.extensionsSearch.focus();
+    try {
+      const result = await request("get_extensions", {}, 30000);
+      if (disposed || load !== extensionsLoad || !extensionMenu.matches(":popover-open")) return;
+      menuExtensions = Array.isArray(result?.extensions) ? result.extensions : [];
+      drawExtensionMenu();
+      positionExtensions();
+    } catch (error) {
+      if (!disposed && load === extensionsLoad && extensionMenu.matches(":popover-open")) {
+        extensionStatus("Eklentiler yüklenemedi: " + errText(error));
+      }
+    }
+  });
+  el.extensionsConnect.addEventListener("click", () => {
+    extensionMenu.hidePopover();
+    document.getElementById("gear").click();
+    document.getElementById("set-tab-extensions").click();
+  });
   const stackSep = document.createElement("span");
   stackSep.className = "stack-sep";
   stackSep.setAttribute("aria-hidden", "true");
@@ -4297,7 +4518,10 @@
     });
     const text = histNote ?? (n ? "— previous session restored —" : null);
     histNote = null;
-    if (text) note(text);
+    if (text) {
+      const divider = /^— (.+) —$/.exec(text); // "— previous session restored —": centered, rule to both edges
+      note(divider ? divider[1] : text, false, divider ? "note divider" : "note");
+    }
     setPinned(true);
     if (el.messages.lastElementChild) measureRowsAround(el.messages.lastElementChild); // the first paint is at the real tail
     tailScroll();
@@ -5530,8 +5754,8 @@
       // `resume` is true (continue the folder's latest session) or a session file path (that exact one).
       const file = typeof resume === "string" ? resume : null;
       cwd = await window.KostompRpcLifecycle.start({ id: sid, cwd: dir ?? null, resume: resumed, session: file });
-      el.cwd.textContent = folderName(cwd);
-      el.cwd.title = cwd + " (change working folder)";
+      el.cwdLabel.textContent = cwd ? folderName(cwd) : "Proje seç";
+      el.cwd.title = cwd ? cwd + " (projeyi değiştir)" : "Çalışma projesini seç";
       saveRecent(cwd);
       hooks.cwd?.(cwd);
       renderScripts();
@@ -5580,8 +5804,8 @@
       }
       if (typeof nextCwd === "string" && nextCwd.trim()) {
         cwd = nextCwd;
-        el.cwd.textContent = folderName(cwd);
-        el.cwd.title = cwd + " (change working folder)";
+        el.cwdLabel.textContent = folderName(cwd);
+        el.cwd.title = cwd + " (projeyi değiştir)";
         saveRecent(cwd);
         hooks.cwd?.(cwd);
       }
@@ -5728,6 +5952,12 @@
     toggleTool: (kind) => toolDock.toggle(kind),
     /** The session is closed for good: stop routing highlight requests to its process and drop everything still scheduled. */
     dispose: () => {
+      extensionMenu.hidePopover();
+      window.removeEventListener("resize", positionExtensions);
+      document.removeEventListener("scroll", positionExtensions, true);
+      filesMenu.hidePopover();
+      window.removeEventListener("resize", positionFiles);
+      document.removeEventListener("scroll", positionFiles, true);
       toolDock.dispose();
       hlAskers.delete(sid);
       scriptViews.delete(sid);

@@ -373,25 +373,28 @@
   <section class="session">
     <div class="messages" data-ref="messages">
       <div class="welcome" data-ref="welcome" role="region" aria-label="Start a conversation">
-        <div class="wl-card glass-control">
-          <div class="wl-q"><span class="wl-mark" aria-hidden="true">K.</span><span>What do you want to do? Type below or pick one</span></div>
-          <div class="wl-group" role="listbox" aria-label="Suggestions">
-            <div class="wl-label">Suggestions</div>
-            <button type="button" class="wl-item" role="option" data-prompt="Review my uncommitted changes and point out problems.">
-              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
-              <span class="wl-text">Review my changes</span><kbd>Alt 1</kbd>
+        <div class="wl-card">
+          <header class="wl-heading">
+            <div class="wl-brand"><span class="wl-mark" aria-hidden="true">K.</span><span>YOUR NEXT IDEA STARTS HERE</span></div>
+            <h1>What will we build today?</h1>
+            <p>A fresh perspective. A tricky fix. Something entirely new.</p>
+          </header>
+          <div class="wl-group" role="group" aria-label="Quick starts">
+            <button type="button" class="wl-item glass-control" data-prompt="Review my uncommitted changes and point out problems.">
+              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v12a4 4 0 0 0 4 4h4M8 8h6a4 4 0 0 1 4 4v3"/><circle cx="8" cy="3" r="2"/><circle cx="18" cy="18" r="2"/></svg></span>
+              <span class="wl-text"><strong>Review changes</strong><span>A second pair of eyes on your code</span></span><kbd>Alt 1</kbd>
             </button>
-            <button type="button" class="wl-item" role="option" data-prompt="Give me an overview of this project: structure and main modules.">
-              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg></span>
-              <span class="wl-text">Summarize this project</span><kbd>Alt 2</kbd>
+            <button type="button" class="wl-item glass-control" data-prompt="Give me an overview of this project: structure and main modules.">
+              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5"/></svg></span>
+              <span class="wl-text"><strong>Explore this project</strong><span>Get the lay of the codebase</span></span><kbd>Alt 2</kbd>
             </button>
-            <button type="button" class="wl-item" role="option" data-prompt="Here is an error I get. Find the cause and fix it:&#10;&#10;">
-              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v6M12 17h.01"/></svg></span>
-              <span class="wl-text">Paste an error and find the cause</span><kbd>Alt 3</kbd>
+            <button type="button" class="wl-item glass-control" data-prompt="Here is an error I get. Find the cause and fix it:&#10;&#10;">
+              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5M10 7v4M10 13h.01"/></svg></span>
+              <span class="wl-text"><strong>Untangle an error</strong><span>Find the cause. Get moving again.</span></span><kbd>Alt 3</kbd>
             </button>
-            <button type="button" class="wl-item" role="option" data-prompt="Plan a new feature with me before writing code: ">
-              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/></svg></span>
-              <span class="wl-text">Plan a new feature</span><kbd>Alt 4</kbd>
+            <button type="button" class="wl-item glass-control" data-prompt="Plan a new feature with me before writing code: ">
+              <span class="wl-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2zM20 2v4M18 4h4"/></svg></span>
+              <span class="wl-text"><strong>Shape a new idea</strong><span>Turn a what-if into a clear plan</span></span><kbd>Alt 4</kbd>
             </button>
           </div>
           <div class="wl-foot"><span><kbd>/</kbd> commands</span><span><kbd>@</kbd> files</span><span><kbd>!</kbd> shell</span><span><kbd>↑</kbd> history</span></div>
@@ -400,13 +403,6 @@
     </div>
     <div class="dialog glass" data-ref="dialog" hidden></div>
     <div class="dialog tree glass" data-ref="tree" role="region" aria-label="Session tree" hidden></div>
-    <div class="topinfo" data-ref="topinfo">
-      <span data-ref="total" class="total" hidden></span>
-      <span data-ref="hint" class="hint">shift+enter newline</span>
-      <span data-ref="busyHint" class="hint" hidden>enter steer · alt+enter queue</span>
-      <button type="button" data-ref="thinkingBtn" class="link" aria-label="Show or hide thinking (Ctrl+T)" aria-pressed="false" title="Show or hide thinking (Ctrl+T)">ctrl + t</button>
-      <button type="button" data-ref="treeBtn" class="link" aria-expanded="false" title="Session tree: move to an earlier point, label entries">tree</button>
-    </div>
     <div class="prompt-area">
       <div class="palette glass" data-ref="palette" role="listbox" hidden></div>
       <div class="side-panel todos glass-control" data-ref="todos" role="region" aria-label="Todo list" hidden></div>
@@ -414,8 +410,55 @@
       <div class="attachments" data-ref="attachments" hidden></div>
       <div class="widgets" data-ref="widgetsAbove" hidden></div>
       <div class="composer-meta">
+        <div class="composer-actions" role="group" aria-label="Sohbet araçları">
+          <button type="button" data-ref="cwd" class="composer-action" title="Çalışma projesini seç" aria-haspopup="menu">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/><path d="M3 9h18"/></svg>
+            <span data-ref="cwdLabel">Proje seç</span>
+          </button>
+          <button type="button" data-ref="projectFiles" class="composer-action" title="Dosyalar" aria-haspopup="dialog" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="16" rx="1.5"/><path d="m17 5 3-1 4 15-3 1z"/></svg>
+            <span>Dosyalar</span>
+          </button>
+          <button type="button" data-ref="extensions" class="composer-action" title="Eklentiler" aria-haspopup="dialog" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5a5 5 0 1 0 1 6M15.5 8.5v5a2 2 0 0 0 4 0"/><circle cx="11.5" cy="11.5" r="3"/></svg>
+            <span>Eklentiler</span>
+          </button>
+        </div>
         <span data-ref="ctx" class="ctx glass-pill" hidden></span>
-        <button type="button" data-ref="cwd" class="link pick glass-pill" title="Change working folder"></button>
+        <div class="topinfo" data-ref="topinfo">
+          <span data-ref="total" class="total" hidden></span>
+          <span data-ref="hint" class="hint">shift+enter newline</span>
+          <span data-ref="busyHint" class="hint" hidden>enter steer · alt+enter queue</span>
+          <button type="button" data-ref="thinkingBtn" class="link" aria-label="Show or hide thinking (Ctrl+T)" aria-pressed="false" title="Show or hide thinking (Ctrl+T)">ctrl + t</button>
+          <button type="button" data-ref="treeBtn" class="link" aria-expanded="false" title="Session tree: move to an earlier point, label entries">tree</button>
+        </div>
+      </div>
+      <div data-ref="filesMenu" class="extensions-menu files-menu" popover="auto" role="dialog" aria-label="Dosyalar">
+        <label class="extensions-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>
+          <input data-ref="filesSearch" type="search" placeholder="Kitaplık dosyalarında ara..." aria-label="Kitaplık dosyalarında ara" autocomplete="off" spellcheck="false">
+        </label>
+        <button data-ref="filesBack" class="extensions-item files-back" type="button" hidden>‹ Üst klasör</button>
+        <div data-ref="filesList" class="extensions-list" aria-label="Proje dosyaları"></div>
+        <p data-ref="filesStatus" class="extensions-status" role="status" hidden></p>
+        <button data-ref="filesBrowse" type="button" class="extensions-connect">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="16" rx="1.5"/><path d="m17 5 3-1 4 15-3 1z"/></svg>
+          <span>Tümüne göz at</span>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg>
+        </button>
+      </div>
+      <div data-ref="extensionsMenu" class="extensions-menu" popover="auto" role="dialog" aria-label="Eklentiler">
+        <label class="extensions-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>
+          <input data-ref="extensionsSearch" type="search" placeholder="Eklenti ara..." aria-label="Eklenti ara" autocomplete="off" spellcheck="false">
+        </label>
+        <div data-ref="extensionsList" class="extensions-list" aria-label="Proje eklentileri"></div>
+        <p data-ref="extensionsStatus" class="extensions-status" role="status" hidden></p>
+        <button data-ref="extensionsConnect" type="button" class="extensions-connect">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>
+          <span>Eklentileri bağla</span>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+        </button>
       </div>
       <form class="composer glass" data-ref="composer">
         <div class="input-wrap">
