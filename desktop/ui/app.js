@@ -7,8 +7,7 @@
   const $ = (id) => document.getElementById(id);
   let layout = null; // set up below; showView() runs before that
   const sessions = new Map(); // sid -> { sid, api, tab, cwd, status: { text, kind } }
-  const panels = new Map(); // sid -> { sid, kind, api, tab, label, cwd, name, state }
-  const focusActive = () => (sessions.get(layout?.focused) ?? panels.get(layout?.focused))?.api.focus?.();
+  const focusActive = () => sessions.get(layout?.focused)?.api.focus?.();
   const focusChat = () => focusActive();
   window.kostompConfirmDelete = async (title, detail) => {
     const dialog = document.createElement("dialog");
@@ -52,16 +51,21 @@
   function placeThumb(dir) {
     const tab = tabs.find((t) => t.getAttribute("aria-selected") === "true");
     if (!tab) return;
-    const from = [tabThumb.style.getPropertyValue("--l"), tabThumb.style.getPropertyValue("--r")];
-    const l = tab.offsetLeft + "px";
-    const r = tabStrip.clientWidth - tab.offsetLeft - tab.offsetWidth + "px";
-    tabThumb.style.setProperty("--l", l);
-    tabThumb.style.setProperty("--r", r);
+    const vertical = getComputedStyle(tabStrip).flexDirection === "column"; // the collapsed rail stacks the tabs
+    const [a, b, start, end] = vertical ? ["--t", "--b", "top", "bottom"] : ["--l", "--r", "left", "right"];
+    const from = [tabThumb.style.getPropertyValue(a), tabThumb.style.getPropertyValue(b)];
+    const near = vertical ? tab.offsetTop : tab.offsetLeft;
+    const size = vertical ? tab.offsetHeight : tab.offsetWidth;
+    const l = near + "px";
+    const r = (vertical ? tabStrip.clientHeight : tabStrip.clientWidth) - near - size + "px";
+    tabThumb.style.setProperty(a, l);
+    tabThumb.style.setProperty(b, r);
     if (!dir || !from[0] || reducedMotion.matches) return;
-    tabThumb.animate({ left: [from[0], l] }, { duration: dir === "r" ? 380 : 220, easing: DROP_EASE });
-    tabThumb.animate({ right: [from[1], r] }, { duration: dir === "r" ? 220 : 380, easing: DROP_EASE });
+    tabThumb.animate({ [start]: [from[0], l] }, { duration: dir === "r" ? 380 : 220, easing: DROP_EASE });
+    tabThumb.animate({ [end]: [from[1], r] }, { duration: dir === "r" ? 220 : 380, easing: DROP_EASE });
   }
-  addEventListener("resize", () => placeThumb());
+  // The strip's size changes with the window and with the sidebar's width, collapse and drag: follow it every frame.
+  new ResizeObserver(() => placeThumb()).observe(tabStrip);
   document.fonts.ready.then(() => placeThumb());
   const gear = $("gear");
   function showView(name) {
@@ -162,11 +166,6 @@
   applyTheme(); // after the stats bindings it posts through
   // ---- sessions: tab strip + split workspace ------------------------------
   const strip = $("session-tabs");
-  const statusBox = $("status");
-  const statusTitle = $("status-title");
-  const statusSub = $("status-sub");
-  const statusText = $("status-text");
-  const sessionMenu = $("session-menu");
   let nextSid = 0;
   const AVATAR_COLORS = ["var(--c-coral)", "var(--c-mint)", "var(--c-sun)", "var(--c-sky)", "var(--accent)"];
 
@@ -178,7 +177,7 @@
    */
   window.kostompLeavesForChat = (event) => {
     const target = event.target;
-    if (event.currentTarget !== strip) return !target.closest("#graph-new, #graphs-toggle, #design-new, #designs-toggle, #compose-new, #tool-more, .seg [aria-selected=false]");
+    if (event.currentTarget !== strip) return !target.closest("#graph-new, #graphs-toggle, #design-new, #designs-toggle, #compose-new, .seg [aria-selected=false]");
     if (event.type === "keydown") return target.matches(".stab");
     if (target.closest(".stab-group-add")) return true;
     return !!target.closest(".stab") && !target.closest(".stab-close, .stab-input");
@@ -186,19 +185,60 @@
 
   // ---- collapsible session sidebar (state persists) ----
   const sidebar = $("sidebar");
-  const sideToggle = $("side-toggle");
+  // The sidebar stays up in every view: a click in it, outside the Chat/Stats tabs and the shell tools, brings the chat view forward.
+  sidebar.addEventListener("click", (e) => { if ($("chat").hidden && !e.target.closest("#tabs, .side-tools")) $("tab-chat").click(); }, true);
   function setSidebar(collapsed, persist = true) {
     sidebar.classList.toggle("collapsed", collapsed);
-    sideToggle.setAttribute("aria-expanded", String(!collapsed));
-    const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
-    sideToggle.setAttribute("aria-label", label);
-    sideToggle.title = label + " (Ctrl+B)";
     if (persist) try { localStorage.setItem("kostomp-sidebar", collapsed ? "1" : "0"); } catch {}
   }
   setSidebar(localStorage.getItem("kostomp-sidebar") === "1", false);
-  sideToggle.addEventListener("click", () => setSidebar(!sidebar.classList.contains("collapsed")));
+  // Collapsed rail: a glass tooltip to the right of the hovered item (session, panel, graph run, button).
+  let railTip = null;
+  let railTipFor = null;
+  let railTitle = null;
+  function hideRailTip() {
+    railTip?.remove();
+    railTip = null;
+    if (railTipFor && railTitle !== null) railTipFor.setAttribute("title", railTitle);
+    railTipFor = null;
+    railTitle = null;
+  }
+  sidebar.addEventListener("pointerover", (e) => {
+    if (!sidebar.classList.contains("collapsed")) return;
+    const target = e.target.closest?.(".stab, .graph-run-item, .seg-btn, .cta, button[title], button[aria-label]");
+    if (!target || target === railTipFor || !sidebar.contains(target)) return;
+    hideRailTip();
+    const title = target.getAttribute("title") || "";
+    const name = target.querySelector?.(".stab-text")?.textContent?.trim();
+    const head = name || title.split(String.fromCharCode(10))[0].replace(/ — .*$/, "") || target.getAttribute("aria-label") || target.textContent.trim();
+    const detail = name ? title.replace(/ — .*$/, "") : "";
+    if (!head) return;
+    railTipFor = target;
+    railTitle = target.hasAttribute("title") ? title : null;
+    if (railTitle !== null) target.removeAttribute("title");
+    const tip = document.createElement("div");
+    tip.className = "rail-tip glass";
+    tip.setAttribute("role", "tooltip");
+    const b = document.createElement("b");
+    b.textContent = head;
+    tip.append(b);
+    if (detail && detail !== head) {
+      const d = document.createElement("span");
+      d.textContent = detail;
+      tip.append(d);
+    }
+    document.body.append(tip);
+    const r = target.getBoundingClientRect();
+    tip.style.left = r.right + 10 + "px";
+    tip.style.top = Math.max(8, Math.min(r.top + r.height / 2 - tip.offsetHeight / 2, innerHeight - tip.offsetHeight - 8)) + "px";
+    railTip = tip;
+  });
+  sidebar.addEventListener("pointerout", (e) => {
+    if (railTipFor && !railTipFor.contains(e.relatedTarget)) hideRailTip();
+  });
+  sidebar.addEventListener("pointerdown", hideRailTip);
   document.addEventListener("keydown", (e) => {
-    if (e.ctrlKey && !e.altKey && !e.shiftKey && e.code === "KeyB" && !$("chat").hidden) {
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && e.code === "KeyB") {
       e.preventDefault();
       setSidebar(!sidebar.classList.contains("collapsed"));
     }
@@ -221,36 +261,6 @@
     if (!tight) composeMenu.close();
   }
   new ResizeObserver(fitCompose).observe(compose);
-
-  const topbar = document.querySelector(".topbar");
-  const toolRail = topbar.querySelector(".tool-rail");
-  const statusBtn = $("status");
-  const toolMenu = window.kostompOverflowMenu($("tool-more"), $("tool-menu"), () =>
-    [...toolRail.querySelectorAll(".tool-btn")].map((button) => ({ button, label: button.getAttribute("aria-label").replace(/ paneli$/, "") })),
-  "right");
-  /** Laid-out width of a flex row's visible children plus the gaps between them. */
-  function rowWidth(row) {
-    const kids = [...row.children].filter((c) => c.offsetWidth > 0);
-    const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
-    return kids.reduce((sum, c) => sum + c.offsetWidth, 0) + gap * Math.max(0, kids.length - 1);
-  }
-  function fitToolRail() {
-    toolRail.classList.remove("compact");
-    // The titlebar is `1fr auto 1fr`: each side gets half of what the status pill leaves at its natural width.
-    statusBtn.style.width = "max-content";
-    const center = statusBtn.offsetWidth;
-    statusBtn.style.width = "";
-    const cs = getComputedStyle(topbar);
-    const inner = topbar.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-    const side = (inner - center - 2 * (parseFloat(cs.columnGap) || 0)) / 2;
-    const tight = rowWidth(topbar.querySelector(".tb-l")) > side || rowWidth(topbar.querySelector(".tb-r")) > side;
-    toolRail.classList.toggle("compact", tight);
-    if (!tight) toolMenu.close();
-  }
-  // The status pill's text changes width (title, timer), so it is watched too.
-  const railObserver = new ResizeObserver(fitToolRail);
-  railObserver.observe(topbar);
-  railObserver.observe(statusBtn);
 
   // ---- resizable sidebar: drag the gap after it (double-click resets, arrows step). Dragging it under half
   // the minimum folds it to the rail, dragging the rail out unfolds it. Moves are coalesced to one write per
@@ -358,9 +368,7 @@
     const data = {
       v: 1,
       nextSid,
-      nextPid,
       sessions: [...sessions.values()].map((s) => ({ sid: s.sid, cwd: s.cwd, name: s.name, sessionFile: s.sessionFile })),
-      panels: [...panels.values()].map((p) => ({ sid: p.sid, kind: p.kind, cwd: p.cwd, name: p.name, state: p.api.serialize?.() ?? p.state ?? null })),
       layouts,
       active: activeLayout,
     };
@@ -392,37 +400,20 @@
   window.KostompGraphsPanel = graphsEl;
   window.KostompDesignsPanel = designsEl;
   let lastChatSid = null; // the chat that last had focus (the list panes have none)
-  let shownSid = null; // the focused sid onFocus last handled
-  let nextPid = 0;
-  const panelStrip = $("panel-tabs");
-  const sidePanels = $("side-panels");
-  const PANEL_KINDS = ["terminal", "changes", "browser", "files"];
-  const PANEL_TITLES = { terminal: "Terminal", changes: "Değişiklikler", browser: "Tarayıcı", files: "Dosyalar" };
-  const PANEL_COLORS = { terminal: "#19c9a0", changes: "#f5a60b", browser: "#3d9bff", files: "#6d4aff" };
-  const PANEL_BADGES = { terminal: ">_", changes: "±", browser: "🌐", files: "📁" };
   const isListPanel = (sid) => sid === LIST_SID || sid === GRAPHS_SID || sid === DESIGNS_SID;
-  const isPanel = (sid) => isListPanel(sid) || panels.has(sid);
-  const isTab = (sid) => isPanel(sid) || sessions.has(sid);
+  const isTab = (sid) => isListPanel(sid) || sessions.has(sid);
 
   const activeCwd = (fromSid) => {
     const at = fromSid ?? layout?.focused;
-    return sessions.get(at)?.api.cwd ?? panels.get(at)?.cwd ?? sessions.get(lastChatSid)?.api.cwd ?? [...sessions.values()][0]?.api.cwd ?? null;
+    return sessions.get(at)?.api.cwd ?? sessions.get(lastChatSid)?.api.cwd ?? [...sessions.values()][0]?.api.cwd ?? null;
   };
 
   layout = createLayout($("workspace"), {
-    sessionEl: (sid) => (sid === LIST_SID ? savedEl : sid === GRAPHS_SID ? graphsEl : sid === DESIGNS_SID ? designsEl : sessions.get(sid)?.api.el ?? panels.get(sid)?.api.el),
+    sessionEl: (sid) => (sid === LIST_SID ? savedEl : sid === GRAPHS_SID ? graphsEl : sid === DESIGNS_SID ? designsEl : sessions.get(sid)?.api.el),
     onFocus: () => {
       document.dispatchEvent(new CustomEvent("kostomp-chat-shown"));
       if (sessions.has(layout.focused)) lastChatSid = layout.focused;
-      // Every commit reports focus, also when it stayed put; a panel's onShow re-reads git / the disk.
-      if (layout.focused !== shownSid) {
-        shownSid = layout.focused;
-        panels.get(shownSid)?.api.onShow?.();
-      }
       paintTabs();
-      paintTopStatus();
-      const focusedKind = panels.get(layout.focused)?.kind;
-      for (const k of PANEL_KINDS) $(k + "-open")?.classList.toggle("active", focusedKind === k);
     },
     // Only refreshSaved sets savedStale, so the saved-list bindings exist whenever this paints.
     onChange: () => {
@@ -431,52 +422,12 @@
       save();
       if (savedStale && savedEl.isConnected) paintSaved();
     },
-    split: (sid, zone) => {
-      const p = panels.get(sid);
-      if (p) return newPanel(p.kind, sid, zone);
-      return newSession(sid, zone);
-    },
-    resolveDrop: (raw) => {
-      if (typeof raw === "string" && raw.startsWith("new:")) {
-        const kind = raw.slice(4);
-        if (PANEL_KINDS.includes(kind)) return addPanel({ kind, cwd: activeCwd() }).sid;
-      }
-      return raw;
-    },
+    split: (sid, zone) => newSession(sid, zone),
     pinned: isListPanel,
   });
   layout.setMeta(LIST_SID, { title: "Sessions" });
   layout.setMeta(GRAPHS_SID, { title: "Graphs" });
   layout.setMeta(DESIGNS_SID, { title: "Designs" });
-  for (const kind of PANEL_KINDS) {
-    const btn = $(kind + "-open");
-    if (!btn) continue;
-    layout.makeDraggable(btn, "new:" + kind);
-    btn.addEventListener("click", (e) => {
-      if (e.shiftKey || e.ctrlKey || e.metaKey) {
-        newPanel(kind, layout.focused, "right");
-        return;
-      }
-      const focused = panels.get(layout.focused);
-      if (focused?.kind === kind) {
-        newPanel(kind, layout.focused, "right");
-        return;
-      }
-      const existing = [...panels.values()].find((p) => p.kind === kind && layout.has(p.sid)) ?? [...panels.values()].find((p) => p.kind === kind);
-      if (existing) {
-        placeItem(existing.sid);
-        existing.api.focus?.();
-      } else {
-        newPanel(kind, layout.focused, layout.focused ? "right" : null);
-      }
-    });
-  }
-  /** Bring a chat or panel into view; from a list pane (or when opening a tool panel over a chat) it splits beside it. */
-  function placeItem(sid, defaultZone = "right") {
-    if (layout.has(sid)) layout.show(sid);
-    else if (defaultZone && layout.focused) layout.drop(sid, layout.focused, defaultZone);
-    else layout.show(sid);
-  }
   function placeChat(sid) {
     if (layout.has(sid) || !isListPanel(layout.focused)) layout.show(sid);
     else layout.drop(sid, layout.focused, "right");
@@ -492,30 +443,13 @@
       // A name typed on the tab wins over the one omp reports (session name / extension setTitle).
       s.title = s.name ?? s.autoTitle ?? (n > 1 ? `${base} ${n}` : base);
       s.label.textContent = (window.kostompFavs.any(s.sessionFile) ? "★ " : "") + s.title;
+      s.av.textContent = (Array.from(s.title.trim())[0] ?? "·").toUpperCase();
+      s.av.style.setProperty("--c", s.cwd ? groupColor(s.cwd) : "var(--ink-3)");
       s.tab.title = s.cwd ? `${s.cwd} — drag onto the workspace to split` : "starting…";
       layout.setMeta(s.sid, { title: s.title });
     }
-    retitlePanels();
     groupTabs();
     save();
-  }
-  function retitlePanels() {
-    const counts = new Map();
-    for (const p of panels.values()) {
-      const n = (counts.get(p.kind) ?? 0) + 1;
-      counts.set(p.kind, n);
-      const base = PANEL_TITLES[p.kind] ?? p.kind;
-      const folder = p.cwd ? baseName(p.cwd) : "";
-      const sub = p.subTitle || folder;
-      const auto = n > 1 ? `${base} ${n}` : base;
-      p.title = p.name ?? (sub ? `${auto} · ${sub}` : auto);
-      p.label.textContent = p.title;
-      p.tab.title = `${p.title}${p.cwd ? "\n" + p.cwd : ""} — bölmek için çalışma alanına sürükleyin`;
-      layout.setMeta(p.sid, { title: p.title, status: p.statusKind ?? "" });
-    }
-    if (sidePanels) sidePanels.hidden = panels.size === 0;
-    filterSide();
-    paintTopStatus();
   }
   const groupEls = new Map(); // cwd -> { head, body, rows }
   const COLLAPSED_KEY = "kostomp-collapsed-projects";
@@ -649,11 +583,6 @@
       g.head.hidden = !any;
       g.body.hidden = !any;
     }
-    for (const p of panels.values()) {
-      const ok = hit(p.title);
-      p.tab.classList.toggle("filtered", !ok);
-      if (ok) chats++;
-    }
     emptyOf(segTabs[0]).hidden = chats > 0 || !q;
     [graphOpen, designOpen].forEach((list, i) => {
       let shown = 0;
@@ -735,100 +664,26 @@
     if (!busy) s.time.textContent = sideAgo(s.lastAt);
   }
   setInterval(() => { for (const s of sessions.values()) paintTime(s); }, 30000);
-  const STATE_COLOR = { busy: "var(--accent)", ok: "var(--ok)", bad: "var(--bad)" };
-  /** m:ss since the session's current state began (lastAt moves on every kind change). */
-  const elapsed = (s) => {
-    const sec = Math.max(0, Math.floor((Date.now() - s.lastAt) / 1000));
-    return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
-  };
-  /** A full-pane view (Design) that owns the titlebar while on screen: { title, cwd, status: { kind, text } }. */
-  let topOverride = null;
-  window.kostompTopStatus = (override) => {
-    topOverride = override;
-    paintTopStatus();
-  };
-  /** The titlebar vessel: the pane view on screen, else the focused chat or panel, its folder, and its state (the liquid level follows the kind). */
-  function paintTopStatus() {
-    const s = topOverride ? null : sessions.get(layout?.focused);
-    const p = topOverride ? null : panels.get(layout?.focused);
-    const item = topOverride ?? s ?? p;
-    const st = item?.status ?? null;
-    const text = (st?.text ?? "") + (s && st?.kind === "busy" ? " " + elapsed(s) : "");
-    statusTitle.textContent = item?.title ?? "Kostomp";
-    statusSub.textContent = item?.cwd ?? "";
-    statusText.textContent = text;
-    statusText.hidden = !text;
-    statusBox.className = "status" + (st?.kind ? " " + st.kind : "");
-    statusBox.setAttribute("aria-label", `Sessions: ${statusTitle.textContent}${text ? ", " + text : ""}`);
-  }
-  setInterval(() => { if (sessions.get(layout?.focused)?.status.kind === "busy") paintTopStatus(); }, 1000);
-  /** Subtitle text shared by the sidebar row and the titlebar popup: a question, an unseen reply, else the status. */
+  /** Subtitle text of the sidebar row: a question, an unseen reply, else the status. */
   function sessionLabel(s) {
     if (s.asking !== null) return s.asking;
     return s.status.kind !== "busy" && s.status.kind !== "bad" && s.unseen ? "New reply" : s.status.text;
   }
-  function paintSessionMenu() {
-    const heading = document.createElement("h3");
-    heading.textContent = "Sessions";
-    sessionMenu.replaceChildren(heading);
-    for (const s of sessions.values()) {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "sm-item";
-      row.setAttribute("role", "option");
-      row.setAttribute("aria-selected", String(s.sid === layout.focused));
-      row.style.setProperty("--c", STATE_COLOR[s.status.kind] ?? "var(--ink-3)");
-      const dot = document.createElement("i");
-      const text = document.createElement("div");
-      const title = document.createElement("b");
-      title.textContent = s.title;
-      const sub = document.createElement("span");
-      sub.textContent = s.cwd ?? "";
-      text.append(title, sub);
-      const state = document.createElement("small");
-      state.textContent = sessionLabel(s);
-      row.append(dot, text, state);
-      row.addEventListener("click", () => {
-        toggleSessionMenu(false);
-        showView("chat");
-        placeChat(s.sid);
-        s.api.focus();
-      });
-      sessionMenu.append(row);
-    }
-  }
-  function toggleSessionMenu(open) {
-    const next = open === undefined ? sessionMenu.hidden : open;
-    if (next === !sessionMenu.hidden) return;
-    sessionMenu.hidden = !next;
-    statusBox.setAttribute("aria-expanded", String(next));
-    if (!next) return;
-    if (!layoutMenu.hidden) toggleLayoutMenu(false);
-    paintSessionMenu();
-    (sessionMenu.querySelector("[aria-selected=true]") ?? sessionMenu.querySelector(".sm-item"))?.focus();
-  }
-  statusBox.addEventListener("click", () => toggleSessionMenu());
-  document.addEventListener("pointerdown", (e) => {
-    if (!sessionMenu.hidden && !e.target.closest("#status, #session-menu")) toggleSessionMenu(false);
-  });
-  /** Arrow keys walk an open titlebar popover's rows; Escape closes it and returns focus to its button. */
+  /** Arrow keys walk the open layout popover's rows. */
   document.addEventListener("keydown", (e) => {
-    const menu = !sessionMenu.hidden ? sessionMenu : !layoutMenu.hidden ? layoutMenu : null;
-    if (!menu || !menu.contains(document.activeElement)) return;
+    if (layoutMenu.hidden || !layoutMenu.contains(document.activeElement)) return;
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
-    const rows = [...menu.querySelectorAll(".sm-item, .layout-item")];
+    const rows = [...layoutMenu.querySelectorAll(".layout-item")];
     const i = rows.indexOf(document.activeElement);
     rows[(i + (e.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length]?.focus();
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !sessionMenu.hidden) { toggleSessionMenu(false); statusBox.focus(); }
   });
   /** Status dot and row subtitle: a waiting question, a turn in flight (typing dots), an unseen reply, an error. */
   function paintSessionStatus(s) {
     const kind = s.status.kind;
     const state = s.asking !== null ? "ask" : kind === "busy" ? "busy" : kind === "bad" ? "bad" : s.unseen ? "ok" : "idle";
     s.badge.dataset.state = state;
+    s.tab.classList.toggle("fresh", state === "ok");
     s.badge.title = s.asking ?? s.status.text;
     s.sub.replaceChildren();
     if (state === "busy") {
@@ -840,11 +695,6 @@
     }
     s.sub.append(sessionLabel(s));
     paintTime(s);
-    if (!sessionMenu.hidden) {
-      const at = [...sessionMenu.querySelectorAll(".sm-item")].indexOf(document.activeElement);
-      paintSessionMenu();
-      if (at >= 0) sessionMenu.querySelectorAll(".sm-item")[at]?.focus();
-    }
   }
   function paintTabs() {
     const showingPane = $("chat").classList.contains("graph-mode") || $("chat").classList.contains("design-mode");
@@ -862,14 +712,6 @@
       if (selected) s.tab.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     strip.classList.toggle("single", sessions.size === 1);
-    for (const p of panels.values()) {
-      const selected = p.sid === focused;
-      p.tab.classList.toggle("active", selected);
-      p.tab.classList.toggle("shown", shown.has(p.sid));
-      p.tab.setAttribute("aria-selected", String(selected));
-    }
-    const focusedKind = focused ? panels.get(focused)?.kind : null;
-    for (const k of PANEL_KINDS) $(k + "-open")?.classList.toggle("active", focusedKind === k);
   }
   document.addEventListener("kostomp-graph-mode", paintTabs);
   document.addEventListener("kostomp-design-mode", paintTabs);
@@ -897,8 +739,11 @@
     const badge = document.createElement("span");
     badge.className = "stab-dot";
     badge.setAttribute("aria-hidden", "true");
-    tab.append(badge, text, time, close);
-    const entry = { sid, tab, label, sub, time, badge, cwd: typeof opts.cwd === "string" && opts.cwd.trim() ? opts.cwd : null, title: "session", name: opts.name ?? null, autoTitle: null, sessionFile: opts.sessionFile ?? null, fresh: opts.resume === false, status: { text: "not started" }, lastAt: Date.now(), unseen: false, asking: null, api: null };
+    const av = document.createElement("span");
+    av.className = "stab-av";
+    av.setAttribute("aria-hidden", "true");
+    tab.append(badge, av, text, time, close);
+    const entry = { sid, tab, label, sub, time, badge, av, cwd: typeof opts.cwd === "string" && opts.cwd.trim() ? opts.cwd : null, title: "session", name: opts.name ?? null, autoTitle: null, sessionFile: opts.sessionFile ?? null, fresh: opts.resume === false, status: { text: "not started" }, lastAt: Date.now(), unseen: false, asking: null, api: null };
     sessions.set(sid, entry);
     paintSessionStatus(entry);
     strip.append(tab);
@@ -911,7 +756,6 @@
         if (layout.focused === sid) entry.unseen = false;
         paintSessionStatus(entry);
         layout.setMeta(sid, { status: kind });
-        if (layout.focused === sid) paintTopStatus();
         if (wasBusy && kind !== "busy") {
           markAttention(sid);
           if (kind === "ok") notifyReply(entry);
@@ -1036,125 +880,7 @@
     if (!layout.visible().length) layout.show(next);
     retitle();
     paintTabs();
-    paintTopStatus();
     focusChat();
-  }
-  function addPanel(opts) {
-    const kind = PANEL_KINDS.includes(opts.kind) ? opts.kind : "terminal";
-    const sid = opts.sid ?? "p" + ++nextPid;
-    const tab = document.createElement("div");
-    tab.className = "stab panel-stab";
-    tab.setAttribute("role", "tab");
-    tab.tabIndex = 0;
-    const label = document.createElement("span");
-    label.className = "stab-label";
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "stab-close";
-    close.textContent = "×";
-    close.setAttribute("aria-label", "Paneli kapat");
-    const avatar = document.createElement("span");
-    avatar.className = "stab-av panel-av";
-    avatar.style.setProperty("--c", PANEL_COLORS[kind] ?? "#6d4aff");
-    avatar.textContent = PANEL_BADGES[kind] ?? "P";
-    avatar.setAttribute("aria-hidden", "true");
-    tab.append(avatar, label, close);
-    const cwd = opts.cwd ?? activeCwd();
-    const entry = {
-      sid,
-      kind,
-      tab,
-      label,
-      avatar,
-      cwd,
-      title: PANEL_TITLES[kind] ?? kind,
-      name: opts.name ?? null,
-      subTitle: "",
-      status: { text: PANEL_TITLES[kind] ?? kind, kind: "ok" },
-      statusKind: "ok",
-      state: opts.state ?? null,
-      api: null,
-    };
-    panels.set(sid, entry);
-    panelStrip?.append(tab);
-    entry.api = window.createWorkspacePanel(sid, kind, {
-      cwd: () => entry.cwd ?? activeCwd(sid),
-      setCwd(nextCwd) {
-        entry.cwd = nextCwd;
-        retitlePanels();
-        save();
-      },
-      subTitle(text) {
-        entry.subTitle = text || "";
-        retitlePanels();
-      },
-      status(text, statusKind = "ok") {
-        entry.status = { text: text || (PANEL_TITLES[kind] ?? kind), kind: statusKind };
-        entry.statusKind = statusKind;
-        layout.setMeta(sid, { status: statusKind });
-        if (layout.focused === sid) paintTopStatus();
-      },
-      save,
-      highlight: (code, lang) => {
-        const s = readySession();
-        if (!s || !lang || !code) return Promise.resolve(null);
-        return s.api.request("highlight_code", { code, lang }, 5000).then((d) => (Array.isArray(d?.tokens) ? d.tokens : null), () => null);
-      },
-    }, { cwd, state: opts.state ?? null });
-    layout.makeDraggable(tab, sid);
-    tab.addEventListener("click", (e) => {
-      if (e.target.closest("button")) return;
-      layout.show(sid);
-      entry.api.focus?.();
-    });
-    tab.addEventListener("keydown", (e) => {
-      if (e.target !== tab) return;
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        layout.show(sid);
-        entry.api.focus?.();
-      }
-    });
-    tab.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); });
-    tab.addEventListener("auxclick", (e) => {
-      if (e.button !== 1) return;
-      e.preventDefault();
-      closePanel(sid);
-    });
-    close.addEventListener("click", () => closePanel(sid));
-    retitlePanels();
-    paintTabs();
-    save();
-    return entry;
-  }
-
-  function closePanel(sid) {
-    const entry = panels.get(sid);
-    if (!entry) return;
-    entry.api.dispose?.();
-    panels.delete(sid);
-    entry.tab.remove();
-    layout.remove(sid);
-    entry.api.el.remove();
-    if (!layout.visible().length) {
-      const fallback = lastChatSid && sessions.has(lastChatSid) ? lastChatSid : [...sessions.keys()][0];
-      if (fallback) layout.show(fallback);
-    }
-    retitlePanels();
-    paintTabs();
-    paintTopStatus();
-    save();
-    focusChat();
-  }
-
-  function newPanel(kind, from, zone) {
-    const at = from ?? layout.focused;
-    const cwd = activeCwd(at);
-    const entry = addPanel({ kind, cwd });
-    if (zone && isTab(at)) layout.drop(entry.sid, at, zone);
-    else placeItem(entry.sid, zone);
-    entry.api.focus?.();
-    return entry;
   }
 
   /** A fresh session in `from`'s folder. Without a zone it takes the focused pane (the old one keeps
@@ -1192,6 +918,10 @@
     return entry.sid;
   };
   $("session-add").addEventListener("click", () => newSession());
+  /** Open or close a tool panel (terminal, changes, browser, files) inside the chat that has focus. */
+  function toggleTool(kind) {
+    (sessions.get(layout.focused) ?? sessions.get(lastChatSid))?.api.toggleTool(kind);
+  }
   document.addEventListener("keydown", (e) => {
     if ($("chat").hidden) return;
     if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === "KeyL") {
@@ -1206,20 +936,15 @@
     }
     if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === "Backquote") {
       e.preventDefault();
-      newPanel("terminal", layout.focused, e.shiftKey ? "bottom" : "right");
+      toggleTool("terminal");
       return;
     }
     if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
     if (e.code === "KeyT") { e.preventDefault(); newSession(); }
-    else if (e.code === "Digit5") {
-      e.preventDefault();
-      const p = panels.get(layout.focused);
-      if (p) newPanel(p.kind, layout.focused, "right");
-      else newSession(layout.focused, "right");
-    }
-    else if (e.code === "KeyG") { e.preventDefault(); newPanel("changes", layout.focused, "right"); }
-    else if (e.code === "KeyB") { e.preventDefault(); newPanel("browser", layout.focused, "right"); }
-    else if (e.code === "KeyE") { e.preventDefault(); newPanel("files", layout.focused, "right"); }
+    else if (e.code === "Digit5") { e.preventDefault(); newSession(layout.focused, "right"); }
+    else if (e.code === "KeyG") { e.preventDefault(); toggleTool("changes"); }
+    else if (e.code === "KeyB") { e.preventDefault(); toggleTool("browser"); }
+    else if (e.code === "KeyE") { e.preventDefault(); toggleTool("files"); }
   });
 
   // ---- named layouts: Alt+L cycles, the strip button opens the list ---------------------------
@@ -1318,9 +1043,8 @@
   }
   function paintLayoutBtn() {
     const cur = layouts.find((l) => l.id === activeLayout);
-    layoutBtn.querySelector(".layout-name").textContent = cur?.name ?? "";
     layoutBtn.classList.toggle("attention", attention.size > 0);
-    layoutBtn.title = "Layouts (Alt+L switches)";
+    layoutBtn.title = cur ? `Layout: ${cur.name} (Alt+L switches)` : "Layouts (Alt+L switches)";
   }
   function paintLayoutMenu() {
     const heading = document.createElement("h3");
@@ -1408,9 +1132,10 @@
     layoutMenu.hidden = !next;
     layoutBtn.setAttribute("aria-expanded", String(next));
     if (next) {
-      if (!sessionMenu.hidden) toggleSessionMenu(false);
-      // Body-level popover (so it refracts like the bar): pin its right edge under the button.
-      layoutMenu.style.right = Math.max(12, innerWidth - layoutBtn.getBoundingClientRect().right) + "px";
+      // Body-level popover: left-aligned to the button, opening upward.
+      const box = layoutBtn.getBoundingClientRect();
+      layoutMenu.style.left = Math.max(8, Math.min(box.left, innerWidth - layoutMenu.offsetWidth - 8)) + "px";
+      layoutMenu.style.bottom = innerHeight - box.top + 6 + "px";
       paintLayoutMenu();
       layoutMenu.querySelector(".layout-item[aria-checked=true]")?.focus();
     } else focusChat();
@@ -1429,15 +1154,7 @@
     for (const s of saved.sessions) {
       addSession({ sid: s.sid, cwd: s.cwd ?? null, name: s.name ?? null, sessionFile: s.sessionFile ?? null, resume: s.sessionFile ?? false });
     }
-    if (Array.isArray(saved.panels)) {
-      for (const p of saved.panels) {
-        if (p && typeof p.sid === "string" && PANEL_KINDS.includes(p.kind)) {
-          addPanel({ sid: p.sid, kind: p.kind, cwd: p.cwd ?? null, name: p.name ?? null, state: p.state ?? null });
-        }
-      }
-    }
     nextSid = Math.max(Number(saved.nextSid) || 0, ...[...sessions.keys()].map((k) => Number(k.slice(1)) || 0));
-    nextPid = Math.max(Number(saved.nextPid) || 0, ...[...panels.keys()].map((k) => Number(k.slice(1)) || 0));
     layouts = (Array.isArray(saved.layouts) ? saved.layouts : []).filter((l) => l && typeof l.id === "string" && typeof l.name === "string");
     layoutSeq = Math.max(0, ...layouts.map((l) => Number(l.id.slice(1)) || 0));
     activeLayout = layouts.some((l) => l.id === saved.active) ? saved.active : layouts[0]?.id ?? null;

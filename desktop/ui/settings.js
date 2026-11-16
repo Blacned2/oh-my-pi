@@ -7,6 +7,27 @@
   const $ = (id) => document.getElementById(id);
   const root = document.documentElement;
 
+  // ---- interface scale ----------------------------------------------------
+  // UI size = webview zoom (everything, incl. panes and fonts); font size = --font-scale, read by the chat
+  // text rules at the end of app.css. Both are percentages kept in localStorage; index.html applies the font
+  // scale before first paint, and the webview zoom (not persisted by Tauri) is re-applied below on every launch.
+  const UI_SCALE_KEY = "kostomp-ui-scale";
+  const FONT_SCALE_KEY = "kostomp-font-scale";
+  const SCALE_MIN = 80, SCALE_MAX = 150;
+  const readScale = (key) => {
+    const v = Number(localStorage.getItem(key));
+    return v >= SCALE_MIN && v <= SCALE_MAX ? v : 100;
+  };
+  let uiScale = readScale(UI_SCALE_KEY);
+  let fontScale = readScale(FONT_SCALE_KEY);
+  function applyUiScale() {
+    window.__TAURI__.webview.getCurrentWebview().setZoom(uiScale / 100)
+      .catch((err) => console.warn("UI size not applied", err));
+  }
+  function applyFontScale() { root.style.setProperty("--font-scale", String(fontScale / 100)); }
+  applyFontScale();
+  if (uiScale !== 100) applyUiScale();
+
   // h("div", { class: "x", text: "y", onclick: fn }, ...children): DOM without innerHTML.
   function h(tag, props, ...kids) {
     const n = document.createElement(tag);
@@ -313,12 +334,36 @@
     const note = h("div", { class: "set-note", hidden: true });
     const error = h("div", { class: "row-err", hidden: true });
 
+    // Interface size: font scales live while dragging; the webview zoom is applied on release (it reflows the whole window).
+    const scaleRow = (name, desc, key, get, set, apply, live) => {
+      const val = h("span", { class: "val" });
+      const input = slider(SCALE_MIN, SCALE_MAX, 5, (v) => {
+        val.textContent = v + "%";
+        if (live) { set(v); apply(); }
+      }, (v) => { set(v); localStorage.setItem(key, String(v)); apply(); });
+      input.value = String(get());
+      val.textContent = get() + "%";
+      fill(input);
+      return { input, val, row: row(name, desc, input, val) };
+    };
+    const uiRow = scaleRow("UI size", "Scales the whole window: panels, sidebar, buttons and text.", UI_SCALE_KEY,
+      () => uiScale, (v) => { uiScale = v; }, applyUiScale, false);
+    const fontRow = scaleRow("Font size", "Scales chat text: messages, code, tool output and the prompt box.", FONT_SCALE_KEY,
+      () => fontScale, (v) => { fontScale = v; }, applyFontScale, true);
+    const resetScale = h("button", { type: "button", class: "btn", text: "Reset sizes", onclick: () => {
+      uiScale = 100; fontScale = 100;
+      localStorage.removeItem(UI_SCALE_KEY); localStorage.removeItem(FONT_SCALE_KEY);
+      for (const [r, v] of [[uiRow, uiScale], [fontRow, fontScale]]) { r.input.value = String(v); r.val.textContent = v + "%"; fill(r.input); }
+      applyUiScale(); applyFontScale();
+    } });
     pageEl.append(
       h("h1", { text: "Window" }),
       h("p", { class: "set-lead", text: "How the Kostomp window sits on your desktop. Changes apply right away." }),
+
       h("div", { class: "set-body" },
         h("div", { class: "tiles", role: "radiogroup", "aria-label": "Window material" }, glassTile, opaqueTile),
         note, error,
+        h("div", { class: "set-h", text: "Interface size" }), uiRow.row, fontRow.row, resetScale,
         h("div", { class: "set-h", text: "Glass type" }), typeGrid,
         h("div", { class: "set-h", text: "Fine tuning" }),
         paramRows, tintColorRow,

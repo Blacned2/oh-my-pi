@@ -515,6 +515,28 @@ pub fn open_file(path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Show a file (selected) or folder (opened) in Windows Explorer. Only an existing absolute
+/// path; `explorer.exe` is the fixed program, the path is its only argument.
+#[tauri::command]
+pub fn reveal_in_explorer(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(path.trim());
+    if !p.is_absolute() {
+        return Err("path must be absolute".into());
+    }
+    let mut cmd = Command::new("explorer.exe");
+    if p.is_dir() {
+        cmd.arg(p);
+    } else if p.exists() {
+        cmd.raw_arg(format!("/select,\"{}\"", p.display()));
+    } else {
+        return Err("the path does not exist".into());
+    }
+    cmd.creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// End session `id` and forget it. Resolves once its process has exited.
 #[tauri::command]
 pub async fn rpc_stop(app: AppHandle, id: String) -> Result<(), String> {

@@ -367,8 +367,6 @@ addEventListener("message",e=>{const d=e.data;if(e.source!==parent||!d)return;if
       void refreshSkills();
       if (!models.length || modelsError) void refreshModels();
       requestAnimationFrame(() => { if (current && !current.userView) fit(current); });
-    } else {
-      window.kostompTopStatus(null);
     }
   }
 
@@ -407,7 +405,7 @@ addEventListener("message",e=>{const d=e.data;if(e.source!==parent||!d)return;if
 
   document.addEventListener("kostomp-chat-shown", () => setMode(false));
   document.addEventListener("kostomp-graph-mode", () => { if (chat.classList.contains("graph-mode")) setMode(false); });
-  const chatControls = document.querySelectorAll("#session-tabs, .sidebar .compose, .sidebar .seg, .topbar .tool-rail");
+  const chatControls = document.querySelectorAll("#session-tabs, .sidebar .compose, .sidebar .seg");
   // app.js decides which of these clicks and keys navigate to a chat.
   const leaveForChat = event => { if (window.kostompLeavesForChat(event)) setMode(false); };
   for (const el of chatControls) {
@@ -1191,9 +1189,7 @@ addEventListener("message",e=>{const d=e.data;if(e.source!==parent||!d)return;if
     else delete statusLine.dataset.kind;
   }
 
-  // ---- board state: one reading for the sidebar row, the canvas badge and the titlebar -----------
-
-  const TOP_KIND = { busy: "busy", bad: "bad", ok: "ok", idle: "" };
+  // ---- board state: one reading for the sidebar row and the canvas badge ---------------------------
 
   /** busy: a turn, its preparation, an implementation or an export is in flight; bad/ok: how the last action ended. */
   function boardState(b) {
@@ -1242,18 +1238,6 @@ addEventListener("message",e=>{const d=e.data;if(e.source!==parent||!d)return;if
     button.title = view.tip ? `${boardTitle(data)}\n${view.tip}` : boardTitle(data);
   }
 
-  /** The titlebar shows the board on screen instead of the last focused chat. */
-  function paintTop() {
-    if (!designMode || !current) return;
-    const view = stateView(current);
-    const project = current.data.implementProject;
-    window.kostompTopStatus({
-      title: current.persisted ? boardTitle(current.data) : current.data.title.trim() || "New design",
-      cwd: project ? `Design · ${folderName(project)}` : "Design",
-      status: { kind: TOP_KIND[view.state], text: view.text },
-    });
-  }
-
   function paintState(b) {
     const rows = [...history.querySelectorAll("button[data-board]"), ...openList.querySelectorAll("button[data-board]")];
     for (const button of rows) if (button.dataset.board === b.id) paintRow(button, b.data, b);
@@ -1262,7 +1246,6 @@ addEventListener("message",e=>{const d=e.data;if(e.source!==parent||!d)return;if
     stateBadge.dataset.state = view.state;
     stateBadge.textContent = view.text;
     stateBadge.title = view.tip || view.text;
-    paintTop();
   }
 
   setInterval(() => { for (const b of boards.values()) if (b.state === "busy") paintState(b); }, 1000);
@@ -1301,7 +1284,6 @@ addEventListener("message",e=>{const d=e.data;if(e.source!==parent||!d)return;if
     current.data.title = titleInput.value.trim();
     saveBoard(current);
     renderLists();
-    paintTop();
   });
   titleInput.addEventListener("keydown", event => { if (event.key === "Enter") titleInput.blur(); });
   const autosize = () => {

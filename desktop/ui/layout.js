@@ -102,6 +102,7 @@
       restore(active);
       for (const sid of heads.keys()) paintMeta(sid);
       paintFocus();
+      paintCorner();
     }
 
     function build(n) {
@@ -172,6 +173,8 @@
         pill.append(tool("close-pane", ICON_CLOSE, "Close tab in pane (Middle click)", () => api.close(sid)));
       }
       head.append(pill);
+      // The session's usage strip sits left of the pill and needs its width.
+      new ResizeObserver(() => p.style.setProperty("--pill-w", pill.offsetWidth + "px")).observe(pill);
       const body = el("div", "pane-body");
       const root = hooks.sessionEl(g.active);
       if (root) body.append(root);
@@ -259,6 +262,16 @@
       h.title.title = m.title;
       h.dot.className = "dot" + (m.status ? " " + m.status : "");
     }
+    /** The pane under the window's top-right corner reserves room for the window controls (--wc-w in app.css). */
+    function paintCorner() {
+      const panes = [...host.querySelectorAll(".pane")];
+      const rects = panes.map((p) => p.getBoundingClientRect());
+      panes.forEach((p, i) => {
+        const r = rects[i];
+        p.classList.toggle("corner", r.right >= innerWidth - 24 && r.top <= 24);
+      });
+    }
+    new ResizeObserver(paintCorner).observe(host);
     function paintFocus() {
       for (const p of host.querySelectorAll(".pane")) p.classList.toggle("focused", p.dataset.gid === String(focusedGid));
     }

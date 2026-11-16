@@ -1153,7 +1153,8 @@
       refreshTree();
     });
     const refreshBtn = btn("↻", "ico", "Dosya ağacını yenile", () => refreshTree());
-    bar.append(cwdBtn, filterInput, hiddenBtn, refreshBtn);
+    const viewerBtn = btn("Görüntüleyici", "", "Dosya görüntüleyiciyi göster/gizle", () => setViewerOpen(!viewerOpen));
+    bar.append(cwdBtn, filterInput, hiddenBtn, viewerBtn, refreshBtn);
 
     const body = mk("div", "files-body");
     const treeEl = mk("div", "files-tree");
@@ -1210,6 +1211,17 @@
     let rootDir = opts.cwd ?? hooks.cwd() ?? null;
     let showHidden = !!opts.state?.showHidden;
     hiddenBtn.classList.toggle("primary", showHidden);
+    let viewerOpen = opts.state?.viewerOpen !== false;
+    const applyViewerOpen = () => {
+      body.classList.toggle("viewer-closed", !viewerOpen);
+      viewerBtn.classList.toggle("primary", viewerOpen);
+    };
+    const setViewerOpen = (open) => {
+      viewerOpen = open;
+      applyViewerOpen();
+      hooks.save?.();
+    };
+    applyViewerOpen();
     let selectedFile = opts.state?.selectedFile ?? null;
     const expanded = new Set(Array.isArray(opts.state?.expanded) ? opts.state.expanded : []);
     const dirCache = new Map(); // path -> entries[]
@@ -1263,6 +1275,54 @@
       if (selectedFile && !currentFileData) openFile(selectedFile);
     }
 
+    // Right-click menu on tree rows (and the empty area, for the root): open in Windows Explorer.
+    let treeMenu = null;
+    function closeTreeMenu() {
+      if (!treeMenu) return;
+      treeMenu.remove();
+      treeMenu = null;
+      document.removeEventListener("pointerdown", onTreeMenuOutside, true);
+      document.removeEventListener("keydown", onTreeMenuKey, true);
+      window.removeEventListener("blur", closeTreeMenu);
+    }
+    function onTreeMenuOutside(e) {
+      if (treeMenu && !treeMenu.contains(e.target)) closeTreeMenu();
+    }
+    function onTreeMenuKey(e) {
+      if (e.key === "Escape") closeTreeMenu();
+    }
+    function openTreeMenu(ev, targetPath) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeTreeMenu();
+      const menu = mk("div", "folder-menu glass");
+      menu.setAttribute("role", "menu");
+      const item = mk("button", "folder-item", "Explorer'da aç");
+      item.type = "button";
+      item.title = targetPath;
+      item.setAttribute("role", "menuitem");
+      item.addEventListener("click", async () => {
+        closeTreeMenu();
+        try {
+          await invoke("reveal_in_explorer", { path: targetPath });
+        } catch (err) {
+          hooks.status?.("Explorer açılamadı: " + String(err?.message ?? err), "err");
+        }
+      });
+      menu.append(item);
+      document.body.append(menu);
+      menu.style.left = Math.max(8, Math.min(ev.clientX, innerWidth - menu.offsetWidth - 8)) + "px";
+      menu.style.top = Math.max(8, Math.min(ev.clientY, innerHeight - menu.offsetHeight - 8)) + "px";
+      treeMenu = menu;
+      document.addEventListener("pointerdown", onTreeMenuOutside, true);
+      document.addEventListener("keydown", onTreeMenuKey, true);
+      window.addEventListener("blur", closeTreeMenu);
+      item.focus();
+    }
+    treeEl.addEventListener("contextmenu", (ev) => {
+      if (rootDir) openTreeMenu(ev, rootDir);
+    });
+
     function paintTree() {
       treeEl.replaceChildren();
       if (!rootDir) return;
@@ -1300,9 +1360,11 @@
               hooks.save?.();
               paintTree();
             } else {
+              if (!viewerOpen) setViewerOpen(true);
               openFile(e.path);
             }
           });
+          row.addEventListener("contextmenu", (ev) => openTreeMenu(ev, e.path));
           frag.append(row);
           if (isOpen) renderEntries(e.path, depth + 1);
         }
@@ -1484,6 +1546,7 @@
         selectedFile,
         showHidden,
         treeWidth,
+        viewerOpen,
         expanded: [...expanded].slice(0, 40),
       }),
       dispose: () => {

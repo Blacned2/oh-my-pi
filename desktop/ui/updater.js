@@ -1,4 +1,4 @@
-// Checks for an app update at start and offers it in the top bar. Only the Kostomp shell is
+// Checks for an app update at start and offers it in the sidebar head. Only the Kostomp shell is
 // replaced; the bundled omp/stats stay as installed (see src/updater.rs).
 (() => {
   const { invoke } = window.__TAURI__.core;

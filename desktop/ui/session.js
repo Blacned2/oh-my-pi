@@ -959,7 +959,6 @@
   let lastAnswerText = ""; // lastAnswer as get_last_assistant_text projects it: its text blocks joined with nothing, trimmed
   function setBusy(value) {
     busy = value;
-    el.stop.hidden = !value && bashRunning === 0;
     syncSend();
     el.busyHint.hidden = !value;
     el.hint.hidden = value;
@@ -1688,8 +1687,8 @@
       const intent = span("intent");
       const badge = span("badge");
       badge.hidden = true;
-      const state = span("state", "running…");
-      sum.append(name, arg, intent, badge, state);
+      const state = span("state", "Running…");
+      sum.append(state, name, arg, intent, badge);
       const body = document.createElement("div");
       body.className = "tool-body";
       root.append(sum, body);
@@ -1735,7 +1734,7 @@
     c.badge.hidden = !b;
     c.badge.textContent = b?.text ?? "";
     c.badge.className = "badge" + (b?.kind ? " " + b.kind : "");
-    c.state.textContent = c.done ? (c.isError ? "error" : "done") : "running…";
+    c.state.textContent = c.done ? (c.isError ? "Error" : "Done") : "Running…";
     c.root.classList.toggle("done", c.done && !c.isError);
     c.root.classList.toggle("err", c.done && c.isError);
     if (c.done && !c.touched && toolsOpen === null) c.root.open = c.isError || (OPEN_WHEN_DONE.has(c.toolName) && toolBadge(c)?.kind === "diff");
@@ -2371,7 +2370,6 @@
     updateTool(ev, { args: { command } });
     scrollDown();
     bashRunning++;
-    el.stop.hidden = false;
     syncSend();
     try {
       const params = { command };
@@ -2382,7 +2380,6 @@
       updateTool(ev, { result: { content: [{ type: "text", text: String(e?.message ?? e) }], details: {} }, isError: true, done: true });
     } finally {
       bashRunning--;
-      if (!busy) el.stop.hidden = bashRunning === 0;
       syncSend();
       scrollDown();
     }
@@ -2391,7 +2388,7 @@
   // Desktop script cards are stored per project folder and shown in the top-right stack panel across all sessions of that project.
   const scriptKey = () => projectScriptKey(cwd);
   const scriptRuns = new Map(); // card.id -> running count in this session
-  let deckClosed = false;
+  let deckClosed = true;
   function loadScripts() {
     try {
       const key = scriptKey();
@@ -2635,14 +2632,13 @@
   let jobsPoll = null;
   let jobsSoon = null;
   let jobsSeen = null; // the last get_async_jobs answer as JSON, so an idle poll tick can skip an unchanged repaint
-  // deckClosed (declared with the scripts above): the user hid the deck; it reopens when a script is added.
+  // deckClosed (declared with the scripts above): starts collapsed; reopens when toggled or a script is added.
   let deckOpen = false;
-  const deckExpanded = new Set(["agents", "jobs"]); // unfolded categories
+  const deckExpanded = new Set(); // unfolded categories
   const deckLogs = new Set(); // "kind:id" rows whose output is unfolded
   const deckArmed = new Map(); // "kind:id" -> timer of a stop button waiting for its confirming click
   const DECK_ARM_MS = 2500;
   const DECK_SEGMENTS = 48; // overview bar segments
-  const DECK_PIPS = 12; // status pips on a category header
   const DECK_LOG_LINES = 6;
   const RING_LEN = 88; // circumference of the r=14 progress ring
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -2671,7 +2667,19 @@
   stackToggles.className = "stack-toggles";
   const stackPanels = document.createElement("div");
   stackPanels.className = "stack-panels";
-  stack.append(stackToggles, stackPanels);
+  const stackBar = document.createElement("div");
+  stackBar.className = "stack-bar";
+  // Terminal, Changes, Browser and Files open as resizable cards in this stack, beside the activity deck.
+  const toolDock = window.KostompDock.createToolDock({
+    sid,
+    cwd: () => cwd,
+    highlight: (code, lang) => {
+      if (!alive || !lang || !code) return Promise.resolve(null);
+      return request("highlight_code", { code, lang }, 5000).then((d) => (Array.isArray(d?.tokens) ? d.tokens : null), () => null);
+    },
+  });
+  stackBar.append(toolDock.bar, stackToggles);
+  stack.append(stackBar, toolDock.host, stackPanels);
   root.append(stack); // the session root, not messagesWrap: the deck may extend down over the composer
 
   const isRunning = (s) => s === "running" || s === "pending";
@@ -2877,12 +2885,9 @@
     const run = cat.items.filter((it) => it.st === "run").length;
     const name = span("cn");
     name.append(deckTag("strong", "", cat.name), deckTag("small", "", cat.items.length ? `${run} running · ${cat.items.length} total` : cat.hint));
-    const pips = span("pips");
-    pips.setAttribute("aria-hidden", "true");
-    pips.append(...cat.items.slice(0, DECK_PIPS).map((it) => deckTag("i", it.st)));
     const chev = span("chev");
     chev.append(deckIcon("chev"));
-    head.append(tile, name, pips, chev);
+    head.append(tile, name, chev);
     sec.append(head);
     if (open) {
       const body = deckTag("div", "body");
@@ -2971,17 +2976,20 @@
     return items;
   }
   function scriptItems(list) {
-    return list.map((card) => ({
-      id: card.id,
-      st: (scriptRuns.get(card.id) || 0) > 0 ? "run" : "idle",
-      title: card.name,
-      tip: card.command,
-      meta: clip(oneLine(card.command), 160),
-      actions: [
-        { icon: "run", label: "Run " + clip(oneLine(card.command), 80), run: () => runScript(card) },
-        { icon: "remove", label: "Remove " + card.name, run: () => removeScript(card.id) },
-      ],
-    }));
+    return list.map((card) => {
+      const running = (scriptRuns.get(card.id) || 0) > 0;
+      const actions = [{ icon: "run", label: "Run " + clip(oneLine(card.command), 80), run: () => runScript(card) }];
+      if (running) actions.push({ stop: true, label: "Stop " + card.name, run: () => send({ type: "abort_bash" }) });
+      actions.push({ icon: "remove", label: "Remove " + card.name, run: () => removeScript(card.id) });
+      return {
+        id: card.id,
+        st: running ? "run" : "idle",
+        title: card.name,
+        tip: card.command,
+        meta: clip(oneLine(card.command), 160),
+        actions,
+      };
+    });
   }
   function deckPanel(cats, all, running, failed) {
     const panel = deckTag("section", "stack-panel deck");
@@ -3019,6 +3027,8 @@
       add.append(deckIcon("add"), "Add script: !+ <command> in the composer");
       panel.append(add);
     }
+    window.KostompDock.applySize(panel, "deck");
+    window.KostompDock.attachResize(panel, "deck");
     return panel;
   }
   function renderStack() {
@@ -3546,7 +3556,6 @@
     ["Alt+Enter", "Queue as a follow-up for after the turn"],
     ["Shift+Enter", "New line"],
     ["Esc", "Close the popup / drop the suggestion"],
-    ["Alt+Esc", "Stop the turn"],
     ["↑ / ↓", "Prompt history (on an empty editor)"],
     ["Ctrl+R", "Search the prompt history (again: next match)"],
     ["Tab / →", "Accept the suggestion or the highlighted completion"],
@@ -3945,6 +3954,12 @@
   // ---- model picker + history ------------------------------------------
   let currentModel = null;
   let availableModels = [];
+  // Before the process starts there is no model list: reuse the last one seen, and hold a pick until `state` arrives.
+  let pendingModel = null;
+  const MODELS_CACHE = "kostomp.models.v1";
+  const LAST_MODEL = "kostomp.lastModel.v1";
+  const readJson = (key) => { try { return JSON.parse(localStorage.getItem(key) || "null"); } catch { return null; } };
+  const writeJson = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
   const modelKey = (m) => m.provider + "/" + m.id;
   function renderModels() {
     const sel = el.model;
@@ -3963,15 +3978,17 @@
     }
     if (currentModel) sel.value = modelKey(currentModel);
     sel.hidden = !sel.options.length;
-    syncPicker(sel);
+    syncChip();
     renderEffort();
   }
-  // ---- chip + popup menu over a (hidden) <select>, styled like the folder menu ------------
-  // The select stays the source of truth (options, value, change event); the chip mirrors it.
-  const pickers = new Map();
+  // ---- one chip + popup menu over the (hidden) model and effort <select>s ------------------
+  // The selects stay the source of truth (options, value, change event); the chip mirrors both:
+  // "<model id without provider> <effort>", and its menu picks either.
+  let chip = null;
   let pickMenu = null;
   function closePickMenu() {
     if (!pickMenu) return;
+    pickMenu.owner.setAttribute("aria-expanded", "false");
     pickMenu.remove();
     pickMenu = null;
     document.removeEventListener("pointerdown", onPickOutside, true);
@@ -3989,37 +4006,51 @@
     items[next]?.focus();
     e.preventDefault();
   }
-  function syncPicker(sel) {
-    let btn = pickers.get(sel);
-    if (!btn) {
-      btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = sel.className;
-      btn.title = sel.title;
-      btn.setAttribute("aria-haspopup", "menu");
-      sel.after(btn);
-      pickers.set(sel, btn);
-      btn.addEventListener("click", () => {
-        const reopen = !(pickMenu && pickMenu.owner === btn);
+  function syncChip() {
+    if (!chip) {
+      chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "model composer-model";
+      chip.title = "Model and thinking effort (shift+tab cycles effort)";
+      chip.setAttribute("aria-haspopup", "menu");
+      chip.setAttribute("aria-expanded", "false");
+      el.send.before(chip);
+      chip.addEventListener("click", () => {
+        const reopen = !(pickMenu && pickMenu.owner === chip);
         closePickMenu();
-        if (reopen) openPickMenu(sel, btn);
+        if (reopen) openPickMenu(chip);
       });
       const label = document.createElement("span");
       label.className = "pick-label";
       const caret = document.createElement("span");
       caret.className = "pick-caret";
       caret.setAttribute("aria-hidden", "true");
-      btn.append(label, caret);
+      chip.append(label, caret);
     }
-    btn.hidden = sel.hidden;
-    const opt = sel.selectedOptions[0];
-    btn.querySelector(".pick-label").textContent = opt ? opt.textContent : sel.value;
+    chip.hidden = el.model.hidden;
+    const key = el.model.value;
+    const m = availableModels.find((x) => modelKey(x) === key) ?? (currentModel && modelKey(currentModel) === key ? currentModel : null);
+    // Catalog display name without the vendor word ("Claude Sonnet 5.5" → "Sonnet 5.5"); the id when it has none.
+    const display = typeof m?.name === "string" ? m.name.replace(/^claude\s+/i, "").trim() : "";
+    const name = document.createElement("span");
+    name.textContent = display || key.slice(key.indexOf("/") + 1);
+    const parts = [name];
+    const eff = el.effort.hidden ? null : el.effort.selectedOptions[0];
+    if (eff) {
+      const level = document.createElement("span");
+      level.className = "pick-effort";
+      level.textContent = eff.textContent.charAt(0).toUpperCase() + eff.textContent.slice(1);
+      parts.push(" ", level);
+    }
+    chip.querySelector(".pick-label").replaceChildren(...parts);
+    chip.title = key + (eff ? " · effort " + eff.textContent : "") + " — model and thinking effort (shift+tab cycles effort)";
   }
-  function openPickMenu(sel, btn) {
-    const menu = document.createElement("div");
-    menu.className = "pick-menu glass";
-    menu.setAttribute("role", "menu");
-    menu.owner = btn;
+  function addPickGroup(menu, title, sel) {
+    if (sel.hidden || !sel.options.length) return;
+    const head = document.createElement("div");
+    head.className = "pick-head";
+    head.textContent = title;
+    menu.append(head);
     for (const o of sel.options) {
       const b = document.createElement("button");
       b.type = "button";
@@ -4050,12 +4081,21 @@
       });
       menu.append(b);
     }
+  }
+  function openPickMenu(btn) {
+    const menu = document.createElement("div");
+    menu.className = "pick-menu glass";
+    menu.setAttribute("role", "menu");
+    menu.owner = btn;
+    addPickGroup(menu, "Effort", el.effort);
+    addPickGroup(menu, "Model", el.model);
     document.body.append(menu);
     const r = btn.getBoundingClientRect();
     menu.style.left = Math.max(8, Math.min(r.left, innerWidth - menu.offsetWidth - 8)) + "px";
     const above = r.top - 6 - menu.offsetHeight >= 8;
     menu.style.top = above ? r.top - 6 - menu.offsetHeight + "px" : Math.min(r.bottom + 6, Math.max(8, innerHeight - menu.offsetHeight - 8)) + "px";
     menu.style.transformOrigin = (above ? "bottom" : "top") + " left";
+    btn.setAttribute("aria-expanded", "true");
     pickMenu = menu;
     document.addEventListener("pointerdown", onPickOutside, true);
     document.addEventListener("keydown", onPickKey, true);
@@ -4063,7 +4103,12 @@
   }
   el.model.addEventListener("change", () => {
     const m = availableModels.find((x) => modelKey(x) === el.model.value);
-    if (m) send({ id: "setmodel", type: "set_model", provider: m.provider, modelId: m.id });
+    if (m && !started) {
+      pendingModel = m;
+      currentModel = m;
+      writeJson(LAST_MODEL, { provider: m.provider, id: m.id, name: m.name });
+      renderModels();
+    } else if (m) send({ id: "setmodel", type: "set_model", provider: m.provider, modelId: m.id });
   });
   // ---- effort: the thinking level, beside the model ---------------------
   // `get_state` seeds it and `thinking_level_changed` / `config_update` follow it. The options come
@@ -4087,17 +4132,17 @@
     if (!currentModel || !thinks) {
       sel.hidden = true;
       sel.replaceChildren();
-      syncPicker(sel);
+      syncChip();
       return;
     }
     const current = autoEffort !== null ? "auto" : (thinkingLevel ?? "off");
-    const opts = (levels ?? [current]).map((l) => optionOf(l, "effort " + l));
-    if (current === "auto") opts.unshift(optionOf("auto", autoEffort === "auto" ? "effort auto" : "effort auto · " + autoEffort));
-    else if (!opts.some((o) => o.value === current)) opts.push(optionOf(current, "effort " + current));
+    const opts = (levels ?? [current]).map((l) => optionOf(l, l));
+    if (current === "auto") opts.unshift(optionOf("auto", autoEffort === "auto" ? "auto" : "auto · " + autoEffort));
+    else if (!opts.some((o) => o.value === current)) opts.push(optionOf(current, current));
     sel.replaceChildren(...opts);
     sel.value = current;
     sel.hidden = false;
-    syncPicker(sel);
+    syncChip();
   }
   async function loadThinkingLevels() {
     const gen = ++levelsGen;
@@ -4233,6 +4278,15 @@
     const data = frame.data || {};
     if (frame.id === "state") {
       currentModel = data.model || null;
+      if (pendingModel) {
+        const want = pendingModel;
+        pendingModel = null;
+        if (!currentModel || modelKey(currentModel) !== modelKey(want)) {
+          currentModel = want;
+          send({ id: "setmodel", type: "set_model", provider: want.provider, modelId: want.id });
+        }
+      }
+      if (currentModel) writeJson(LAST_MODEL, { provider: currentModel.provider, id: currentModel.id, name: currentModel.name });
       thinkingLevel = data.thinkingLevel ?? null;
       // Older omp has no configuredThinkingLevel: assume a concrete level. Under auto the
       // resolved level arrives with the next `thinking_level_changed`.
@@ -4269,6 +4323,7 @@
       hooks.sessionFile?.(sessionFile);
     } else if (frame.id === "models") {
       availableModels = data.models || [];
+      writeJson(MODELS_CACHE, availableModels.map((m) => ({ provider: m.provider, id: m.id, name: m.name })));
       renderModels();
     } else if (frame.id === "hist") {
       renderHistory(data.messages || []);
@@ -4739,7 +4794,7 @@
     if (next === stopMode) return;
     stopMode = next;
     el.send.classList.toggle("stop", next);
-    el.send.title = next ? "Stop (Alt+Esc)" : "Send (Enter)";
+    el.send.title = next ? "Stop" : "Send (Enter)";
     el.send.setAttribute("aria-label", next ? "Stop" : "Send");
     el.send.firstElementChild.innerHTML = next ? SEND_STOP_ICON : SEND_ARROW_ICON;
   }
@@ -5237,11 +5292,6 @@
       hideGhost(true);
       return;
     }
-    if (e.key === "Escape" && e.altKey && (busy || bashRunning)) {
-      e.preventDefault();
-      stopTurn(); // with a queue: also pulls the queued messages back into the editor
-      return;
-    }
     if (e.key === "Enter" && e.altKey && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       submit("followUp"); // as in the CLI: queue for after the turn instead of steering
@@ -5281,7 +5331,6 @@
     closePalette();
     hideGhost(false);
   });
-  el.stop.addEventListener("click", stopTurn);
   // Transcript hotkeys anywhere in this session pane, as in the CLI: Ctrl+T thinking, Ctrl+O tool output.
   // Clicking plain transcript text focuses nothing, so key events would go to <body> and never reach
   // this pane. Make the pane itself focusable and take focus on a click that landed on non-interactive content.
@@ -5537,6 +5586,13 @@
     (menu.querySelector(".folder-item:not(.current)") || menu.querySelector(".folder-item"))?.focus();
   }
   el.cwd.addEventListener("click", () => (folderMenu ? closeFolderMenu() : openFolderMenu()));
+  {
+    const cached = readJson(MODELS_CACHE);
+    const last = readJson(LAST_MODEL);
+    if (Array.isArray(cached)) availableModels = cached.filter((m) => m && typeof m.provider === "string" && typeof m.id === "string");
+    if (last && typeof last.provider === "string" && typeof last.id === "string") currentModel = last;
+    if (availableModels.length) renderModels();
+  }
   setStatus("not started"); // the process starts on first use: ensureStarted(), request() or submitText()
 
   return {
@@ -5569,8 +5625,10 @@
     /** Re-read the scoped model list into the model picker (before the first start: `ready` will ask for it). */
     refreshModels: () => { if (started) send({ id: "models", type: "get_available_models" }); },
     focus: () => el.input.focus(),
+    toggleTool: (kind) => toolDock.toggle(kind),
     /** The session is closed for good: stop routing highlight requests to its process and drop everything still scheduled. */
     dispose: () => {
+      toolDock.dispose();
       hlAskers.delete(sid);
       scriptViews.delete(sid);
       favViews.delete(sid);

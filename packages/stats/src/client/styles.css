@@ -360,6 +360,30 @@ kbd {
 /* The desktop shell already supplies the outer top margin. */
 :root.kostomp-frame { --topbar-h: 68px; }
 .kostomp-frame .topbar.glass { top: 0; }
+/* The host sidebar already leaves its own gap and window edge: drop the dashboard's 12px left
+   inset so the seam between the two is one gap, as in the chat view. */
+.kostomp-frame .topbar.glass,
+.kostomp-frame .sidebar.glass {
+	left: 0;
+	right: 6px;
+}
+/* The desktop window controls float over the top-right corner (34px x3, 8px gaps, 12px inset). */
+.kostomp-frame .topbar.glass {
+	padding-right: 140px;
+}
+.kostomp-frame .sidebar.glass {
+	right: auto;
+	bottom: 6px;
+}
+.kostomp-frame .shell-panel {
+	margin-right: 6px;
+	margin-bottom: 6px;
+}
+@media (min-width: 901px) {
+	.kostomp-frame .shell-panel {
+		margin-left: calc(var(--sidebar-w) - 12px);
+	}
+}
 
 .topbar-brand {
 	display: flex;

@@ -2715,6 +2715,11 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 
 			case "set_thinking_level": {
 				session.setThinkingLevel(command.level);
+				// Same contract as `set_model`: the pick becomes the default for new sessions. The
+				// `default` role's thinking suffix outranks `defaultThinkingLevel`, so it must follow.
+				if (session.model) {
+					rememberDefaultModel(session.settings, session.modelRegistry, session.model, undefined, command.level);
+				}
 				return success(id, "set_thinking_level");
 			}
 
@@ -2722,6 +2727,9 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				const level = session.cycleThinkingLevel();
 				if (!level) {
 					return success(id, "cycle_thinking_level", null);
+				}
+				if (session.model) {
+					rememberDefaultModel(session.settings, session.modelRegistry, session.model, undefined, level);
 				}
 				return success(id, "cycle_thinking_level", { level });
 			}

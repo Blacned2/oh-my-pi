@@ -1,5 +1,5 @@
 ﻿// Injected into every page of the main window (loading screen and the stats dashboard).
-// Draws glass window controls beside Settings and makes the top strip draggable.
+// Draws glass window controls in the sidebar head and makes that strip draggable.
 // The shared control recipe is loaded inside the shadow root; theme tokens inherit from the page.
 (() => {
   if (window.top !== window || window.__kostompControls) return;
@@ -10,21 +10,25 @@
 
   const call = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, { label: "main", ...args });
 
-  // The shell's titlebar floats with a margin, so its strip ends at the bar's bottom edge.
+  // The shell's sidebar head is the drag strip; the controls always float top-right (macOS-style traffic
+  // lights) over the page, which reserves --wc-w for them. Pages without a head (loading screen) drag from
+  // a STRIP_HEIGHT strip.
   // Events from inside the closed shadow root are retargeted to its host, so exclude the host.
-  const inDragStrip = (e, host, topbar) =>
-    e.button === 0 && e.clientY <= (topbar ? topbar.getBoundingClientRect().bottom : STRIP_HEIGHT) &&
-    e.target !== host && !e.target.closest?.(INTERACTIVE);
+  const inDragStrip = (e, host, head) => {
+    if (e.button !== 0 || e.target === host || e.target.closest?.(INTERACTIVE)) return false;
+    if (!head) return e.clientY <= STRIP_HEIGHT;
+    const r = head.getBoundingClientRect();
+    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  };
 
   const ICON_MAX = '<rect x="5" y="5" width="14" height="14" rx="2.5"/>';
   const ICON_RESTORE = '<rect x="5" y="9" width="10" height="10" rx="2"/><path d="M9 9V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2"/>';
 
   const mount = () => {
     const host = document.createElement("div");
-    const topbar = document.querySelector(".topbar");
-    host.style.cssText = topbar
-      ? "display:flex;flex:none;align-items:center;"
-      : "position:fixed;top:18px;right:24px;z-index:2147483647;";
+    const head = document.getElementById("side-head");
+    // Vertical centre matches the pane pills: --edge + pane border (1px) + pill top (8px) + half pill height (14px).
+    host.style.cssText = "position:fixed;top:calc(var(--edge,6px) + 12.5px);right:14px;z-index:2147483647;";
 
     const root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `
@@ -32,24 +36,27 @@
       <style>
         :host { font:inherit; }
         .bar {
-          display:flex; align-items:center; gap:6px;
+          display:flex; align-items:center; gap:8px; padding:4px;
           user-select:none; -webkit-user-select:none;
         }
-        .bar.in-topbar { margin-left:6px; padding-left:10px; border-left:1px solid var(--line-2); }
         .bar button.bead {
           box-sizing:border-box; display:grid; place-items:center; padding:0;
-          width:34px; height:34px; border:0; border-radius:50%;
-          background:var(--hover, rgb(255 255 255 / .08)); color:var(--ink-1); cursor:pointer;
-          box-shadow:inset 0 1px 1px rgb(255 255 255 / .45), inset 0 -2px 3px rgb(0 0 0 / .16);
+          width:13px; height:13px; border-radius:50%; cursor:pointer;
+          border:.5px solid var(--tl-edge); background:var(--tl); color:var(--tl-ink);
+          box-shadow:inset 0 .5px .5px rgb(255 255 255 / .4);
         }
-        .bar button.bead:hover { background:var(--press, rgb(255 255 255 / .14)); }
-        .bar button.bead:active { transform:scale(.9); }
+        .bar button.close { --tl:#ff5f57; --tl-edge:#e0443e; --tl-ink:#4d0000; }
+        .bar button.min { --tl:#febc2e; --tl-edge:#dea123; --tl-ink:#5a3a00; }
+        .bar button.max { --tl:#28c840; --tl-edge:#1aab29; --tl-ink:#003d0a; }
+        .bar button.bead svg { opacity:0; transition:opacity .12s; }
+        .bar:hover button.bead svg, .bar button.bead:focus-visible svg { opacity:1; }
+        .bar button.bead:hover { filter:brightness(1.08); }
+        .bar button.bead:active { filter:brightness(.82); transform:scale(.92); }
         .bar button.bead:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-        .bar button.close:hover { background:var(--bad); color:#fff; }
-        svg { width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+        svg { width:9px; height:9px; stroke:currentColor; fill:none; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; }
       </style>
-      <div class="bar${topbar ? " in-topbar" : ""}">
-        <button class="min bead" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+      <div class="bar">
+        <button class="min bead" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
         <button class="max bead" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 24 24">${ICON_MAX}</svg></button>
         <button class="close bead" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>`;
@@ -76,7 +83,7 @@
     // start_dragging hands the mouse to the OS and swallows the click/dblclick events, so the
     // double-click is detected on the second mousedown (detail === 2) and must not start a drag.
     document.addEventListener("mousedown", (e) => {
-      if (!inDragStrip(e, host, topbar)) return;
+      if (!inDragStrip(e, host, head)) return;
       if (e.detail === 2) toggleMaximize();
       else if (e.detail < 2) call("plugin:window|start_dragging");
     });
@@ -113,7 +120,7 @@
     }
     document.documentElement.appendChild(gripHost);
 
-    (topbar?.querySelector(".tb-r") || topbar || document.documentElement).appendChild(host);
+    document.documentElement.appendChild(host);
     syncMaxIcon();
   };
 

@@ -172,6 +172,53 @@
     status.dataset.kind = kind;
   }
 
+  // ---- model picker in the composer: reads and writes the Graph profile's provider/model ----
+  const modelWrap = document.getElementById("graph-model-wrap");
+  const modelSelect = document.getElementById("graph-model");
+  let modelProfile = null;
+  let modelOptions = [];
+  const profileModelKey = () => (modelProfile?.provider && modelProfile?.model ? `${modelProfile.provider}/${modelProfile.model}` : "");
+
+  function paintModelSelect() {
+    const key = profileModelKey();
+    const list = key && !modelOptions.some(item => item.value === key) ? [{ value: key, label: key }, ...modelOptions] : modelOptions;
+    modelSelect.replaceChildren(...list.map(item => new Option(item.label, item.value)));
+    if (key) modelSelect.value = key;
+    modelWrap.hidden = !list.length;
+    modelWrap.classList.toggle("is-busy", formBusy);
+    modelSelect.disabled = formBusy;
+  }
+
+  async function loadModelPicker() {
+    try {
+      const state = await request("settings");
+      modelProfile = state?.profile && typeof state.profile === "object" ? state.profile : null;
+    } catch { modelProfile = null; }
+    try {
+      const cached = JSON.parse(localStorage.getItem("kostomp.models.v1") || "null");
+      if (Array.isArray(cached)) modelOptions = cached.filter(m => m && typeof m.provider === "string" && typeof m.id === "string")
+        .map(m => ({ value: `${m.provider}/${m.id}`, label: m.name ? `${m.name} (${m.provider})` : `${m.provider}/${m.id}` }));
+    } catch {}
+    if (modelProfile) paintModelSelect();
+  }
+
+  modelSelect.addEventListener("change", async () => {
+    const value = modelSelect.value;
+    const slash = value.indexOf("/");
+    if (!modelProfile || slash < 1) return;
+    const previous = profileModelKey();
+    try {
+      const next = { ...modelProfile, provider: value.slice(0, slash), model: value.slice(slash + 1) };
+      await request("configure", next);
+      modelProfile = next;
+      showStatus("");
+    } catch (err) {
+      modelSelect.value = previous;
+      showStatus(`Could not change the model: ${err instanceof Error ? err.message : String(err)}`, "error");
+    }
+  });
+  void loadModelPicker();
+
   function renderTasks(list) {
     tasks.replaceChildren(...list.map(task => {
       const item = document.createElement("li");
@@ -489,6 +536,7 @@
     const elsewhere = !!snapshot?.busy && !!activeRun && (composing ? !planning : !snapshot.running && activeRun !== runId);
     form.hidden = !composing;
     formBusy = !!snapshot?.busy;
+    if (modelProfile) paintModelSelect();
     updateComposer();
     cancel.hidden = !snapshot?.running && !planning;
     resume.hidden = !snapshot?.resumable;
@@ -913,7 +961,7 @@
   document.addEventListener("kostomp-chat-shown", () => setMode(false));
   // Design shares the same sidebar and pane slot: entering it leaves Graph.
   document.addEventListener("kostomp-design-mode", () => { if (chat.classList.contains("design-mode")) setMode(false); });
-  const chatControls = document.querySelectorAll("#session-tabs, .sidebar .compose, .sidebar .seg, .topbar .tool-rail");
+  const chatControls = document.querySelectorAll("#session-tabs, .sidebar .compose, .sidebar .seg");
   // app.js decides which of these clicks and keys navigate to a chat.
   const leaveForChat = event => { if (window.kostompLeavesForChat(event)) setMode(false); };
   for (const el of chatControls) {

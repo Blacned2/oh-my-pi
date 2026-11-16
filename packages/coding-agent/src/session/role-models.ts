@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
+import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import type { Model } from "@oh-my-pi/pi-ai";
 import type { ModelRegistry } from "../config/model-registry";
 import { cfgModelRoleStorage } from "../config/model-settings";
@@ -18,7 +18,7 @@ export function formatRoleModelValue(
 	role: string,
 	model: Model,
 	selectorOverride?: string,
-	thinkingLevelOverride?: ThinkingLevel,
+	thinkingLevelOverride?: ConfiguredThinkingLevel,
 ): string {
 	const modelKey = selectorOverride ?? `${model.provider}/${model.id}`;
 	if (thinkingLevelOverride !== undefined) return formatModelSelectorValue(modelKey, thinkingLevelOverride);
@@ -37,16 +37,18 @@ export function formatRoleModelValue(
 /**
  * Remember an explicit model pick as the `default` role so the next new session
  * starts on it, in the scope `modelRoleStorage` selects (global by default).
- * The role's existing thinking suffix is preserved by
- * {@link formatRoleModelValue}.
+ * The role's existing thinking suffix is preserved by {@link formatRoleModelValue}
+ * unless `thinkingLevel` replaces it: an explicit effort pick must win over the
+ * stale suffix, which otherwise outranks `defaultThinkingLevel` in every new session.
  */
 export function rememberDefaultModel(
 	settings: Settings,
 	modelRegistry: ModelRegistry,
 	model: Model,
 	selector?: string,
+	thinkingLevel?: ConfiguredThinkingLevel,
 ): void {
-	const value = formatRoleModelValue(settings, modelRegistry, "default", model, selector);
+	const value = formatRoleModelValue(settings, modelRegistry, "default", model, selector, thinkingLevel);
 	if (cfgModelRoleStorage.get(settings) === "project") {
 		settings.setProjectModelRole("default", value);
 	} else {

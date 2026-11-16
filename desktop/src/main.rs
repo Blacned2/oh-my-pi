@@ -123,6 +123,7 @@ fn main() {
             rpc::make_dir, rpc::read_image,
             rpc::open_url,
             rpc::open_file,
+            rpc::reveal_in_explorer,
             window_style::window_style_get,
             window_style::window_style_set,
             omp_config::omp_config_list,

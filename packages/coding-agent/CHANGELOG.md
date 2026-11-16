@@ -19,6 +19,8 @@
 
 ### Fixed
 
+- RPC `set_thinking_level` and `cycle_thinking_level` now save the pick into the `default` model role, so new desktop sessions start on the chosen effort instead of the stale `:high` suffix
+- Desktop model/effort chip shows plain text and only draws its card on hover, focus or open menu
 - Services you stop yourself now show as cancelled in the Jobs panel instead of failed
 - `ask` prompts shown one question at a time (desktop, RPC hosts, collab guests) now include the form's explanatory text and preformatted blocks before each question instead of only its legend
 - Desktop shows an answered `ask` as each question with its answer (and option notes) instead of the raw JSON sent to the model

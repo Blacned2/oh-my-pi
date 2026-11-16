@@ -1,12 +1,14 @@
-# Shortcut for scripts\build-installer.ps1.
-#   build.ps1                 fast build (no omp/stats), notes "update"
-#   build.ps1 "notes"         fast build with these notes
-#   build.ps1 full "notes"    full build including omp + stats
-#   build.ps1 keep "notes"    fast build without bumping the version
+# Shortcut for scripts\build-installer.ps1. The default build bundles omp + stats: an installer
+# without them leaves the app on "omp is not running".
+#   build.ps1                 full build (omp + stats), notes "update"
+#   build.ps1 "notes"         full build with these notes
+#   build.ps1 fast "notes"    shell-only build (no omp/stats; keeps the ones already installed)
+#   build.ps1 keep "notes"    full build without bumping the version
 param([string]$Mode = "", [string]$Notes = "")
-$opts = @{ NoOmp = $true; NoStats = $true }
+$opts = @{}
 switch ($Mode.ToLower()) {
-    "full" { $opts = @{} }
+    "full" { }
+    "fast" { $opts = @{ NoOmp = $true; NoStats = $true } }
     "keep" { $opts.NoBump = $true }
     ""     { }
     default { $Notes = $Mode }

@@ -9,6 +9,8 @@
   (() => {
     const p = localStorage.getItem("kostomp-theme");
     const pref = p === "light" || p === "dark" ? p : "system";
+    const fs = Number(localStorage.getItem("kostomp-font-scale"));
+    if (fs >= 80 && fs <= 150) document.documentElement.style.setProperty("--font-scale", String(fs / 100));
     const dark = pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     // Window material, injected by the Rust side before any page script runs.
@@ -23,72 +25,24 @@
 </head>
 <body>
 <div class="blobs" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
-<header class="topbar glass">
-  <div class="tb-l">
-    <div class="brand" role="img" aria-label="Kostomp" title="Kostomp"><span aria-hidden="true">k</span><i aria-hidden="true"></i></div>
-    <nav class="tabs" id="tabs" role="tablist" aria-label="Views" data-view="chat">
-      <span class="thumb" aria-hidden="true"></span>
-      <button type="button" role="tab" id="tab-chat" data-view="chat" aria-controls="chat" aria-selected="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4 3.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg><span>Chat</span>
-      </button>
-      <button type="button" role="tab" id="tab-stats" data-view="stats" aria-controls="stats" aria-selected="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V4M9 20v-8M14 20V8M19 20v-5"/></svg><span>Stats</span>
-      </button>
-    </nav>
-  </div>
-  <div class="vessel-anchor">
-    <button type="button" class="status" id="status" aria-haspopup="listbox" aria-expanded="false" aria-controls="session-menu">
-      <span class="v-t"><b id="status-title">Kostomp</b><span id="status-sub"></span></span>
-      <span class="v-s" id="status-text">starting…</span>
-    </button>
-  </div>
-  <div class="tb-r">
-    <button type="button" id="update" class="link update" hidden></button>
-    <nav class="tool-rail" role="group" aria-label="Workspace panels">
-      <button type="button" id="terminal-open" class="bead tool-btn" title="Terminal paneli (sürükleyerek böl veya tıkla)" aria-label="Terminal paneli">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-      </button>
-      <button type="button" id="changes-open" class="bead tool-btn" title="Değişiklikler paneli (sürükleyerek böl veya tıkla)" aria-label="Değişiklikler paneli">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V10a4 4 0 0 0-4-4H8.5"/></svg>
-      </button>
-      <button type="button" id="browser-open" class="bead tool-btn" title="Tarayıcı paneli (sürükleyerek böl veya tıkla)" aria-label="Tarayıcı paneli">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8"/><path d="M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
-      </button>
-      <button type="button" id="files-open" class="bead tool-btn" title="Dosyalar paneli (sürükleyerek böl veya tıkla)" aria-label="Dosyalar paneli">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg>
-      </button>
-      <button type="button" id="tool-more" class="bead tool-more" title="Paneller" aria-label="Paneller" aria-haspopup="menu" aria-expanded="false" aria-controls="tool-menu">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/></svg>
-      </button>
-    </nav>
-    <button type="button" id="theme" class="bead" title="Theme"></button>
-    <div class="layout-anchor">
-      <button type="button" id="layout-btn" class="layout-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="layout-menu" title="Layouts (Alt+L switches)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="M12 4v16M12 10h8.5"/></svg>
-        <span class="layout-name"></span>
-        <span class="layout-dot" aria-hidden="true"></span>
-        <svg class="layout-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-      </button>
-    </div>
-    <button type="button" id="gear" class="bead" title="Settings" aria-label="Settings" aria-controls="settings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    </button>
-  </div>
-</header>
-<div id="session-menu" class="session-menu tb-pop glass" role="listbox" aria-label="Sessions" hidden></div>
 <div id="layout-menu" class="layout-menu tb-pop glass" role="menu" aria-label="Layouts" hidden></div>
-<div id="tool-menu" class="tb-pop glass ovf-menu" role="menu" aria-label="Paneller" hidden></div>
 <div id="compose-menu" class="tb-pop glass ovf-menu" role="menu" aria-label="New" hidden></div>
 
 <main>
-  <section id="chat" class="view" role="tabpanel" aria-labelledby="tab-chat">
+<div class="shell">
     <aside id="sidebar" class="sidebar glass" aria-label="Sidebar">
-      <div class="side-head">
-        <span class="side-title"><span class="mark" aria-hidden="true"></span><span class="brand-name">Kostomp</span></span>
-        <button type="button" id="side-toggle" class="icon side-toggle" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse sidebar" title="Collapse sidebar (Ctrl+B)">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="3.5"/><path d="M9.5 4v16"/><path class="chev" d="M15.5 9.5 13 12l2.5 2.5"/></svg>
-        </button>
+      <div class="side-head" id="side-head">
+        <button type="button" id="update" class="link update" hidden></button>
       </div>
+      <nav class="tabs" id="tabs" role="tablist" aria-label="Views" data-view="chat">
+        <span class="thumb" aria-hidden="true"></span>
+        <button type="button" role="tab" id="tab-chat" data-view="chat" aria-controls="chat" aria-selected="true" title="Chat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4 3.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg><span>Chat</span>
+        </button>
+        <button type="button" role="tab" id="tab-stats" data-view="stats" aria-controls="stats" aria-selected="false" title="Stats">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V4M9 20v-8M14 20V8M19 20v-5"/></svg><span>Stats</span>
+        </button>
+      </nav>
       <div class="compose">
         <button type="button" id="session-add" class="cta" title="New chat (Ctrl+N)" aria-label="New chat" aria-keyshortcuts="Control+N">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -115,15 +69,15 @@
       </label>
       <div id="side-seg" class="seg" role="tablist" aria-label="Library">
         <span class="seg-thumb" aria-hidden="true"></span>
-        <button type="button" role="tab" id="sessions-open" class="seg-btn" aria-selected="true" aria-controls="side-view-sessions" title="Sessions · click again to open all saved sessions">
+        <button type="button" role="tab" id="sessions-open" class="seg-btn" aria-label="Sessions" aria-selected="true" aria-controls="side-view-sessions" title="Sessions · click again to open all saved sessions">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
           <span class="btn-label">Sessions</span>
         </button>
-        <button type="button" role="tab" id="graphs-toggle" class="seg-btn" aria-selected="false" aria-controls="side-view-graphs" tabindex="-1" title="Graphs · click again to open all graph runs">
+        <button type="button" role="tab" id="graphs-toggle" class="seg-btn" aria-label="Graphs" aria-selected="false" aria-controls="side-view-graphs" tabindex="-1" title="Graphs · click again to open all graph runs">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M11 7l-5 10M13 7l5 10"/></svg>
           <span class="btn-label">Graphs</span><span id="graphs-count" class="seg-n btn-label" hidden></span>
         </button>
-        <button type="button" role="tab" id="designs-toggle" class="seg-btn" aria-selected="false" aria-controls="side-view-designs" tabindex="-1" title="Designs · click again to open all design boards">
+        <button type="button" role="tab" id="designs-toggle" class="seg-btn" aria-label="Designs" aria-selected="false" aria-controls="side-view-designs" tabindex="-1" title="Designs · click again to open all design boards">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>
           <span class="btn-label">Designs</span><span id="designs-count" class="seg-n btn-label" hidden></span>
         </button>
@@ -131,10 +85,6 @@
       <div class="side-scroll">
         <section id="side-view-sessions" class="side-view" role="tabpanel" aria-labelledby="sessions-open">
           <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Open chats" aria-orientation="vertical"></div>
-          <div id="side-panels" class="side-panels" role="group" aria-label="Açık paneller" hidden>
-            <div class="side-group-title">Paneller</div>
-            <div id="panel-tabs" class="panel-tabs-list" role="tablist" aria-label="Açık paneller"></div>
-          </div>
           <p class="side-empty">No chats match.</p>
         </section>
         <section id="side-view-graphs" class="side-view" role="tabpanel" aria-labelledby="graphs-toggle" hidden>
@@ -150,6 +100,18 @@
           <p class="side-empty">No open designs. Click Designs again to browse all boards.</p>
         </section>
       </div>
+      <div class="side-tools" role="group" aria-label="Shell controls">
+        <button type="button" id="theme" class="bead" title="Theme"></button>
+        <div class="layout-anchor">
+          <button type="button" id="layout-btn" class="bead" aria-label="Layouts" aria-haspopup="menu" aria-expanded="false" aria-controls="layout-menu" title="Layouts (Alt+L switches)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="M12 4v16M12 10h8.5"/></svg>
+            <span class="layout-dot" aria-hidden="true"></span>
+          </button>
+        </div>
+        <button type="button" id="gear" class="bead" title="Settings" aria-label="Settings" aria-controls="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
       <footer id="side-accounts" class="side-accounts" aria-label="Claude accounts" hidden>
         <div id="side-accounts-menu" class="acct-menu"><div>
           <div id="side-accounts-list" class="side-accounts-list" role="group" aria-label="Other Claude accounts"></div>
@@ -162,6 +124,8 @@
       </footer>
     </aside>
     <div id="side-resize" class="side-resize" role="separator" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" aria-valuemin="240" tabindex="0" title="Drag to resize (double-click: reset)"></div>
+<div class="stage">
+  <section id="chat" class="view" role="tabpanel" aria-labelledby="tab-chat">
     <div id="workspace" class="workspace"></div>
     <div id="graph" class="graph-workspace" role="region" aria-label="Graph" hidden>
       <div class="graph-page">
@@ -245,6 +209,7 @@
             <textarea id="graph-objective" name="objective" aria-label="Objective" aria-describedby="graph-objective-hint" rows="2" maxlength="8192" placeholder="What would you like to change?" required></textarea>
             <div class="graph-dock-footer">
               <span id="graph-objective-hint">Describe the change and what success looks like.</span>
+              <label id="graph-model-wrap" class="graph-model glass-pill" title="Model that plans and codes (Graph profile)" hidden><select id="graph-model" aria-label="Graph model"></select></label>
               <button type="submit" id="graph-start" class="graph-button graph-primary" disabled>Propose plan <span aria-hidden="true">↑</span></button>
             </div>
           </div>
@@ -288,7 +253,6 @@
           <span id="design-state" class="design-state glass-pill" role="status" aria-label="Board state" data-state="idle">Empty</span>
         </div>
         <div class="design-tools">
-          <label class="design-model design-opt glass-pill" title="Model for this board's design agent">Model <select id="design-model" aria-label="Design model"><option value="">Default model</option></select></label>
           <button type="button" id="design-system-btn" class="design-tool glass-pill" aria-haspopup="dialog" aria-expanded="false" title="Design system (DESIGN.md)">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/></svg>
             <span>Design system</span><i id="design-system-dot" class="design-system-dot" hidden></i>
@@ -350,6 +314,7 @@
             <button type="button" id="design-attach" class="attach glass-control" title="Attach images (or paste / drop them)" aria-label="Attach images">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><circle cx="9" cy="10" r="1.7"/><path d="m21 16-5-5-8 8"/></svg>
             </button>
+            <label class="design-model design-opt glass-pill" title="Model for this board's design agent"><select id="design-model" aria-label="Design model"><option value="">Default model</option></select></label>
             <button type="submit" id="design-send" class="send glass-control" title="Send (Enter)" aria-label="Send">
               <svg class="send-ico" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg>
               <svg class="stop-ico" viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true" hidden><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
@@ -399,6 +364,8 @@
     </aside>
     <div class="set-page" id="set-page"></div>
   </section>
+</div>
+</div>
 </main>
 <!-- One chat session. Cloned per session by session.js; data-ref names the parts it wires up. -->
 <template id="session-template">
@@ -432,19 +399,30 @@
     </div>
     <div class="dialog glass" data-ref="dialog" hidden></div>
     <div class="dialog tree glass" data-ref="tree" role="region" aria-label="Session tree" hidden></div>
+    <div class="topinfo" data-ref="topinfo">
+      <span data-ref="total" class="total" hidden></span>
+      <span data-ref="hint" class="hint">shift+enter newline</span>
+      <span data-ref="busyHint" class="hint" hidden>enter steer · alt+enter queue</span>
+      <button type="button" data-ref="thinkingBtn" class="link" aria-label="Show or hide thinking (Ctrl+T)" aria-pressed="false" title="Show or hide thinking (Ctrl+T)">ctrl + t</button>
+      <button type="button" data-ref="treeBtn" class="link" aria-expanded="false" title="Session tree: move to an earlier point, label entries">tree</button>
+    </div>
     <div class="prompt-area">
       <div class="palette glass" data-ref="palette" role="listbox" hidden></div>
       <div class="side-panel todos glass-control" data-ref="todos" role="region" aria-label="Todo list" hidden></div>
       <div class="chips queue" data-ref="queue" role="region" aria-label="Queued messages" hidden></div>
       <div class="attachments" data-ref="attachments" hidden></div>
       <div class="widgets" data-ref="widgetsAbove" hidden></div>
+      <div class="composer-meta">
+        <span data-ref="ctx" class="ctx glass-pill" hidden></span>
+        <button type="button" data-ref="cwd" class="link pick glass-pill" title="Change working folder"></button>
+      </div>
       <form class="composer glass" data-ref="composer">
         <div class="input-wrap">
           <div class="ghost" data-ref="ghost" aria-hidden="true" hidden></div>
-          <textarea data-ref="input" rows="1" spellcheck="false" placeholder="Message… / commands · @ files · ! shell"></textarea>
+          <textarea data-ref="input" rows="1" spellcheck="false" placeholder="Ask anything. @ files, / commands, ! shell"></textarea>
         </div>
         <button type="button" data-ref="attach" class="attach glass-control" title="Attach images" aria-label="Attach images">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><circle cx="9" cy="10" r="1.7"/><path d="m21 16-5-5-8 8"/></svg>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
         </button>
         <button type="submit" data-ref="send" class="send glass-control" title="Send (Enter)" aria-label="Send">
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg>
@@ -454,21 +432,13 @@
       <div class="composer-yielded" data-ref="yielded" role="status" hidden>Message input is paused until the question is answered.</div>
       <div class="widgets below" data-ref="widgetsBelow" hidden></div>
       <div class="statusline">
-        <button type="button" data-ref="cwd" class="link pick glass-pill" title="Change working folder"></button>
         <select data-ref="model" class="model glass-pill" title="Model" hidden></select>
         <select data-ref="effort" class="model effort glass-pill" title="Thinking effort (shift+tab cycles)" hidden></select>
-        <span data-ref="ctx" class="ctx glass-pill" hidden></span>
         <span data-ref="ext" class="ext-status" hidden></span>
         <button type="button" data-ref="warn" class="link warn" hidden></button>
         <button type="button" data-ref="goal" class="link goal glass-pill" hidden></button>
         <button type="button" data-ref="plan" class="link plan glass-pill" hidden></button>
         <span class="spacer"></span>
-        <span data-ref="total" class="total" hidden></span>
-        <span data-ref="hint" class="hint">shift+enter newline</span>
-        <span data-ref="busyHint" class="hint" hidden>enter steer · alt+enter queue</span>
-        <button type="button" data-ref="stop" class="link bad" hidden>alt+esc stop</button>
-        <button type="button" data-ref="thinkingBtn" class="link" aria-label="Show or hide thinking (Ctrl+T)" aria-pressed="false" title="Show or hide thinking (Ctrl+T)">ctrl + t</button>
-        <button type="button" data-ref="treeBtn" class="link" aria-expanded="false" title="Session tree: move to an earlier point, label entries">tree</button>
       </div>
     </div>
   </section>
@@ -479,6 +449,7 @@
   </figure>
   <button type="button" id="lightbox-close" class="lightbox-close" aria-label="Close preview" title="Close (Esc)">×</button>
 </div>
+<script src="dock.js"></script>
 <script src="folder-browser.js"></script>
 <script src="rpc-transport.js"></script>
 <script src="session.js"></script>

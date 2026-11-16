@@ -8,11 +8,15 @@ Graph lives in the chat sidebar. **New graph**, under **New chat**, opens the Gr
 
 The Graph pane sits flush against the sidebar, without a left-hand gutter, at every window width.
 
+The **Sessions**, **Graphs** and **Designs** sidebar tabs switch to icons only when the tab strip's content width is 260 px or less. Wider strips show the labels again; tooltips and accessible tab names remain available in both layouts.
+
 The objective composer is a compact command dock below the agent map: the top strip holds the project selector, repository path and **Browse…**, followed by a full-width objective field and **Propose plan** in the lower-right corner. On narrow panes the path and project badge are hidden to keep the controls usable. The dock follows the light or dark theme; proposing a plan still requires both a project and a non-empty objective.
 
 Chat rows in the sidebar and **Sessions** list, and Graph rows in the sidebar and **Graphs** list, have a **Delete session permanently** / **Delete graph run permanently** button. Deletion requires confirmation and stops the selected session's running work before removing its saved conversation or run, logs and artifacts. Deleting the last chat opens a fresh chat. Chats held by another OMP process cannot be deleted. The **×** buttons still only close rows; they do not delete saved history. Graph deletion does not modify the source repository.
 
 Assistant messages keep their **copy** action below the message card, outside its border; it appears on hover or keyboard focus after streaming finishes.
+
+New chats center the suggestions and message input together. Once the transcript has content, the input returns to the bottom. The Activity panel starts collapsed in every chat; **Show activity** in the upper-right opens it, and **Hide activity** collapses it again.
 
 Use a full Desktop build with the bundled OMP runtime. Open **Settings > Graph** to set the model provider and model ID, the host-approved Docker tester, the parallel Coder limit, the optional failure judge and whether Graph accepts a dirty checkout. The page reads and writes `graph/profile.json` under the local app data directory, normally `%LOCALAPPDATA%\dev.kostomp.desktop`, and refuses to save while a plan or run is active. You can still edit the file by hand. A profile looks like this with local values substituted.
 

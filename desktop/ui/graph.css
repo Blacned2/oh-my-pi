@@ -54,12 +54,13 @@
 .graph-workspace { flex: 1 1 0; min-width: 0; overflow: auto; padding: 0 var(--edge) var(--edge) 0; container: graph-workspace / inline-size; }
 .graph-page {
   display: flex; flex-direction: column; gap: 14px; box-sizing: border-box; width: 100%; min-height: 100%;
-  margin: 0; padding: 0;
+  margin: 0; padding: 14px; border: 1px solid var(--line-1); border-radius: 20px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
   --graph-surface: color-mix(in srgb, var(--panel) 90%, var(--bg));
 }
 .graph-heading {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 18px;
-  padding: 10px 14px; border: 1px solid var(--line-2); border-radius: 14px; background: var(--graph-surface);
+  padding: 10px calc(14px + var(--wc-w, 0px)) 10px 14px; border: 1px solid var(--line-2); border-radius: 14px; background: var(--graph-surface);
 }
 .graph-eyebrow { font-size: 12px; font-weight: 650; color: var(--accent); }
 .graph-heading h1 { margin: 2px 0 4px; font-size: clamp(17px, 1.9vw, 22px); line-height: 1.25; overflow-wrap: anywhere; }
@@ -269,3 +270,8 @@
 .graph-composer.glass:focus-within{outline:2px solid var(--focus);outline-offset:0;z-index:1}
 #graph-objective:focus-visible{outline:none}
 .graph-flow-node.graph-flow-node{background:var(--raised)}
+.graph-model { display: inline-flex; align-items: center; margin-left: auto; max-width: 240px; padding: 3px 10px; color: var(--c-violet); font: 600 12px var(--sans); }
+.graph-model[hidden] { display: none; }
+.graph-model select { max-width: 210px; padding: 0 2px; border: 0; background: none; color: inherit; font: inherit; outline-offset: 2px; text-overflow: ellipsis; cursor: pointer; }
+.graph-model select option { background: var(--panel); color: var(--ink-1); }
+.graph-model:not([hidden]) + #graph-start { margin-left: 0 !important; }

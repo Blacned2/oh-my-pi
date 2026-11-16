@@ -41,6 +41,12 @@ foreach ($r in $roots) { $required += (Get-PkgDir $r) }
 foreach ($p in $required) {
     if (-not (Test-Path -LiteralPath $p)) { throw "Missing $p - run 'bun install' at the repo root first." }
 }
+if ($roots.Count -gt 0) {
+    # omp refuses to start on an older bun, which shows up in the app as "omp is not running".
+    $minBun = [version]((Get-Content (Join-Path $Global "packages\coding-agent\package.json") -Raw | ConvertFrom-Json).engines.bun -replace '^[^\d]*', '')
+    $bunVersion = [version]((& $Bun --version).Trim() -replace '[^\d.].*$', '')
+    if ($bunVersion -lt $minBun) { throw "Bun $bunVersion at $Bun is older than the $minBun omp requires - run 'bun upgrade'." }
+}
 
 # Walk dependencies + optionalDependencies through the repo's flat node_modules. A component
 # that is switched off is never entered, even when the other one depends on it.
