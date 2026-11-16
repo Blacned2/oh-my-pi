@@ -356,6 +356,27 @@
       for (const [r, v] of [[uiRow, uiScale], [fontRow, fontScale]]) { r.input.value = String(v); r.val.textContent = v + "%"; fill(r.input); }
       applyUiScale(); applyFontScale();
     } });
+    // Chat background: the nebula or an image from ui/backgrounds (backgrounds.js). Stored in localStorage.
+    const bgApi = window.kostompBackgrounds;
+    const bgTiles = new Map();
+    const syncBgTiles = () => {
+      const cur = bgApi.current();
+      for (const [id, b] of bgTiles) b.setAttribute("aria-checked", String(id === cur));
+    };
+    const bgTile = (id, name, pv) => {
+      const b = h("button", {
+        type: "button", role: "radio", class: "tile", "aria-checked": "false",
+        onclick: () => { bgApi.set(id); syncBgTiles(); },
+      }, pv, h("div", { class: "tile-foot" }, h("span", { class: "radio" }),
+        h("span", {}, h("div", { class: "tile-name", text: name }))));
+      bgTiles.set(id, b);
+      return b;
+    };
+    const bgGrid = h("div", { class: "tiles bgs", role: "radiogroup", "aria-label": "Chat background" },
+      bgTile(bgApi.NEBULA, "Nebula", h("div", { class: "pv nebula", "aria-hidden": "true" })),
+      bgApi.IMAGES.map((b) => bgTile(b.id, b.name,
+        h("div", { class: "pv", style: `--bg-pv:url("${b.url}")`, "aria-hidden": "true" }))));
+    syncBgTiles();
     pageEl.append(
       h("h1", { text: "Window" }),
       h("p", { class: "set-lead", text: "How the Kostomp window sits on your desktop. Changes apply right away." }),
@@ -364,6 +385,7 @@
         h("div", { class: "tiles", role: "radiogroup", "aria-label": "Window material" }, glassTile, opaqueTile),
         note, error,
         h("div", { class: "set-h", text: "Interface size" }), uiRow.row, fontRow.row, resetScale,
+        h("div", { class: "set-h", text: "Chat background" }), bgGrid,
         h("div", { class: "set-h", text: "Glass type" }), typeGrid,
         h("div", { class: "set-h", text: "Fine tuning" }),
         paramRows, tintColorRow,

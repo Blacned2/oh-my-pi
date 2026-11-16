@@ -177,6 +177,8 @@ fn main() {
                 .min_inner_size(800.0, 500.0)
                 .decorations(false)
                 .transparent(true)
+                // The DWM shadow also draws a 1px frame and a pale halo around the undecorated window.
+                .shadow(false)
                 // Let the page receive HTML5 file drops (image attachments in the composer);
                 // Tauri's native drag-drop handler would swallow them on Windows.
                 .disable_drag_drop_handler()

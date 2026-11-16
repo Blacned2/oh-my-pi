@@ -667,6 +667,7 @@
   /** Subtitle text of the sidebar row: a question, an unseen reply, else the status. */
   function sessionLabel(s) {
     if (s.asking !== null) return s.asking;
+    if (s.scripts.length) return "▶ " + s.scripts.join(", ");
     return s.status.kind !== "busy" && s.status.kind !== "bad" && s.unseen ? "New reply" : s.status.text;
   }
   /** Arrow keys walk the open layout popover's rows. */
@@ -681,10 +682,10 @@
   /** Status dot and row subtitle: a waiting question, a turn in flight (typing dots), an unseen reply, an error. */
   function paintSessionStatus(s) {
     const kind = s.status.kind;
-    const state = s.asking !== null ? "ask" : kind === "busy" ? "busy" : kind === "bad" ? "bad" : s.unseen ? "ok" : "idle";
+    const state = s.asking !== null ? "ask" : kind === "busy" || s.scripts.length ? "busy" : kind === "bad" ? "bad" : s.unseen ? "ok" : "idle";
     s.badge.dataset.state = state;
     s.tab.classList.toggle("fresh", state === "ok");
-    s.badge.title = s.asking ?? s.status.text;
+    s.badge.title = s.asking ?? sessionLabel(s);
     s.sub.replaceChildren();
     if (state === "busy") {
       const dots = document.createElement("span");
@@ -743,7 +744,7 @@
     av.className = "stab-av";
     av.setAttribute("aria-hidden", "true");
     tab.append(badge, av, text, time, close);
-    const entry = { sid, tab, label, sub, time, badge, av, cwd: typeof opts.cwd === "string" && opts.cwd.trim() ? opts.cwd : null, title: "session", name: opts.name ?? null, autoTitle: null, sessionFile: opts.sessionFile ?? null, fresh: opts.resume === false, status: { text: "not started" }, lastAt: Date.now(), unseen: false, asking: null, api: null };
+    const entry = { sid, tab, label, sub, time, badge, av, cwd: typeof opts.cwd === "string" && opts.cwd.trim() ? opts.cwd : null, title: "session", name: opts.name ?? null, autoTitle: null, sessionFile: opts.sessionFile ?? null, fresh: opts.resume === false, status: { text: "not started" }, lastAt: Date.now(), unseen: false, asking: null, scripts: [], api: null };
     sessions.set(sid, entry);
     paintSessionStatus(entry);
     strip.append(tab);
@@ -769,6 +770,11 @@
         entry.asking = text;
         paintSessionStatus(entry);
         if (text !== null && !was) notifyQuestion(entry, text);
+      },
+      /** Names of saved scripts currently running from the activity panel; empty when none. */
+      scripts(names) {
+        entry.scripts = names;
+        paintSessionStatus(entry);
       },
       cwd(cwd) {
         entry.cwd = cwd;

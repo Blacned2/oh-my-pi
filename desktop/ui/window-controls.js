@@ -27,8 +27,8 @@
   const mount = () => {
     const host = document.createElement("div");
     const head = document.getElementById("side-head");
-    // Vertical centre matches the pane pills: --edge + pane border (1px) + pill top (8px) + half pill height (14px).
-    host.style.cssText = "position:fixed;top:calc(var(--edge,6px) + 12.5px);right:14px;z-index:2147483647;";
+    // Vertical centre matches the pane pills: --edge + pill top (8px) + half pill height (14px); panes have no border.
+    host.style.cssText = "position:fixed;top:calc(var(--edge,0px) + 11.5px);right:14px;z-index:2147483647;";
 
     const root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `
@@ -53,15 +53,26 @@
         .bar button.bead:hover { filter:brightness(1.08); }
         .bar button.bead:active { filter:brightness(.82); transform:scale(.92); }
         .bar button.bead:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+        .bar button.grip {
+          display:grid; place-items:center; padding:0; width:30px; height:16px; margin-right:4px;
+          border:.5px solid var(--line-3, rgb(255 255 255 / .25)); border-radius:999px; cursor:grab;
+          background:var(--overlay, rgb(0 0 0 / .35)); color:var(--ink-2, #ccc);
+        }
+        .bar button.grip[hidden] { display:none; }
+        .bar button.grip:hover { color:var(--ink-1, #fff); }
+        .bar button.grip:active { cursor:grabbing; }
+        .bar button.grip svg { width:14px; height:14px; fill:currentColor; stroke:none; }
         svg { width:9px; height:9px; stroke:currentColor; fill:none; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; }
       </style>
       <div class="bar">
+        <button class="grip" title="Drag to move window" aria-label="Move window"><svg viewBox="0 0 24 24"><circle cx="8" cy="7" r="1.4"/><circle cx="16" cy="7" r="1.4"/><circle cx="8" cy="12" r="1.4"/><circle cx="16" cy="12" r="1.4"/><circle cx="8" cy="17" r="1.4"/><circle cx="16" cy="17" r="1.4"/></svg></button>
         <button class="min bead" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
         <button class="max bead" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 24 24">${ICON_MAX}</svg></button>
         <button class="close bead" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       </div>`;
 
     const maxBtn = root.querySelector(".max");
+    const gripBtn = root.querySelector(".grip");
     let shownMaximized = false; // the markup starts with the maximize icon
     const syncMaxIcon = async () => {
       const maximized = !!(await call("plugin:window|is_maximized"));
@@ -69,6 +80,7 @@
       shownMaximized = maximized;
       maxBtn.querySelector("svg").innerHTML = maximized ? ICON_RESTORE : ICON_MAX;
       maxBtn.title = maxBtn.ariaLabel = maximized ? "Restore" : "Maximize";
+      gripBtn.hidden = maximized; // a maximized window cannot be moved
     };
     const toggleMaximize = async () => {
       await call("plugin:window|toggle_maximize");
@@ -78,6 +90,12 @@
     root.querySelector(".min").addEventListener("click", () => call("plugin:window|minimize"));
     maxBtn.addEventListener("click", toggleMaximize);
     root.querySelector(".close").addEventListener("click", () => call("plugin:window|close"));
+    // Explicit drag handle for the windowed state; mousedown hands the mouse to the OS (see below).
+    root.querySelector(".grip").addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      call("plugin:window|start_dragging");
+    });
 
     // Drag the window by its top strip (anything that is not an interactive element).
     // start_dragging hands the mouse to the OS and swallows the click/dblclick events, so the

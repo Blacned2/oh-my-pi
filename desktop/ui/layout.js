@@ -12,7 +12,7 @@
   const MIME = "application/x-kostomp-session";
   const MIN_W = 280; // px, smallest pane width the layout will produce
   const MIN_H = 170; // px, smallest pane height
-  const GUTTER = 4; // px, keep in sync with --gutter in app.css
+  const GUTTER = 1; // px, keep in sync with --gutter in app.css
   const EDGE = 0.2; // outer band of a pane that splits it; the middle adds a tab
   const SMALL = 100; // px; a pane thinner than this shows the drop target as a thin line
   const STEP = 0.02;

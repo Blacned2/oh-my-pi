@@ -3,8 +3,8 @@
 /* Compatibility names use the canonical material palette, shared with web and stats. */
 :root{--hover:color-mix(in srgb,var(--ink-1) 7%,transparent);--press:color-mix(in srgb,var(--ink-1) 12%,transparent);--accent-2:var(--c-coral);--bad-soft:color-mix(in srgb,var(--bad) 15%,transparent);--user-bg:var(--accent);--shadow-2:var(--glass-shadow)}
 :root{--mono:ui-monospace,"Cascadia Mono","JetBrains Mono",Consolas,monospace;--sans:"Segoe UI",system-ui,sans-serif}
-/* window edge spacing, and the gap between the sidebar and the content (the sidebar's resize handle) */
-:root{--edge:6px;--side-gap:8px}
+/* Panels sit flush: no window edge spacing; the sidebar/content seam is a 1px line (the sidebar's resize handle) */
+:root{--edge:0px;--side-gap:1px}
 /* the window controls float top-right: 3 x 13px beads + 2 x 8px gaps + 8px padding + 14px inset + 10px breathing room */
 :root{--wc-w:96px}
 .pane.corner{--pane-rsv:var(--wc-w)}
@@ -176,15 +176,15 @@ main{flex:1;min-height:0;position:relative}
 .stab.armed .stab-close{background:var(--bad-soft);color:var(--bad);width:auto;padding:0 6px;font-size:11px}
 .session-tabs.single .stab-close{display:none}
 
-.workspace{position:relative;flex:1;min-height:0;display:flex;overflow:auto;padding:4px;--gutter:4px}
+.workspace{position:relative;flex:1;min-height:0;display:flex;overflow:auto;padding:4px;--gutter:1px}
 
 .workspace .node{display:flex;flex-direction:column}
 .workspace>.node{flex:1}
 .split{display:flex}
 .split.row{flex-direction:row}
 .split.col{flex-direction:column}
-/* Island pane: its own rounded, framed surface; the focused one gets an accent frame and a soft halo. */
-.pane{position:relative;display:flex;flex-direction:column;min-width:var(--pane-min-w,280px);min-height:var(--pane-min-h,170px);overflow:hidden;container-type:inline-size;border:1px solid var(--line-2);border-radius:12px;background:var(--panel)}
+/* Flush pane: no radius, no frame; neighbours are separated only by the 1px gutter between them. */
+.pane{position:relative;display:flex;flex-direction:column;min-width:var(--pane-min-w,280px);min-height:var(--pane-min-h,170px);overflow:hidden;container-type:inline-size;border:0;border-radius:0;background:var(--panel)}
 
 /* The head is an inert strip; only the floating pill takes the pointer. The pill sits top-left; the window controls
    (window-controls.js) own the window's top-right corner, which the pane touching it reserves via --pane-rsv. */
@@ -229,7 +229,10 @@ main{flex:1;min-height:0;position:relative}
 
 .pane-body{flex:1;min-height:0;display:flex;flex-direction:column}
 .session{position:relative;display:flex;flex-direction:column;flex:1;height:100%;min-height:0;min-width:0}
-.gutter{flex:none;position:relative;z-index:2;background:transparent;transition:background .1s;touch-action:none}
+/* The gutter is the 1px seam between flush panes; ::before widens its hit area without moving the line. */
+.gutter{flex:none;position:relative;z-index:2;background:var(--line-2);transition:background .1s;touch-action:none}
+.gutter::before{content:"";position:absolute;inset:0 -3px}
+.gutter.col::before{inset:-3px 0}
 .gutter.row{width:var(--gutter);cursor:col-resize}
 .gutter.col{height:var(--gutter);cursor:row-resize}
 .gutter:hover,.gutter.active{background:var(--accent)}
@@ -260,16 +263,12 @@ main{flex:1;min-height:0;position:relative}
 .palette .empty{padding:3px 12px;color:var(--ink-3)}
 
 /* ---- window material ----
-   The window is always transparent (Rust: window_style.rs). Glass: thin frosted pane. The page is a
-   light tint over the system Acrylic blur (--glass-a is the tint strength), plus a soft top-lit
-   sheen, a 1px rim highlight and fine grain so it reads as one sheet of glass, not a flat wash.
+   The window is always transparent (Rust: window_style.rs). Glass: only the panes carry tint, sheen and
+   rim (.glass, --glass-tint); the page itself, the gaps between panes and the window edge stay fully
+   transparent: no body tint, no edge line, no grain or glow overlay.
    Opaque: the solid --bg. */
-html[data-material="glass"] body{background:
-  linear-gradient(180deg,var(--glass-sheen),transparent 38%),
-  rgb(var(--glass-rgb) / var(--glass-a))}
-html[data-material="glass"]::before,html[data-material="glass"]::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:2147483000}
-html[data-material="glass"]::before{box-shadow:inset 0 0 0 1px var(--glass-rim),inset 0 1px 0 var(--glass-rim),inset 0 24px 40px -32px var(--glass-rim)}
-html[data-material="glass"]::after{opacity:var(--glass-grain-a);background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
+html[data-material="glass"] body{background:transparent}
+html[data-material="glass"] .blobs{display:none}
 
 /* ---- settings tab ---- */
 #settings{flex-direction:row}
@@ -289,7 +288,7 @@ html[data-material="glass"]::after{opacity:var(--glass-grain-a);background-image
 .set-sep{height:1px;flex:none;margin:8px 12px;background:var(--line-1)}
 @media (prefers-reduced-motion:reduce){.set-thumb{transition:opacity 140ms}}
 @keyframes pop{from{opacity:0;transform:scale(.96) translateY(-4px)}}
-.set-page{flex:1;min-width:0;overflow-y:auto;margin:0 var(--edge) var(--edge) var(--side-gap);padding:26px 44px 48px;border-radius:20px;background:color-mix(in srgb,var(--panel) 72%,transparent);border:1px solid var(--line-1)}
+.set-page{flex:1;min-width:0;overflow-y:auto;margin:0;padding:26px 44px 48px;border-radius:0;background:color-mix(in srgb,var(--panel) 72%,transparent);border:0;border-left:1px solid var(--line-2)}
 .set-page h1{margin:0 0 6px;font-size:24px;font-weight:600}
 .set-lead{margin:0 0 22px;color:var(--ink-2)}
 .set-body{max-width:760px}
@@ -327,6 +326,10 @@ html[data-material="glass"]::after{opacity:var(--glass-grain-a);background-image
 .tile[aria-checked=true] .radio{border-color:var(--accent);background:radial-gradient(var(--accent) 0 3.5px,transparent 4px)}
 .tile-name{font-weight:600;color:var(--ink-1)}
 .tile-desc{margin-top:2px;font-size:12px;color:var(--ink-3)}
+.tiles.bgs{grid-template-columns:repeat(3,1fr);gap:12px}
+.tiles.bgs .pv{height:96px;background:var(--bg-pv) center / cover no-repeat,#1a1030}
+.tiles.bgs .pv.nebula{background:radial-gradient(60% 50% at 20% 100%,#d67c2c,transparent 72%),radial-gradient(80% 60% at 40% 30%,#703ccc,transparent 74%),radial-gradient(100% 50% at 42% -4%,#303ad6,transparent 72%),#0b0614}
+.tiles.bgs .tile-foot{padding:10px 12px}
 
 /* setting rows */
 .set-group h2{margin:28px 0 2px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
@@ -417,14 +420,13 @@ main{position:relative;z-index:1}
 .stage{position:relative;flex:1;min-width:0;min-height:0}
 .sidebar{font:14px/1.6 var(--sans);flex:none;width:272px;display:flex;flex-direction:column;gap:8px;padding:8px 10px 12px 14px;overflow:hidden;transition:width 260ms var(--ease),padding 260ms var(--ease)}
 .sidebar.collapsed{width:68px;padding-left:10px;padding-right:10px}
-.session-tabs{flex:1 1 auto;min-height:0;flex-direction:column;align-items:stretch;gap:2px;overflow-x:hidden;overflow-y:auto;scrollbar-width:thin}
+.session-tabs{flex:1 1 auto;min-height:0;flex-direction:column;align-items:stretch;gap:2px;overflow-x:hidden;overflow-y:auto;scrollbar-width:none}
 
 .workspace{padding:0 var(--edge) var(--edge) 0}
 /* Keep pane shadows inside the scroll gutter instead of clipping a large halo. */
 .workspace,.graph-workspace{--glass-shadow:0 4px 12px -10px rgb(var(--glass-rgb) / .35)}
 
-.pane{border-radius:20px;background:color-mix(in srgb,var(--panel) 72%,transparent);border-color:var(--line-1)}
-.workspace .pane.focused{border-color:color-mix(in srgb,var(--c-violet) 70%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c-violet) 30%,transparent),inset 0 1px 0 var(--glass-rim),var(--glass-shadow)}
+.pane{background:color-mix(in srgb,var(--panel) 72%,transparent)}
 .gutter:hover,.gutter.active{background:var(--c-violet)}
 
 /* ---- messages ---- */
@@ -581,6 +583,8 @@ details.thinking[open] .peek{display:none}
 .palette .item{border-radius:11px;padding:5px 12px}
 .palette .item[aria-selected=true]{background:color-mix(in srgb,var(--c-violet) 13%,transparent)}
 .palette .item[aria-selected=true] .cmd{color:var(--c-violet)}
+/* --panel is translucent in the glass pane; the palette floats over the transcript and needs an opaque base */
+.palette{background:var(--overlay,var(--panel));-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);z-index:20}
 .statusline{font-size:12px;padding:10px 8px 0;gap:10px}
 .statusline>.pick,.statusline>.model,.statusline>.effort,.statusline>.ctx{padding:2px 10px;border-radius:999px;font-weight:600}
 .statusline>.model{background:color-mix(in srgb,var(--c-violet) 12%,transparent);color:var(--c-violet)}
@@ -654,7 +658,7 @@ details.thinking[open] .peek{display:none}
 .tree .tree-sum input{width:auto;margin:0}
 .tree .tree-status:empty{display:none}
 .tree .tree-status{color:var(--ink-3);font-size:12px}
-.tree-list{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-width:thin}
+.tree-list{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-width:none}
 .tree-row{height:28px;font-size:13px;cursor:pointer}
 .tree-row .layout-input{margin:0;width:auto}
 .tree-row.on{color:var(--ink-1)}
@@ -673,7 +677,7 @@ details.thinking[open] .peek{display:none}
 .saved-head .layout-act{opacity:1}
 .saved-search{height:28px;margin:0 2px;padding:0 10px;border:1px solid var(--line-2);border-radius:999px;background:none;color:var(--ink-1);font:12px var(--sans);outline:0}
 .saved-search:focus{border-color:var(--accent)}
-.saved-list{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-width:thin;display:flex;flex-direction:column;font:13px var(--sans)}
+.saved-list{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-width:none;display:flex;flex-direction:column;font:13px var(--sans)}
 .saved-group{padding:8px 8px 2px;color:var(--ink-3);font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .saved-row{cursor:pointer}
 .saved-row.held{cursor:default;opacity:.6}
@@ -952,10 +956,43 @@ details.thinking[open] .peek{display:none}
 .deck .empty button:hover{background:var(--raised)}
 .deck .add{flex:none;width:100%;display:flex;gap:8px;align-items:center;min-height:30px;padding:0 12px;border-top:1px dashed var(--line-2);color:var(--ink-3);font-size:11.5px;text-align:left}
 .deck .add:hover{color:var(--ink-1);background:color-mix(in srgb,var(--line-1) 40%,transparent)}
-.stack .deck-pill{display:flex;gap:8px;align-items:center;min-height:30px;padding:0 10px 0 12px;border:1px solid var(--line-2);border-radius:99px;background:var(--overlay);box-shadow:var(--shadow-2);font-size:12px;color:var(--ink-2)}
-.stack .deck-pill:hover{background:var(--raised)}
-.deck-pill b{font:600 13px var(--mono);color:var(--ink-1)}
-.deck-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+/* Activity segment inside the .stack-tools capsule: icon + count per kind, words in the hover card. */
+.stack-tools{align-items:center}
+.stack-sep{flex:none;width:1px;height:18px;margin:0 4px;background:rgb(255 255 255 / .22)}
+.stack .act{display:flex;align-items:center;gap:10px;height:28px;min-width:28px;padding:0 8px;border-radius:99px;color:var(--ink-1);transition:background .16s var(--ease)}
+.stack .act:hover{background:var(--hover)}
+.stack .act[aria-expanded=true]{background:var(--press)}
+.stack .act:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.act .k{display:inline-flex;align-items:center;gap:4px;font:600 12.5px/1 var(--mono);font-variant-numeric:tabular-nums}
+.act .k small{font-weight:500;color:var(--ink-2)}
+.act .k[data-kind=agents] svg{color:var(--c-violet)}
+.act .k[data-kind=jobs] svg{color:var(--c-mint)}
+.act .k[data-kind=todos] svg{color:var(--c-sun)}
+.act .k[data-kind=fail]{color:var(--bad)}
+.act .k[data-kind=fail] svg{color:var(--bad)}
+.act svg.idle{width:14px;height:14px;color:var(--ink-2)}
+.act svg.chev{width:12px;height:12px;margin-left:-4px;color:var(--ink-2);transition:transform .2s var(--ease)}
+.act[aria-expanded=true] svg.chev{transform:rotate(180deg)}
+.act .live{position:relative;flex:none;width:6px;height:6px;margin-right:-4px;border-radius:50%;background:var(--c-violet)}
+.act .live::after{content:"";position:absolute;inset:-3px;border-radius:50%;border:1.5px solid var(--c-violet);opacity:0;animation:act-ping 1.6s var(--ease) infinite}
+@keyframes act-ping{0%{transform:scale(.6);opacity:.8}100%{transform:scale(1.8);opacity:0}}
+.act[data-state=idle]{padding:0;width:28px;justify-content:center}
+.act[data-state=failed]{background:color-mix(in srgb,var(--bad) 16%,transparent)}
+.act[data-state=failed]:hover{background:color-mix(in srgb,var(--bad) 24%,transparent)}
+.stack-bar{position:relative}
+.stack .act-peek{position:absolute;top:calc(100% + 8px);right:0;z-index:2;width:236px;padding:10px 12px;border-radius:12px;font-size:12px;opacity:0;transform:translateY(-4px);pointer-events:none;transition:opacity .16s var(--ease),transform .16s var(--ease)}
+.stack-bar:has(.act:is(:hover,:focus-visible)[aria-expanded=false]) .act-peek{opacity:1;transform:none}
+.act-peek dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:4px 12px}
+.act-peek dt::before{content:"";display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:2px;background:var(--c);vertical-align:1px}
+.act-peek dt[data-kind=agents]{--c:var(--c-violet)}
+.act-peek dt[data-kind=jobs]{--c:var(--c-mint)}
+.act-peek dt[data-kind=todos]{--c:var(--c-sun)}
+.act-peek dt[data-kind=fail]{--c:var(--bad)}
+.act-peek dd{margin:0;font:500 12px var(--mono);text-align:right;font-variant-numeric:tabular-nums}
+.act-peek .none{color:var(--ink-2)}
+.act-peek p{margin:8px 0 0;padding-top:8px;border-top:1px solid rgb(255 255 255 / .14);color:var(--ink-2);font-size:11.5px}
+.act-peek .none+p{margin-top:6px}
+.stack .act-peek{background:var(--overlay);border:1px solid var(--line-2);box-shadow:var(--shadow-2)}
 /* Small windows: leave the chat visible. */
 @media(max-height:760px),(max-width:900px){
   .stack{top:44px;right:8px;bottom:8px;width:calc(100% - 16px)}
@@ -968,7 +1005,7 @@ details.thinking[open] .peek{display:none}
   .deck .ch{min-height:34px;padding:4px 10px}
   .deck .cn small{display:none}
 }
-.deck-pill .dot.bad{background:var(--bad)}
+@media(prefers-reduced-motion:reduce){.act .live::after{animation:none}.stack .act-peek,.act svg.chev{transition:none}}
 
 /* Tool panels (terminal, changes, browser, files) float in the chat like the activity deck.
    Every floating panel, the deck included, resizes from its left edge, bottom edge or bottom-left corner. */
@@ -994,10 +1031,11 @@ details.thinking[open] .peek{display:none}
 .dock-resizing iframe{pointer-events:none}
 
 /* Aurora chrome. Transcript, code, diff and map surfaces remain opaque. */
-.sidebar.glass,.set-side.glass{margin:0 0 var(--edge) var(--edge);padding:12px;width:248px}
+.sidebar.glass,.set-side.glass{margin:0;padding:12px;width:248px;border:0;border-radius:0;box-shadow:none}
+.sidebar.glass::before,.set-side.glass::before{display:none}
 .sidebar.collapsed{width:68px}
 .sidebar,.set-thumb{transition:transform 160ms var(--ease),opacity 160ms var(--ease)}
-.pane,.set-page{background:var(--panel);border-radius:var(--radius-pane)}
+.pane,.set-page{background:var(--panel);border-radius:0}
 .composer.glass{isolation:isolate}
 .composer:focus-within{outline:2px solid var(--focus);outline-offset:2px;box-shadow:inset 0 1px 0 var(--glass-rim),var(--glass-shadow)}
 .composer textarea:focus-visible{outline-offset:4px}
@@ -1183,17 +1221,18 @@ details.thinking[open] .peek{display:none}
    artifact cards, account footer; plus the tool rail.
    ===================================================================================== */
 .sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
-.sidebar.glass{width:clamp(240px,var(--side-w,332px),50vw);gap:0;padding:0;overflow:hidden;border-radius:28px;--r-ctl:14px;--r-card:18px;--display:"Segoe UI Variable Display",var(--sans);
+.sidebar.glass{width:clamp(240px,var(--side-w,332px),50vw);gap:0;padding:0;overflow:hidden;border-radius:0;--r-ctl:14px;--r-card:18px;--display:"Segoe UI Variable Display",var(--sans);
   --well:rgb(8 4 26/.35);--well-shadow:inset 0 1px 3px rgb(0 0 0/.35);
   background:linear-gradient(165deg,var(--glass-sheen),transparent 38%),var(--glass-tint);
-  box-shadow:inset 0 1px 0 var(--glass-rim),inset 0 -1px 0 rgb(255 255 255/.05),0 32px 70px -24px rgb(6 2 28/.8)}
-[data-theme="light"] .sidebar.glass{--well:rgb(60 40 140/.06);--well-shadow:inset 0 1px 3px rgb(60 40 140/.14);box-shadow:inset 0 1px 0 var(--glass-rim),0 32px 70px -24px rgb(74 47 208/.25)}
+  box-shadow:none}
+[data-theme="light"] .sidebar.glass{--well:rgb(60 40 140/.06);--well-shadow:inset 0 1px 3px rgb(60 40 140/.14)}
 .sidebar.glass.collapsed{width:68px}
 .sidebar.glass>*{position:relative;z-index:1}
 
-/* resize handle: the gap between the sidebar and the content */
-.side-resize{position:relative;flex:none;width:var(--side-gap);margin-bottom:var(--edge);cursor:col-resize;touch-action:none;outline:0}
-.side-resize::after{content:"";position:absolute;top:28px;bottom:28px;left:50%;width:2px;margin-left:-1px;border-radius:2px;background:var(--accent);opacity:0;transition:opacity 120ms}
+/* resize handle: the 1px seam between the sidebar and the content; ::before widens the hit area */
+.side-resize{position:relative;z-index:3;flex:none;width:var(--side-gap);background:var(--line-2);cursor:col-resize;touch-action:none;outline:0}
+.side-resize::before{content:"";position:absolute;inset:0 -4px}
+.side-resize::after{content:"";position:absolute;top:0;bottom:0;left:50%;width:2px;margin-left:-1px;background:var(--accent);opacity:0;transition:opacity 120ms}
 .side-resize:is(:hover,:focus-visible,.active)::after{opacity:.85}
 body.side-resizing,body.side-resizing *{cursor:col-resize !important;user-select:none !important}
 /* the Ctrl+B width animation would lag behind the pointer */
@@ -1252,8 +1291,9 @@ body.side-resizing .sidebar{transition:none !important}
 .tb-pop.ovf-menu[hidden]{display:none}
 
 /* scrolling views */
-.side-scroll{flex:1 1 0;min-height:0;overflow-x:hidden;overflow-y:auto;margin-top:6px;padding:6px 10px 14px;scrollbar-width:thin;scrollbar-color:var(--line-3) transparent;
+.side-scroll{flex:1 1 0;min-height:0;overflow-x:hidden;overflow-y:auto;margin-top:6px;padding:6px 10px 14px;scrollbar-width:none;
   mask-image:linear-gradient(transparent,#000 14px,#000 calc(100% - 22px),transparent)}
+.side-scroll::-webkit-scrollbar,.tree-list::-webkit-scrollbar,.saved-list::-webkit-scrollbar,.session-tabs::-webkit-scrollbar{display:none;width:0;height:0}
 .side-view[hidden],.side-empty[hidden]{display:none}
 .side-empty{margin:0;padding:18px 12px;color:var(--ink-3);font-size:12.5px;line-height:1.5;text-align:center}
 .sidebar .session-tabs{display:block;overflow:visible;margin:0;padding:0;mask-image:none}
@@ -1448,11 +1488,12 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
 .sidebar .tabs [role=tab]{position:relative;z-index:1;flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:7px;height:42px;padding:0 10px;border:0;border-radius:20px;background:none;box-shadow:none;color:var(--ink-2);font:600 12.5px var(--sans)}
 .sidebar .tabs [role=tab] svg{width:16px;height:16px}
 .sidebar .tabs [role=tab]:is(:hover,[aria-selected=true]){color:var(--ink-1)}
-.sidebar.collapsed>nav.tabs{flex-direction:column;align-items:stretch;box-sizing:border-box;width:100%;height:auto;margin:12px 0;padding:3px;gap:3px;border-radius:999px}
-.sidebar.collapsed .tabs .thumb{left:3px;right:3px;top:var(--t,3px);bottom:var(--b,3px);border-radius:999px}
-.sidebar.collapsed .tabs [role=tab]{flex:none;box-sizing:border-box;width:100%;height:auto;aspect-ratio:1;padding:0;border-radius:50%}
+.sidebar.collapsed>nav.tabs{flex-direction:column;align-items:stretch;box-sizing:border-box;width:auto;height:auto;margin:10px 10px 0;padding:4px;gap:4px;border-radius:16px;background:transparent;box-shadow:none;border:1px solid var(--line-2)}
+.sidebar.collapsed .tabs .thumb{left:4px;right:4px;top:var(--t,4px);bottom:var(--b,4px);border-radius:12px;background:linear-gradient(160deg,color-mix(in srgb,var(--accent) 85%,#fff),var(--accent));box-shadow:0 4px 12px -3px color-mix(in srgb,var(--accent) 70%,transparent),inset 0 1px 0 rgb(255 255 255/.45)}
+.sidebar.collapsed .tabs [role=tab]{flex:none;box-sizing:border-box;width:100%;height:36px;min-height:36px;padding:0;border-radius:12px}
 .sidebar.collapsed .tabs [role=tab] span{display:none}
-.sidebar.collapsed .tabs [role=tab] svg{width:18px;height:18px}
+.sidebar.collapsed .tabs [role=tab] svg{width:17px;height:17px}
+.sidebar.collapsed .tabs [role=tab][aria-selected=true]{color:var(--ink-inverse,#fff)}
 .sidebar.collapsed .tabs [role=tab]:not([aria-selected=true]):hover{background:var(--hover)}
 
 @keyframes st-pulse{50%{opacity:.3}}
@@ -1480,12 +1521,12 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
   color-scheme: dark;
   color: var(--ink-1);
   --nb-base: rgb(10 5 20 / .74);
-  --nebula:
+  --nebula: var(--chat-bg,
     radial-gradient(80% 40% at 10% 100%, rgb(214 124 44 / .8), transparent 72%),
     radial-gradient(50% 42% at 104% 68%, rgb(140 22 56 / .72), transparent 72%),
     radial-gradient(100% 40% at 34% 64%, rgb(184 48 130 / .72), transparent 74%),
     radial-gradient(120% 46% at 28% 34%, rgb(112 60 204 / .82), transparent 74%),
-    radial-gradient(140% 50% at 42% -4%, rgb(48 58 214 / .95), transparent 72%);
+    radial-gradient(140% 50% at 42% -4%, rgb(48 58 214 / .95), transparent 72%));
   --dots: radial-gradient(circle at 1.5px 1.5px, rgb(0 0 0 / .26) .9px, transparent 1.4px) 0 0 / 4px 4px;
   --bg: #0b0614; --panel: rgb(14 7 24 / .6); --raised: rgb(8 3 16 / .44); --overlay: rgb(20 10 32 / .94);
   --line-1: rgb(255 255 255 / .07); --line-2: rgb(255 255 255 / .12); --line-3: rgb(255 255 255 / .22);
@@ -1510,13 +1551,15 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
   & .messages-wrap::before {
     content: ""; position: absolute; z-index: 0; pointer-events: none;
     inset: 0 max(8px, calc((100% - 900px) / 2 - 20px));
-    border: 1px solid rgb(255 255 255 / .26); border-top-width: 0; border-radius: 0 0 22px 22px;
+    border: 1px solid rgb(255 255 255 / .26); border-radius: 22px;
     background:
       radial-gradient(120% 40% at 12% 0%, rgb(255 255 255 / .2), transparent 60%),
       linear-gradient(180deg, rgb(255 255 255 / .09), rgb(255 255 255 / .03) 45%, rgb(255 255 255 / .06));
     box-shadow: inset 0 1px 0 rgb(255 255 255 / .55), inset 0 -1px 0 rgb(255 255 255 / .12), inset 0 0 36px -12px rgb(255 255 255 / .22), 0 22px 44px -26px rgb(0 0 0 / .55);
     -webkit-backdrop-filter: blur(16px) saturate(190%) brightness(1.12) contrast(1.05); backdrop-filter: blur(16px) saturate(190%) brightness(1.12) contrast(1.05);
   }
+  /* flush with the pane's top edge: no top border, no top radius */
+  & .messages-wrap.at-top::before { border-top-width: 0; border-radius: 0 0 22px 22px; }
   /* empty chat: the welcome card carries its own glass, so the big sheet behind it is dropped */
   & .messages-wrap:has(> .messages > .welcome):not(:has(> .messages > :not(.welcome):not(.note)))::before { display: none; }
   /* the sheet hugs the transcript: the wrap sizes to its rows (scrolling once they fill the pane) and docks above the composer */
@@ -1559,6 +1602,25 @@ html[data-material="opaque"] .tb-pop.glass{background:var(--panel)}
 }
 :root[data-material="opaque"] .pane:has(> .pane-body > .session) { --nb-base: #0b0614; }
 @media (prefers-reduced-transparency: reduce) { .pane:has(> .pane-body > .session) { --nb-base: #0b0614; } }
+/* Right-hand stack (deck, changes, terminal, files) and the top pills share the chat sheet's liquid glass. The sheet is a
+   ::before at z-index -1 inside an isolated panel, so the blur samples only the pane behind it, never the panel's own content. */
+.pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .topinfo) {
+  position: relative; isolation: isolate; background: none;
+  border: 1px solid rgb(255 255 255 / .26);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .55), inset 0 -1px 0 rgb(255 255 255 / .12), inset 0 0 36px -12px rgb(255 255 255 / .22), 0 22px 44px -26px rgb(0 0 0 / .55);
+}
+.pane:has(> .pane-body > .session) .topinfo.topinfo { position: absolute; } /* outranks the `position: relative` of the shared glass rule above, which would drop the strip into the layout flow */
+.pane:has(> .pane-body > .session) .stack .act-peek.act-peek { position: absolute; }
+.pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .topinfo)::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  background:
+    radial-gradient(120% 40% at 12% 0%, rgb(255 255 255 / .2), transparent 60%),
+    linear-gradient(180deg, rgb(255 255 255 / .09), rgb(255 255 255 / .03) 45%, rgb(255 255 255 / .06)),
+    rgb(14 7 26 / .42);
+  -webkit-backdrop-filter: blur(16px) saturate(190%) brightness(1.12) contrast(1.05); backdrop-filter: blur(16px) saturate(190%) brightness(1.12) contrast(1.05);
+}
+:root[data-material="opaque"] .pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .topinfo)::before { background: var(--overlay); -webkit-backdrop-filter: none; backdrop-filter: none; }
+@media (prefers-reduced-transparency: reduce) { .pane:has(> .pane-body > .session) :is(.stack .stack-panel, .stack .act-peek, .stack-tools, .topinfo)::before { background: var(--overlay); -webkit-backdrop-filter: none; backdrop-filter: none; } }
 /* Font size setting (Settings > Window): chat text scales with --font-scale (1 = default). */
 .msg{font-size:calc(14px*var(--font-scale,1))}
 .msg.note,.msg.recap,.msg.output{font-size:calc(12px*var(--font-scale,1))}

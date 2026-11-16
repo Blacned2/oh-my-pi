@@ -1133,6 +1133,14 @@
   messagesWrap.className = "messages-wrap";
   el.messages.replaceWith(messagesWrap);
   messagesWrap.append(el.messages);
+  // The glass sheet is rounded while it floats above the pane's top edge and goes square once it reaches it.
+  const syncWrapTop = () => {
+    const top = messagesWrap.getBoundingClientRect().top - messagesWrap.parentElement.getBoundingClientRect().top;
+    messagesWrap.classList.toggle("at-top", top < 1);
+  };
+  const wrapTopResize = new ResizeObserver(syncWrapTop);
+  wrapTopResize.observe(messagesWrap);
+  if (messagesWrap.parentElement) wrapTopResize.observe(messagesWrap.parentElement);
   // Anchor navigation to the pane, not the transcript that shrinks as the composer grows.
   root.append(rail, railCard);
   let railTurns = []; // { node, tick } per user message, in transcript order
@@ -1194,10 +1202,16 @@
     if (rail.hidden) return;
     const m = el.messages;
     const edge = m.getBoundingClientRect().top + RAIL_TOP_GAP + m.clientHeight * 0.25;
+    // The prompt nearest the reading line, above or below it: a prompt just sent sits under the line while the
+    // previous one is far off-screen above, and the nearer one is what the user is looking at.
     let active = 0;
+    let best = Infinity;
     for (let i = 0; i < railTurns.length; i++) {
-      if (railTurns[i].node.getBoundingClientRect().top <= edge) active = i;
-      else break;
+      const dist = Math.abs(railTurns[i].node.getBoundingClientRect().top - edge);
+      if (dist < best) {
+        best = dist;
+        active = i;
+      } else break;
     }
     if (active === railActive) return;
     railTurns[railActive]?.tick.classList.remove("on");
@@ -2426,9 +2440,14 @@
     localStorage.setItem(key, JSON.stringify(cards));
     notifyScripts(key);
   }
+  function reportScripts() {
+    const names = loadScripts().filter((s) => (scriptRuns.get(s.id) || 0) > 0).map((s) => s.name);
+    hooks.scripts?.(names.length ? names : scriptRuns.size ? ["script"] : []);
+  }
   async function runScript(card) {
     scriptRuns.set(card.id, (scriptRuns.get(card.id) || 0) + 1);
     renderStack();
+    reportScripts();
     try {
       await runUserBash("!" + card.command);
     } finally {
@@ -2436,6 +2455,7 @@
       if (left > 0) scriptRuns.set(card.id, left);
       else scriptRuns.delete(card.id);
       renderStack();
+      reportScripts();
     }
   }
   function removeScript(id) {
@@ -2647,8 +2667,7 @@
     jobs: '<path d="M3 4.5l3.5 3.5L3 11.5M8 12h5"/>',
     todos: '<path d="M3 4l1.5 1.5L7 3M3 9l1.5 1.5L7 8M9 5h4M9 10h4"/>',
     scripts: '<path d="M2 8h12M10 4l4 4-4 4"/>',
-    hide: '<path d="M6 4l4 4-4 4"/>',
-    show: '<path d="M10 4L6 8l4 4"/>',
+    hide: '<path d="M4 10l4-4 4 4"/>',
     chev: '<path d="M4 6l4 4 4-4"/>',
     add: '<path d="M8 3v10M3 8h10"/>',
     view: '<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
@@ -2656,6 +2675,8 @@
     log: '<path d="M3 4h10M3 8h10M3 12h6"/>',
     run: '<path d="M5 3.5v9l7-4.5z"/>',
     remove: '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>',
+    pulse: '<path d="M1.5 8.5h3l1.8-4 3.4 8 1.8-4h3"/>',
+    warn: '<path d="M8 2.2l6 10.6H2z"/><path d="M8 6.5v3M8 11.2v.1"/>',
   };
   const AGENT_ST = { pending: "run", running: "run", completed: "ok", failed: "err", aborted: "idle" };
   const JOB_ST = { running: "run", completed: "ok", failed: "err", cancelled: "idle" };
@@ -2678,7 +2699,15 @@
       return request("highlight_code", { code, lang }, 5000).then((d) => (Array.isArray(d?.tokens) ? d.tokens : null), () => null);
     },
   });
-  stackBar.append(toolDock.bar, stackToggles);
+  const stackSep = document.createElement("span");
+  stackSep.className = "stack-sep";
+  stackSep.setAttribute("aria-hidden", "true");
+  const stackPeek = document.createElement("div"); // hover card for the activity segment: words for the icon counts
+  stackPeek.className = "act-peek";
+  stackPeek.id = "act-peek-" + sid;
+  stackPeek.setAttribute("role", "tooltip");
+  toolDock.bar.append(stackSep, stackToggles); // one capsule: panel buttons, divider, activity
+  stackBar.append(toolDock.bar, stackPeek);
   stack.append(stackBar, toolDock.host, stackPanels);
   root.append(stack); // the session root, not messagesWrap: the deck may extend down over the composer
 
@@ -2777,16 +2806,67 @@
     deckClosed = !deckClosed;
     if (!deckClosed && deckExpanded.has("jobs")) refreshJobs();
     renderStack();
-    stack.querySelector(deckClosed ? ".deck-pill" : ".deck .ib")?.focus();
+    stack.querySelector(deckClosed ? ".act" : ".deck .ib")?.focus();
   }
   function addScript() {
     setInput("!+ ");
     el.input.focus();
   }
-  function deckPill(running, failed) {
-    const b = deckBtn("deck-pill", "Show activity", "pill", toggleDeck);
-    b.append(span("dot" + (failed && !running ? " bad" : "")), deckTag("b", "", String(running)), " running", deckIcon("show"));
+  /** The capsule's activity segment: a muted pulse while idle; icon + count per kind while busy; a warning triangle on failures. */
+  function activityButton(s) {
+    const state = s.failed ? "failed" : s.running ? "running" : "idle";
+    const parts = [];
+    if (s.agents) parts.push(plural(s.agents, "subagent") + " running");
+    if (s.jobs) parts.push(plural(s.jobs, "job") + " running");
+    if (s.todoTotal) parts.push(`plan ${s.todoDone} of ${s.todoTotal} done`);
+    if (s.failed) parts.unshift(`${s.failed} failed`);
+    const open = !deckClosed;
+    const b = deckBtn("act", (open ? "Hide activity" : "Show activity") + (parts.length ? ": " + parts.join(", ") : ": no work running"), "act", toggleDeck);
+    b.dataset.state = state;
+    b.setAttribute("aria-expanded", String(open));
+    b.setAttribute("aria-controls", "stack-deck-" + sid);
+    b.removeAttribute("title"); // the hover card replaces the native tooltip
+    const count = (kind, icon, text, small) => {
+      const k = span("k");
+      k.dataset.kind = kind;
+      k.setAttribute("aria-hidden", "true");
+      k.append(deckIcon(icon), text);
+      if (small) k.append(deckTag("small", "", small));
+      return k;
+    };
+    if (state === "idle") {
+      b.append(deckIcon("pulse"));
+      b.lastChild.classList.add("idle");
+      return b;
+    }
+    if (state === "running") b.append(span("live"));
+    if (s.failed) b.append(count("fail", "warn", String(s.failed)));
+    if (s.agents) b.append(count("agents", "agents", String(s.agents)));
+    if (s.jobs) b.append(count("jobs", "jobs", String(s.jobs)));
+    if (s.todoTotal) b.append(count("todos", "todos", String(s.todoDone), "/" + s.todoTotal));
+    b.append(deckIcon("chev"));
+    b.lastChild.classList.add("chev");
     return b;
+  }
+  /** Hover card for the activity segment (only shown while the deck is closed). */
+  function activityPeek(s) {
+    const peek = document.createDocumentFragment();
+    const rows = [];
+    if (s.failed) rows.push(["fail", "Failed", String(s.failed)]);
+    if (s.agents) rows.push(["agents", "Subagents running", String(s.agents)]);
+    if (s.jobs) rows.push(["jobs", "Jobs running", String(s.jobs)]);
+    if (s.todoTotal) rows.push(["todos", "Plan", `${s.todoDone} / ${s.todoTotal} done`]);
+    if (rows.length) {
+      const dl = deckTag("dl");
+      for (const [kind, label, value] of rows) {
+        const dt = deckTag("dt", "", label);
+        dt.dataset.kind = kind;
+        dl.append(dt, deckTag("dd", "", value));
+      }
+      peek.append(dl);
+    } else peek.append(deckTag("span", "none", "No work running"));
+    peek.append(deckTag("p", "", "Click to show activity"));
+    return peek;
   }
   /** Progress ring: a share when one is known, a spinning arc for running work without one, full for settled rows. */
   function deckRing(it) {
@@ -2994,6 +3074,7 @@
   function deckPanel(cats, all, running, failed) {
     const panel = deckTag("section", "stack-panel deck");
     panel.setAttribute("aria-label", "Activity");
+    panel.id = "stack-deck-" + sid;
     const ov = deckTag("div", "ov");
     const top = deckTag("div", "ov-top");
     const sum = deckTag("p");
@@ -3056,12 +3137,22 @@
     const running = all.filter(({ it }) => it.st === "run").length;
     const failed = all.filter(({ it }) => it.st === "err").length;
     const focusKey = stack.contains(document.activeElement) ? document.activeElement.dataset?.fk : undefined;
+    const countOf = (kind, st) => all.filter((x) => x.kind === kind && x.it.st === st).length;
+    const todoAll = all.filter((x) => x.kind === "todos");
+    const summary = {
+      running,
+      failed,
+      agents: countOf("agents", "run"),
+      jobs: countOf("jobs", "run"),
+      todoDone: todoAll.filter((x) => x.it.st === "ok").length,
+      todoTotal: todoAll.length,
+    };
+    deckMorphChildren(stackToggles, [activityButton(summary)]);
+    stackPeek.replaceChildren(activityPeek(summary));
     if (!deckOpen) {
       stackPanels.replaceChildren();
-      deckMorphChildren(stackToggles, [deckPill(running, failed)]);
     } else {
       const panel = deckPanel(cats, all, running, failed);
-      stackToggles.replaceChildren();
       // Keep the entrance animation running if a re-render lands before it ends.
       if (!wasOpen || stackPanels.firstElementChild?.classList.contains("enter")) panel.classList.add("enter");
       deckMorphChildren(stackPanels, [panel]);
@@ -4806,8 +4897,17 @@
   function autosize() {
     const t = el.input;
     t.style.height = "auto";
-    const h = t.scrollHeight;
-    t.style.height = Math.min(h, 220) + "px";
+    if (!t.value) {
+      // Empty: the placeholder is not content. Let rows=1 size the box and drop any stale scroll offset.
+      t.style.height = "";
+      t.style.overflowY = "hidden";
+      t.scrollTop = 0;
+    } else {
+      const h = t.scrollHeight;
+      t.style.height = Math.min(h, 220) + "px";
+      t.style.overflowY = h > 220 ? "auto" : "hidden";
+      if (h <= 220) t.scrollTop = 0;
+    }
     syncSend();
   }
 

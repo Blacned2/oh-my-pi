@@ -54,7 +54,7 @@
 .graph-workspace { flex: 1 1 0; min-width: 0; overflow: auto; padding: 0 var(--edge) var(--edge) 0; container: graph-workspace / inline-size; }
 .graph-page {
   display: flex; flex-direction: column; gap: 14px; box-sizing: border-box; width: 100%; min-height: 100%;
-  margin: 0; padding: 14px; border: 1px solid var(--line-1); border-radius: 20px;
+  margin: 0; padding: 14px; border: 0; border-radius: 0;
   background: color-mix(in srgb, var(--panel) 72%, transparent);
   --graph-surface: color-mix(in srgb, var(--panel) 90%, var(--bg));
 }
