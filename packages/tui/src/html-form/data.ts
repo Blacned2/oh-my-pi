@@ -8,6 +8,7 @@
  * const data = defaultFormData(form);   // { db: "sqlite", notes: "" }
  * formAnswers(form, data);              // [{ name: "db", question: "Database", answer: "SQLite" }, …]
  */
+import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { type ChoiceField, type FormBlock, type FormField, type HtmlForm, spansText, type TextField } from "./parse";
 
 /** Submitted value of one control: text, a number for `number`/`range` inputs, or a group's checked values. */
@@ -36,7 +37,13 @@ export interface OptionNote {
 	option: string;
 	/** The option's submitted value, as it appears in the form data. */
 	value: string;
+	/**
+	 * In a form-dialog result, `[Image #N, WxH]` markers are numbered 1..K in order of appearance within this
+	 * note; `images[N-1]` is marker N's image.
+	 */
 	text: string;
+	/** Pasted images of the note; present only when non-empty. */
+	images?: ImageContent[];
 }
 
 /** Label of the free-text answer the UI adds to radio and checkbox groups ({@link ChoiceField.other}). */
@@ -156,8 +163,12 @@ export function fieldQuestions(form: HtmlForm): Map<FormField, string> {
 	return questions;
 }
 
-/** Plain text of a context block (paragraph, list, preformatted text, table); empty for fields and pictures. */
-export function blockText(block: FormBlock): string {
+/**
+ * Plain text of a context block (paragraph or heading, list, preformatted
+ * text, table) for hosts that cannot draw the form; undefined for fields and
+ * pictures.
+ */
+export function blockText(block: FormBlock): string | undefined {
 	switch (block.kind) {
 		case "text":
 			return spansText(block.spans);
@@ -170,43 +181,73 @@ export function blockText(block: FormBlock): string {
 		case "table":
 			return block.rows.map(cells => cells.map(cell => spansText(cell)).join(" | ")).join("\n");
 		default:
-			return "";
+			return undefined;
 	}
 }
 
 /**
- * The context each named field needs when the form is asked one field at a
- * time: section titles and context blocks since the previous named field, as
- * plain text, minus whatever already became its question
- * ({@link fieldQuestions}). Fields with no such context are absent.
+ * The form's section titles and context blocks as plain text, in order, for a
+ * host that shows the whole form with each named field titled by its question
+ * ({@link fieldQuestions}): text that already is such a question is left out,
+ * so it shows once. Blank parts are dropped.
  */
-export function fieldContexts(form: HtmlForm): Map<FormField, string> {
-	const contexts = new Map<FormField, string>();
-	let parts: string[] = [];
+export function formContext(form: HtmlForm): string[] {
+	const questions = new Set<string>();
+	for (const [field, question] of fieldQuestions(form)) if (field.name) questions.add(question);
+	const parts: string[] = [];
 	for (const section of form.sections) {
-		const title = spansText(section.title).trim();
-		// Indices into `parts` of the section title and of the text block right before a field.
-		let titlePart = title ? parts.push(title) - 1 : undefined;
-		let captionPart: number | undefined;
-		for (const block of section.blocks) {
-			if (block.kind !== "field") {
-				const text = blockText(block);
-				const index = text.trim() ? parts.push(text) - 1 : undefined;
-				captionPart = block.kind === "text" ? index : undefined;
-				continue;
-			}
-			const field = block.field;
-			if (field.name) {
-				// Mirror fieldQuestions: the question is the own label, else the caption, else the title.
-				const used = spansText(field.label) ? undefined : (captionPart ?? titlePart);
-				const context = parts.filter((_, index) => index !== used).join("\n\n");
-				if (context) contexts.set(field, context);
-				parts = [];
-				titlePart = undefined;
-			}
-			captionPart = undefined;
+		for (const text of [spansText(section.title).trim(), ...section.blocks.map(blockText)]) {
+			if (text?.trim() && !questions.has(oneLine(text))) parts.push(text);
 		}
 	}
+	return parts;
+}
+
+/**
+ * The form text each named field's prompt carries when a host asks the form
+ * one field at a time: section titles and context blocks since the previous
+ * named field, text between the field's own options (unless another named
+ * field sits among them), and, for the last field, the text after it. Text
+ * that already is the field's question ({@link fieldQuestions}) is left out.
+ * Parts are separated by blank lines; a field without context maps to `""`.
+ */
+export function fieldContexts(form: HtmlForm): Map<FormField, string> {
+	const questions = fieldQuestions(form);
+	const parts = new Map<FormField, string[]>();
+	let pending: string[] = [];
+	let last: string[] | undefined;
+	for (const section of form.sections) {
+		const title = spansText(section.title).trim();
+		if (title) pending.push(title);
+		// A radio/checkbox group with text between its options keeps that text until `ownerEnd`, unless a named
+		// field sits among those options: the text then stays with the field it precedes.
+		let owner: string[] | undefined;
+		let ownerEnd = 0;
+		for (const [index, block] of section.blocks.entries()) {
+			if (block.kind === "field") {
+				if (!block.field.name) continue;
+				const question = questions.get(block.field);
+				const own = pending.filter(part => oneLine(part) !== question);
+				parts.set(block.field, own);
+				pending = [];
+				last = own;
+				owner = own;
+				const end = block.optionsEnd ?? 0;
+				const intervening = section.blocks.some(
+					(later, at) => at > index && at < end && later.kind === "field" && later.field.name,
+				);
+				ownerEnd = intervening ? 0 : end;
+				continue;
+			}
+			const text = blockText(block);
+			if (!text?.trim()) continue;
+			if (owner && index < ownerEnd) owner.push(text);
+			else pending.push(text);
+		}
+	}
+	last?.push(...pending);
+	const contexts = new Map<FormField, string>();
+	for (const [field, own] of parts) contexts.set(field, own.join("\n\n"));
 	return contexts;
 }
 

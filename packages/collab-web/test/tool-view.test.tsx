@@ -186,6 +186,47 @@ describe("ToolView xd:// dispatches", () => {
 	});
 });
 
+describe("ToolView task renderer", () => {
+	it("renders batch items by name with their task or numbered steps", () => {
+		const html = renderToStaticMarkup(
+			<ToolView
+				name="task"
+				defaultOpen
+				args={{
+					context: "# Goal\nship it",
+					tasks: [
+						{ name: "Fixer", agent: "task", task: "Patch the parser.", solutionSpace: "one fix" },
+						{
+							name: "Auditor",
+							agent: "scout",
+							steps: ["Map the callers.", "Report risky ones."],
+							solutionSpace: "open",
+						},
+					],
+				}}
+			/>,
+		);
+
+		expect(html).toContain("Fixer");
+		expect(html).toContain("Patch the parser.");
+		expect(html).toContain("2 steps");
+		expect(html).toContain("step 1/2");
+		expect(html).toContain("Map the callers.");
+		expect(html).toContain("step 2/2");
+		expect(html).toContain("Report risky ones.");
+		expect(html).toContain("2 tasks");
+	});
+
+	it("labels a flat stepped spawn by its first step when unnamed", () => {
+		const html = renderToStaticMarkup(
+			<ToolView name="task" args={{ agent: "task", steps: ["\n  Read the spec.\nThen more", "Write it."] }} />,
+		);
+
+		expect(html).toContain("Read the spec.");
+		expect(html).not.toContain("Then more");
+	});
+});
+
 describe("ToolView ask renderer", () => {
 	const form = `<form>
 <fieldset><legend>Storage backend</legend>
@@ -265,5 +306,31 @@ describe("ToolView ask renderer", () => {
 		);
 
 		expect(html).toContain("at least one named control");
+	});
+});
+
+describe("ToolView web_search renderer", () => {
+	it("shows each source's cleaned excerpt instead of the numbered listing when there is no answer", () => {
+		const html = renderToStaticMarkup(
+			<ToolView
+				name="web_search"
+				defaultOpen
+				args={{ query: "bun expect" }}
+				result={{
+					content: [{ type: "text", text: "[1] Src One\n    https://example.com/a\n    LISTING_ONLY_MARKER" }],
+					details: {
+						response: {
+							provider: "parallel",
+							sources: [
+								{ title: "Src One", url: "https://example.com/a", snippet: "\n  first\t excerpt\n```\nsecond" },
+							],
+						},
+					},
+				}}
+			/>,
+		);
+
+		expect(html).not.toContain("LISTING_ONLY_MARKER");
+		expect(html).toContain('<span class="tv-excerpt">first excerpt</span><span class="tv-excerpt">second</span>');
 	});
 });
