@@ -71,6 +71,7 @@ import { MemoryRetainTool } from "./memory-retain";
 import { wrapToolWithMetaNotice } from "./output-meta";
 import { ReadTool } from "./read";
 import type { PlanProposalHandler } from "./resolve";
+import { AsyapmTool } from "./asyapm";
 import { SecurityScanTool } from "./security-scan";
 import { supportsExternalThinking, ThinkTool } from "./think";
 import { type TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
@@ -81,6 +82,7 @@ import { isMountableUnderXdev, resolveXdevTool, type XdevState } from "./xdev";
 import { YieldTool } from "./yield";
 
 import {
+	cfgAsyapmEnabled,
 	cfgAskEnabled,
 	cfgAstEditEnabled,
 	cfgAstGrepEnabled,
@@ -598,6 +600,7 @@ export const BUILTIN_TOOLS: Record<BuiltinToolName, ToolFactory> = {
 	debug: DebugTool.createIf,
 	ida: IdaTool.createIf,
 	eval: s => new EvalTool(s),
+	asyapm: AsyapmTool.createIf,
 	github: GithubTool.createIf,
 	glob: s => new GlobTool(s, { rootPathAlias: true }),
 	grep: s => new GrepTool(s),
@@ -793,6 +796,7 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 		if (name === "ast_edit") return cfgAstEditEnabled.get(session.settings);
 		if (name === "web_search") return cfgWebSearchEnabled.get(session.settings);
 		if (name === "security_scan") return cfgSecurityEnabled.get(session.settings);
+		if (name === "asyapm") return cfgAsyapmEnabled.get(session.settings);
 		if (name === "think") return externalThinkingActive;
 		if (name === "ask") return cfgAskEnabled.get(session.settings);
 		if (name === "context_notes" || name === "new_context")

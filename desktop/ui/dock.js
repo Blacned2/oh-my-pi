@@ -28,6 +28,12 @@
       key: "Ctrl+Shift+E",
       icon: '<path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/>',
     },
+    {
+      kind: "asyapm",
+      title: "AsyaPM",
+      key: "",
+      icon: '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M9 4v16M15 4v16"/>',
+    },
   ];
 
   const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi));
@@ -114,6 +120,11 @@
     return svg;
   }
 
+  const ASYAPM_PANEL_KEY = "kostomp-asyapm-panel"; // "0" hides the AsyaPM button and card; absent = on (Settings → AsyaPM)
+  function asyapmEnabled() {
+    try { return localStorage.getItem(ASYAPM_PANEL_KEY) !== "0"; } catch { return true; }
+  }
+
   /**
    * The tool buttons and cards of one chat. `ctx`: `sid` (unique per chat), `cwd()` the chat's folder and
    * `highlight(code, lang)` for syntax tokens. Cards are built on first open and then only hidden, so a
@@ -121,12 +132,13 @@
    */
   function createToolDock(ctx) {
     const bar = document.createElement("div");
-    bar.className = "stack-tools";
+    bar.className = "stack-tools glass-pill";
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", "Workspace panels");
     const host = document.createElement("div");
     host.className = "stack-docks";
     const open = new Map(); // kind -> { card, api, cwd }
+    const asyapmOn = asyapmEnabled;
     const buttons = new Map();
 
     function build(tool) {
@@ -152,31 +164,47 @@
       close.append(icon('<path d="M6 6l12 12M18 6L6 18"/>'));
       close.firstChild.style.cssText = "width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round";
       close.addEventListener("click", () => toggle(tool.kind));
-      head.append(title, sub, close);
+      head.append(title, sub);
+      if (tool.kind !== "asyapm") head.append(close); // AsyaPM is toggled from the dock bar only
       const body = document.createElement("div");
       body.className = "dock-body";
       card.append(head, body);
       applySize(card, tool.kind);
       attachResize(card, tool.kind);
       host.append(card);
-      entry.api = window.createWorkspacePanel(
-        `${ctx.sid}-${tool.kind}`,
-        tool.kind,
-        {
-          cwd: () => entry.cwd ?? ctx.cwd(),
-          setCwd(next) {
-            entry.cwd = next;
-            paintSub();
-          },
-          subTitle: paintSub,
-          status() {},
-          save() {},
-          highlight: ctx.highlight,
-        },
-        { cwd: entry.cwd, state: null },
-      );
+      // AsyaPM is one shared element (its state lives in asyapm.js); the card that is showing adopts it.
+      entry.api = tool.kind === "asyapm"
+        ? {
+            el: window.KostompAsyapm.el,
+            onShow() {
+              body.append(window.KostompAsyapm.el);
+              window.KostompAsyapm.show();
+            },
+            /** Show the card on the issue `key` (opened straight, without the list reload onShow does). */
+            showIssue(key) {
+              body.append(window.KostompAsyapm.el);
+              return window.KostompAsyapm.openKey(key);
+            },
+          }
+        : window.createWorkspacePanel(
+            `${ctx.sid}-${tool.kind}`,
+            tool.kind,
+            {
+              cwd: () => entry.cwd ?? ctx.cwd(),
+              setCwd(next) {
+                entry.cwd = next;
+                paintSub();
+              },
+              subTitle: paintSub,
+              status() {},
+              save() {},
+              highlight: ctx.highlight,
+            },
+            { cwd: entry.cwd, state: null },
+          );
       body.append(entry.api.el);
-      paintSub();
+      if (tool.kind === "asyapm") sub.hidden = true;
+      else paintSub();
       return entry;
     }
 
@@ -203,14 +231,27 @@
       const b = document.createElement("button");
       b.type = "button";
       b.className = "dock-btn";
-      b.title = `${tool.title} (${tool.key})`;
+      b.title = tool.key ? `${tool.title} (${tool.key})` : tool.title;
       b.setAttribute("aria-label", tool.title + " paneli");
       b.setAttribute("aria-pressed", "false");
       b.append(icon(tool.icon));
       b.addEventListener("click", () => toggle(tool.kind));
       buttons.set(tool.kind, b);
       bar.append(b);
+      if (tool.kind === "asyapm") b.hidden = !asyapmOn();
     }
+
+    /** Settings → AsyaPM switch: hide the button and its card, or bring the button back. */
+    const onAsyapmPanel = () => {
+      const on = asyapmOn();
+      buttons.get("asyapm").hidden = !on;
+      const entry = open.get("asyapm");
+      if (!on && entry) {
+        entry.card.hidden = true;
+        buttons.get("asyapm").setAttribute("aria-pressed", "false");
+      }
+    };
+    window.addEventListener("kostomp-asyapm-panel-change", onAsyapmPanel);
 
     return {
       bar,
@@ -227,7 +268,20 @@
         if (path) entry.api.openFile(path);
         else entry.api.focus?.();
       },
+      /** Open the AsyaPM card on the issue `key`, building the card first. */
+      showAsyapm(key) {
+        if (!asyapmOn()) return;
+        let entry = open.get("asyapm");
+        if (!entry) {
+          entry = build(TOOLS.find((tool) => tool.kind === "asyapm"));
+          open.set("asyapm", entry);
+        }
+        entry.card.hidden = false;
+        buttons.get("asyapm").setAttribute("aria-pressed", "true");
+        return entry.api.showIssue(key);
+      },
       dispose() {
+        window.removeEventListener("kostomp-asyapm-panel-change", onAsyapmPanel);
         for (const { api, card } of open.values()) {
           api.dispose?.();
           card.remove();
@@ -237,5 +291,5 @@
     };
   }
 
-  window.KostompDock = { applySize, attachResize, createToolDock };
+  window.KostompDock = { applySize, attachResize, createToolDock, asyapmEnabled };
 })();

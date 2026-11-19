@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod asyapm;
+mod color_picker;
 mod design;
 mod graph;
 mod notify;
@@ -117,6 +119,7 @@ fn main() {
             notify::toast_close,
             rpc::rpc_stop,
             rpc::pick_folder,
+            color_picker::pick_screen_color,
             rpc::list_places,
             rpc::list_dir,
             rpc::dir_details,
@@ -129,6 +132,7 @@ fn main() {
             omp_config::omp_config_list,
             omp_config::omp_config_set,
             omp_config::omp_config_reset,
+            asyapm::asyapm_cli,
             design::design_root,
             design::design_board_open,
             design::design_boards,

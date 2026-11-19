@@ -1,7 +1,8 @@
 import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { isEnoent, logger, postmortem } from "@oh-my-pi/pi-utils";
+import { FileLock } from "@oh-my-pi/pi-natives";
+import { isEnoent, isPidAlive, isRecord, logger, postmortem } from "@oh-my-pi/pi-utils";
 import { canonicalProjectDir, daemonRuntimeDir } from "./paths";
 
 const CLIENTS_DIR = "clients";
@@ -32,7 +33,14 @@ export interface DaemonProjectPresence {
 	close(): Promise<void>;
 }
 
-/** Register this omp process so project daemons survive while it remains alive. */
+/**
+ * Register this omp process so project daemons survive while it remains alive.
+ *
+ * Liveness is a process-owned lock on the presence file, not its pid: the OS
+ * drops the lock however the process dies (including a forced tree kill that
+ * skips postmortem cleanup), while a recorded pid can be reused by an
+ * unrelated process and keep a dead presence — and its broker — alive forever.
+ */
 export async function registerDaemonProjectPresence(
 	projectDir: string,
 	runtimeOverride?: string,
@@ -43,21 +51,50 @@ export async function registerDaemonProjectPresence(
 	await fs.mkdir(clientsDir, { recursive: true, mode: 0o700 });
 	const id = `${process.pid}-${crypto.randomUUID()}`;
 	const presencePath = path.join(clientsDir, `${id}.json`);
-	await Bun.write(presencePath, JSON.stringify({ pid: process.pid, id, projectDir: canonical }));
-	// POSIX modes are meaningless on Windows; chmod there only costs another syscall.
-	if (process.platform !== "win32") await fs.chmod(presencePath, 0o600);
+	// Locked before the file is written, so a reader never finds an unlocked
+	// file of a live registration and deletes it as dead.
+	const lock = FileLock.tryAcquire(presencePath);
+	if (!lock.acquired) throw new Error(`Daemon presence lock is already held: ${presencePath}`);
+	try {
+		await Bun.write(presencePath, JSON.stringify({ pid: process.pid, id, projectDir: canonical }));
+		// POSIX modes are meaningless on Windows; chmod there only costs another syscall.
+		if (process.platform !== "win32") await fs.chmod(presencePath, 0o600);
+	} catch (error) {
+		lock.release();
+		await fs.rm(presencePath, { force: true });
+		throw error;
+	}
 	let closed = false;
 	const close = async (): Promise<void> => {
 		if (closed) return;
 		closed = true;
 		cancelCleanup();
-		await fs.rm(presencePath, { force: true });
+		try {
+			await fs.rm(presencePath, { force: true });
+		} finally {
+			lock.release();
+		}
 	};
 	const cancelCleanup = postmortem.register(`daemon-presence:${id}`, () => close());
 	return { close };
 }
 
-/** Return whether a registered omp process in this runtime directory is still alive. */
+/** Whether the omp process that wrote `presencePath` is still running. */
+async function isPresenceLive(presencePath: string): Promise<boolean> {
+	try {
+		return FileLock.isHeld(presencePath);
+	} catch {
+		// No lock probe on this platform (Android): the recorded pid is the only signal.
+	}
+	try {
+		const decoded: unknown = await Bun.file(presencePath).json();
+		return isRecord(decoded) && typeof decoded.pid === "number" && isPidAlive(decoded.pid);
+	} catch {
+		return false;
+	}
+}
+
+/** Return whether a registered omp process in this runtime directory is still alive; drops dead registrations. */
 export async function hasLiveDaemonProjectPresence(runtimeDir: string): Promise<boolean> {
 	const clientsDir = path.join(runtimeDir, CLIENTS_DIR);
 	let entries: string[];
@@ -70,26 +107,8 @@ export async function hasLiveDaemonProjectPresence(runtimeDir: string): Promise<
 	let live = false;
 	for (const entry of entries) {
 		const presencePath = path.join(clientsDir, entry);
-		try {
-			const decoded: unknown = await Bun.file(presencePath).json();
-			if (
-				typeof decoded !== "object" ||
-				decoded === null ||
-				!("pid" in decoded) ||
-				typeof decoded.pid !== "number"
-			) {
-				await fs.rm(presencePath, { force: true });
-				continue;
-			}
-			try {
-				process.kill(decoded.pid, 0);
-				live = true;
-			} catch {
-				await fs.rm(presencePath, { force: true });
-			}
-		} catch (error) {
-			if (!isEnoent(error)) await fs.rm(presencePath, { force: true });
-		}
+		if (await isPresenceLive(presencePath)) live = true;
+		else await fs.rm(presencePath, { force: true });
 	}
 	return live;
 }

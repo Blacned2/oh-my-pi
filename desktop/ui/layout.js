@@ -51,6 +51,7 @@
     let mounted = []; // sids whose root is in the DOM right now
     const meta = new Map(); // sid -> { title, status }
     const heads = new Map(); // sid -> { title, dot } of the rendered pane tab
+    const issueBtns = new Map(); // sid -> the pane pill's "open AsyaPM card" button (shown only for issue-named sessions)
     const scrollMemo = new Map(); // sid -> { top, bottom } of its transcript while it was last shown
 
     host.style.setProperty("--pane-min-w", MIN_W + "px");
@@ -96,6 +97,7 @@
       const active = capture();
       host.replaceChildren();
       heads.clear();
+      issueBtns.clear();
       if (tree) host.append(build(tree));
       host.append(overlay);
       mounted = visible();
@@ -119,6 +121,7 @@
     const ICON_RIGHT = '<svg viewBox="0 0 16 16" width="12.5" height="12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M8 2.5v11"/></svg>';
     const ICON_BELOW = '<svg viewBox="0 0 16 16" width="12.5" height="12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M2 8h12"/></svg>';
     const ICON_CLOSE = '<svg viewBox="0 0 16 16" width="12.5" height="12.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5"/></svg>';
+    const ICON_ISSUE = '<svg viewBox="0 0 16 16" width="12.5" height="12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M5.5 6h5M5.5 9h3"/></svg>';
     function tool(cls, html, label, onClick) {
       const b = el("button", "pane-tool " + cls);
       b.type = "button";
@@ -163,9 +166,13 @@
       const sep = el("span", "pane-sep");
       sep.setAttribute("aria-hidden", "true");
       const sid = g.active;
+      const issue = tool("open-issue", ICON_ISSUE, "Open the AsyaPM card of this session", () => hooks.openIssue?.(sid));
+      issue.hidden = true; // paintMeta shows it once the session title carries an issue key
+      issueBtns.set(sid, issue);
       pill.append(
         tabs,
         sep,
+        issue,
         tool("split-right", ICON_RIGHT, "Split right (Ctrl+Shift+5)", () => hooks.split?.(sid, "right")),
         tool("split-below", ICON_BELOW, "Split below", () => hooks.split?.(sid, "bottom")),
       );
@@ -258,6 +265,12 @@
       const h = heads.get(sid);
       const m = meta.get(sid);
       if (!h || !m) return;
+      const btn = issueBtns.get(sid);
+      if (btn) {
+        const key = hooks.issueKey?.(m.title);
+        btn.hidden = !key;
+        if (key) btn.title = `Open ${key} in AsyaPM`;
+      }
       h.title.textContent = m.title;
       h.title.title = m.title;
       h.dot.className = "dot" + (m.status ? " " + m.status : "");

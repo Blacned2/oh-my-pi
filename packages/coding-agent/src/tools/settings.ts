@@ -856,6 +856,19 @@ export const cfgSecurityEnabled = register({
 	},
 });
 
+export const cfgAsyapmEnabled = register({
+	id: "asyapm.enabled",
+	type: "boolean",
+	default: true,
+	ui: {
+		tab: "tools",
+		group: "Available Tools",
+		label: "AsyaPM",
+		description:
+			"Enable the asyapm tool (list/read AsyaPM issues, change status, comment) when organizations are configured with `omp asyapm org-set`",
+	},
+});
+
 export const cfgAskEnabled = register({
 	id: "ask.enabled",
 	type: "boolean",

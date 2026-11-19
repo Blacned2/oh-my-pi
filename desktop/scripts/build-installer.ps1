@@ -9,7 +9,8 @@
 # installed app sees the new build as an update.
 # Code signing: set $env:KOSTOMP_SIGN_THUMBPRINT first; Tauri calls sign.ps1 for the exe and installer.
 # Updates: if the updater key exists (default ~\.kostomp\updater.key, or $env:KOSTOMP_UPDATER_KEY) the
-# build also writes target\update\ (installer, .sig, latest.json) and copies it to the local update
+# build embeds that machine's public key (updater.key.pub), writes target\update\ (installer, .sig,
+# latest.json) and copies it to the local update
 # folder (%LOCALAPPDATA%\Kostomp\updates, or $env:KOSTOMP_UPDATE_DIR) that the app serves on loopback.
 # The download URL is $env:KOSTOMP_UPDATE_BASE_URL, default: the folder of the endpoint in tauri.conf.json.
 param(
@@ -26,23 +27,17 @@ $desktop = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $confPath = Join-Path $desktop "tauri.conf.json"
 $cargoPath = Join-Path $desktop "Cargo.toml"
 
-# The updater key pair must be ONE pair shared by every machine that builds releases: the app embeds
-# the public key (tauri.conf.json plugins.updater.pubkey) and rejects any update signed by another
-# private key ("signature was created with a different key"). The private key never goes into git;
-# copy ~\.kostomp\updater.key (and .pub) from the machine that owns the committed pubkey. Checked
-# before the version bump and staging so a wrong key fails in seconds, not after a full build.
+# Updates are published and served per machine (loopback only), so every build machine signs with its own
+# key pair and embeds its own public key through the --config override below. The pubkey in
+# tauri.conf.json is only the fallback for builds without a key; two machines never fight over it in git.
+# The installed app trusts the key it was built with: switching keys on a machine (rotate-updater-key.ps1)
+# needs one manual reinstall there. Checked before the version bump so a missing .pub fails in seconds.
 $keyPath = if ($env:KOSTOMP_UPDATER_KEY) { $env:KOSTOMP_UPDATER_KEY } else { Join-Path $env:USERPROFILE ".kostomp\updater.key" }
-if (Test-Path -LiteralPath $keyPath) {
+$updates = Test-Path -LiteralPath $keyPath
+if ($updates) {
     $pubPath = "$keyPath.pub"
-    if (-not (Test-Path -LiteralPath $pubPath)) { throw "Updater key $keyPath has no $pubPath next to it, so it cannot be checked against tauri.conf.json. Copy the .pub file from the machine that generated the key." }
+    if (-not (Test-Path -LiteralPath $pubPath)) { throw "Updater key $keyPath has no $pubPath next to it. Run scripts\rotate-updater-key.ps1 to make a new pair (then reinstall once by hand)." }
     $localPub = (Get-Content -LiteralPath $pubPath -Raw).Trim()
-    $confPub = ((Get-Content $confPath -Raw | ConvertFrom-Json).plugins.updater.pubkey).Trim()
-    if ($localPub -ne $confPub) {
-        throw ("Updater key mismatch: $keyPath does not belong to the pubkey in tauri.conf.json, so installed apps would reject the update " +
-            "(signature was created with a different key).`n" +
-            "  Fix A (keeps installed apps working): copy updater.key and updater.key.pub from the other machine into $(Split-Path $keyPath).`n" +
-            "  Fix B (new shared key): run scripts\rotate-updater-key.ps1, commit tauri.conf.json, copy the key to the other machine, and reinstall once by hand on every machine.")
-    }
 }
 
 # Version bump: text replace (first match only) so the files keep their formatting; written without a BOM.
@@ -73,14 +68,14 @@ $conf = Get-Content $confPath -Raw | ConvertFrom-Json
 & (Join-Path $PSScriptRoot "stage-runtime.ps1") -NoOmp:$NoOmp -NoStats:$NoStats
 if ($LASTEXITCODE -ne 0) { throw "stage-runtime failed" }
 
-$updates = Test-Path -LiteralPath $keyPath
 $tauriArgs = @("build", "--bundles", "nsis")
 if ($updates) {
     $env:TAURI_SIGNING_PRIVATE_KEY = $keyPath
     if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) { $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "" }
     $override = Join-Path $desktop "target\updater-config.json"
     New-Item -ItemType Directory -Force (Split-Path $override) | Out-Null
-    Set-Content -Path $override -Value '{"bundle":{"createUpdaterArtifacts":true}}'
+    $overrideJson = [ordered]@{ bundle = @{ createUpdaterArtifacts = $true }; plugins = @{ updater = @{ pubkey = $localPub } } } | ConvertTo-Json -Depth 4
+    [IO.File]::WriteAllText($override, $overrideJson, (New-Object Text.UTF8Encoding($false)))
     $tauriArgs += @("--config", $override)
 } else {
     "No updater key at $keyPath - building without update artifacts."

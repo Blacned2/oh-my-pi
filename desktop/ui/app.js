@@ -121,6 +121,26 @@
   });
   darkQuery.addEventListener("change", () => { if (themePref === "system") applyTheme(); });
 
+  // ---- screen color picker: click a pixel anywhere, its #RRGGBB lands on the clipboard ----
+  let colorNoteTimer = 0;
+  $("color-btn").addEventListener("click", async () => {
+    const note = $("color-note");
+    let text;
+    try {
+      const hex = await invoke("pick_screen_color");
+      if (!hex) return;
+      text = `Renk kopyalandı ${hex}`;
+      note.style.setProperty("--picked", hex);
+    } catch (err) {
+      text = `Renk seçilemedi: ${err}`;
+      note.style.removeProperty("--picked");
+    }
+    note.textContent = text;
+    note.hidden = false;
+    clearTimeout(colorNoteTimer);
+    colorNoteTimer = setTimeout(() => { note.hidden = true; }, 2200);
+  });
+
   // ---- stats ------------------------------------------------------------
   const statsFrame = $("stats-frame");
   let statsOrigin = null; // set together with the frame's src
@@ -204,8 +224,8 @@
 
   // ---- collapsible session sidebar (state persists) ----
   const sidebar = $("sidebar");
-  // The sidebar stays up in every view: a click in it, outside the Chat/Stats tabs and the shell tools, brings the chat view forward.
-  sidebar.addEventListener("click", (e) => { if ($("chat").hidden && !e.target.closest("#tabs, .side-tools")) $("tab-chat").click(); }, true);
+  // The sidebar stays up in every view: a click in it, outside the Chat/Stats tabs, brings the chat view forward.
+  sidebar.addEventListener("click", (e) => { if ($("chat").hidden && !e.target.closest("#tabs")) $("tab-chat").click(); }, true);
   function setSidebar(collapsed, persist = true) {
     sidebar.classList.toggle("collapsed", collapsed);
     if (persist) try { localStorage.setItem("kostomp-sidebar", collapsed ? "1" : "0"); } catch {}
@@ -426,6 +446,21 @@
     const at = fromSid ?? layout?.focused;
     return sessions.get(at)?.api.cwd ?? sessions.get(lastChatSid)?.api.cwd ?? [...sessions.values()][0]?.api.cwd ?? null;
   };
+  /** Folder of the chat that has (or last had) focus; panels use it to start work in the same project. */
+  window.kostompActiveCwd = () => activeCwd();
+  /** "GPWEB-184: summary" -> "GPWEB-184"; chats opened by the AsyaPM hand-off are named that way. */
+  const issueKeyOf = (t) => /^([A-Za-z][A-Za-z0-9]*-\d+)(?!\w)/.exec(typeof t === "string" ? t.trim() : "")?.[1].toUpperCase();
+  /**
+   * Issue key ("GPWEB-184") -> where its agent chat stands: a tab's state (busy/ask/bad/ok/idle) or "saved" when only a
+   * stored session exists. Chats opened by the AsyaPM hand-off are named "KEY: summary"; that prefix is the link.
+   */
+  window.kostompIssueAgents = () => {
+    const keyOf = issueKeyOf;
+    const out = new Map();
+    for (const r of savedRows) { const k = keyOf(r.title); if (k && !out.has(k)) out.set(k, "saved"); }
+    for (const s of sessions.values()) { const k = keyOf(s.title); if (k) out.set(k, s.badge.dataset.state || "idle"); }
+    return out;
+  };
 
   layout = createLayout($("workspace"), {
     sessionEl: (sid) => (sid === LIST_SID ? savedEl : sid === GRAPHS_SID ? graphsEl : sid === DESIGNS_SID ? designsEl : sessions.get(sid)?.api.el),
@@ -442,16 +477,41 @@
       if (savedStale && savedEl.isConnected) paintSaved();
     },
     split: (sid, zone) => newSession(sid, zone),
+    issueKey: (title) => (window.KostompDock.asyapmEnabled() ? issueKeyOf(title) : null),
+    openIssue: (sid) => {
+      const s = sessions.get(sid);
+      const key = s && issueKeyOf(s.title);
+      if (key) s.api.openIssue(key);
+    },
     pinned: isListPanel,
   });
   layout.setMeta(LIST_SID, { title: "Sessions" });
   layout.setMeta(GRAPHS_SID, { title: "Graphs" });
   layout.setMeta(DESIGNS_SID, { title: "Designs" });
+  // A chat out of sight and idle this long gives its omp process (one bun.exe each) back; showing or
+  // using it again resumes the same session file. suspend() itself refuses while anything is still live.
+  const SUSPEND_IDLE_MS = 10 * 60_000;
+  setInterval(() => {
+    const visible = new Set(layout.visible());
+    const now = Date.now();
+    for (const s of sessions.values()) {
+      if (visible.has(s.sid) || !s.api.alive || s.api.busy || s.asking !== null) {
+        s.idleSince = 0;
+        continue;
+      }
+      s.idleSince ||= now;
+      if (now - s.idleSince < SUSPEND_IDLE_MS) continue;
+      s.idleSince = 0;
+      void s.api.suspend();
+    }
+  }, 60_000);
   function placeChat(sid) {
     if (layout.has(sid) || !isListPanel(layout.focused)) layout.show(sid);
     else layout.drop(sid, layout.focused, "right");
   }
   const baseName = (p) => (p ? p.split(/[\\/]/).filter(Boolean).pop() || p : "session");
+  const pathKey = (p) => p.replace(/\//g, "\\").toLowerCase();
+  const samePath = (a, b) => !!a && !!b && pathKey(a) === pathKey(b);
   function retitle() {
     // Same folder in several sessions: number them so tabs and pane headers stay tellable apart.
     const seen = new Map();
@@ -468,6 +528,7 @@
       layout.setMeta(s.sid, { title: s.title });
     }
     groupTabs();
+    document.dispatchEvent(new CustomEvent("kostomp-agents"));
     save();
   }
   const groupEls = new Map(); // cwd -> { head, body, rows }
@@ -484,9 +545,294 @@
     for (const ch of key) h = (h * 31 + ch.codePointAt(0)) >>> 0;
     return AVATAR_COLORS[h % AVATAR_COLORS.length];
   };
+
+  // ---- assigned projects: up to 9 folders bound to Ctrl+1…9. While one is active the sidebar lists only
+  // its chats and new chats open in it; Ctrl+0 (or "Tümü") shows every project again.
+  const ASSIGNED_KEY = "kostomp-assigned-projects";
+  const ACTIVE_PROJECT_KEY = "kostomp-active-project";
+  const MAX_ASSIGNED = 9;
+  const assigned = (() => {
+    try {
+      const list = JSON.parse(localStorage.getItem(ASSIGNED_KEY));
+      return Array.isArray(list) ? list.filter((p) => typeof p === "string" && p).slice(0, MAX_ASSIGNED) : [];
+    } catch { return []; }
+  })();
+  let activeProject = (() => {
+    try { return assigned.find((p) => samePath(p, localStorage.getItem(ACTIVE_PROJECT_KEY))) ?? null; } catch { return null; }
+  })();
+  const assignedIndex = (cwd) => assigned.findIndex((p) => samePath(p, cwd));
+  const inActiveProject = (s) => !activeProject || samePath(s.cwd, activeProject);
+  function saveProjects() {
+    try {
+      localStorage.setItem(ASSIGNED_KEY, JSON.stringify(assigned));
+      localStorage.setItem(ACTIVE_PROJECT_KEY, activeProject ?? "");
+    } catch {}
+  }
+  function assignProject(cwd) {
+    if (!cwd || assignedIndex(cwd) >= 0 || assigned.length >= MAX_ASSIGNED) return;
+    assigned.push(cwd);
+    saveProjects();
+    groupTabs();
+  }
+  function unassignProject(cwd) {
+    const i = assignedIndex(cwd);
+    if (i < 0) return;
+    assigned.splice(i, 1);
+    if (samePath(activeProject, cwd)) activeProject = null;
+    saveProjects();
+    groupTabs();
+  }
+  /** Lists only `cwd`'s chats (null: all) and brings its latest chat forward when the focused one is elsewhere. */
+  function selectProject(cwd) {
+    activeProject = cwd;
+    saveProjects();
+    showView("chat");
+    setSideView(0);
+    groupTabs();
+    if (!cwd) return;
+    const focused = sessions.get(layout.focused);
+    if (focused && inActiveProject(focused)) return;
+    const latest = [...sessions.values()].filter(inActiveProject).sort((a, b) => b.lastAt - a.lastAt)[0];
+    if (!latest) return;
+    layout.show(latest.sid);
+    latest.api.focus();
+  }
+  // Titlebar dropdown: the trigger shows the active project; the menu lists "Tümü", the assigned folders and "+ Proje ata".
+  const projectBtn = $("project-btn");
+  const projectBtnKbd = $("project-btn-kbd");
+  const projectBtnName = $("project-btn-name");
+  const projectMenu = $("project-menu");
+  function projectItem(cwd, n) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ovf-item pbar-item";
+    b.setAttribute("role", "menuitemradio");
+    const on = cwd ? samePath(cwd, activeProject) : !activeProject;
+    b.setAttribute("aria-checked", String(on));
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-keyshortcuts", `Control+${n}`);
+    const kbd = document.createElement("kbd");
+    kbd.textContent = String(n);
+    const name = document.createElement("span");
+    name.className = "pbar-name";
+    name.textContent = cwd ? baseName(cwd) : "Tümü";
+    b.append(kbd, name);
+    b.title = cwd ? `${cwd}\nCtrl+${n} · sağ tık: atamayı kaldır` : "Tüm projeler (Ctrl+0)";
+    if (cwd) {
+      b.style.setProperty("--c", groupColor(cwd));
+      b.addEventListener("contextmenu", (e) => { e.preventDefault(); unassignProject(cwd); });
+    }
+    b.addEventListener("click", () => { toggleProjectMenu(false); selectProject(cwd); });
+    return b;
+  }
+  function paintProjectBar() {
+    const n = activeProject ? assignedIndex(activeProject) + 1 : 0;
+    projectBtnKbd.textContent = String(n);
+    projectBtnName.textContent = activeProject ? baseName(activeProject) : "Tümü";
+    if (activeProject) projectBtn.style.setProperty("--c", groupColor(activeProject));
+    else projectBtn.style.removeProperty("--c");
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "ovf-item pbar-add";
+    add.setAttribute("role", "menuitem");
+    add.textContent = "+ Proje ata";
+    add.title = "Bir proje klasörünü Ctrl+1…9 kısayoluna ata";
+    add.hidden = assigned.length >= MAX_ASSIGNED;
+    add.addEventListener("click", async () => {
+      toggleProjectMenu(false);
+      const path = await window.KostompFolders.browseFolder(activeProject ?? sessions.get(layout.focused)?.cwd ?? null);
+      if (!path) return;
+      assignProject(path);
+      const i = assignedIndex(path);
+      if (i >= 0) selectProject(assigned[i]);
+    });
+    projectMenu.replaceChildren(projectItem(null, 0), ...assigned.map((p, i) => projectItem(p, i + 1)), add);
+  }
+  function toggleProjectMenu(open) {
+    const next = open === undefined ? projectMenu.hidden : open;
+    projectMenu.hidden = !next;
+    projectBtn.setAttribute("aria-expanded", String(next));
+    if (!next) return;
+    const box = projectBtn.getBoundingClientRect();
+    projectMenu.style.left = Math.max(8, Math.min(box.left, innerWidth - projectMenu.offsetWidth - 8)) + "px";
+    projectMenu.style.top = box.bottom + 6 + "px";
+    projectMenu.querySelector(".pbar-item[aria-checked=true]")?.focus();
+  }
+  projectBtn.addEventListener("click", () => toggleProjectMenu());
+  document.addEventListener("pointerdown", (e) => {
+    if (!projectMenu.hidden && !e.target.closest("#project-btn, #project-menu")) toggleProjectMenu(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !projectMenu.hidden) { toggleProjectMenu(false); projectBtn.focus(); }
+  });
+  // ---- notification bell: while a project is selected, finished replies and questions from chats in
+  // other projects collect here and the bell glows until it is opened. Opening a chat clears its entry.
+  const bellBtn = $("bell-btn");
+  const bellMenu = $("bell-menu");
+  /** @type {{sid: string, kind: "reply" | "ask", title: string, cwd: string | null, body: string, at: number}[]} */
+  const bellItems = [];
+  const BELL_MAX = 30;
+  let bellUnread = false;
+  function bellPush(entry, kind, body) {
+    if (!activeProject || inActiveProject(entry) || isOpen(entry)) return;
+    const i = bellItems.findIndex((n) => n.sid === entry.sid);
+    if (i >= 0) bellItems.splice(i, 1);
+    bellItems.unshift({ sid: entry.sid, kind, title: entry.title, cwd: entry.cwd, body, at: Date.now() });
+    if (bellItems.length > BELL_MAX) bellItems.length = BELL_MAX;
+    bellUnread = bellMenu.hidden;
+    paintBell();
+  }
+  function bellDrop(sid) {
+    const i = bellItems.findIndex((n) => n.sid === sid);
+    if (i < 0) return;
+    bellItems.splice(i, 1);
+    if (!bellItems.length) bellUnread = false;
+    paintBell();
+  }
+  function paintBell() {
+    bellBtn.classList.toggle("ringing", bellUnread);
+    bellBtn.dataset.count = bellItems.length ? String(bellItems.length) : "";
+    bellBtn.title = bellItems.length ? `Bildirimler (${bellItems.length})` : "Bildirimler";
+    if (!bellMenu.hidden) paintBellMenu();
+  }
+  function paintBellMenu() {
+    const head = document.createElement("div");
+    head.className = "bell-head";
+    const h = document.createElement("span");
+    h.textContent = "Bildirimler";
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "bell-clear";
+    clear.textContent = "Temizle";
+    clear.hidden = !bellItems.length;
+    clear.addEventListener("click", () => {
+      bellItems.length = 0;
+      bellUnread = false;
+      paintBell();
+    });
+    head.append(h, clear);
+    if (!bellItems.length) {
+      const empty = document.createElement("div");
+      empty.className = "bell-empty";
+      empty.textContent = "Başka projelerden bildirim yok";
+      bellMenu.replaceChildren(head, empty);
+      return;
+    }
+    const rows = bellItems.map((n) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ovf-item bell-item";
+      b.setAttribute("role", "menuitem");
+      if (n.cwd) b.style.setProperty("--c", groupColor(n.cwd));
+      const dot = document.createElement("i");
+      dot.className = "bell-dot";
+      dot.dataset.kind = n.kind;
+      const text = document.createElement("span");
+      text.className = "bell-text";
+      const title = document.createElement("b");
+      title.textContent = n.title;
+      const meta = document.createElement("small");
+      meta.textContent = `${n.cwd ? baseName(n.cwd) : "—"} · ${n.kind === "ask" ? "soru bekliyor" : "yanıt hazır"} · ${sideAgo(n.at)}`;
+      const body = document.createElement("span");
+      body.className = "bell-body";
+      body.textContent = n.body;
+      text.append(title, meta, body);
+      b.append(dot, text);
+      b.title = n.cwd ?? "";
+      b.addEventListener("click", () => {
+        toggleBellMenu(false);
+        bellDrop(n.sid);
+        const entry = sessions.get(n.sid);
+        if (!entry) return;
+        const i = assignedIndex(entry.cwd);
+        selectProject(i >= 0 ? assigned[i] : null);
+        openSession(entry);
+      });
+      return b;
+    });
+    bellMenu.replaceChildren(head, ...rows);
+  }
+  function toggleBellMenu(open) {
+    const next = open === undefined ? bellMenu.hidden : open;
+    bellMenu.hidden = !next;
+    bellBtn.setAttribute("aria-expanded", String(next));
+    if (!next) return;
+    bellUnread = false;
+    paintBell();
+    const box = bellBtn.getBoundingClientRect();
+    bellMenu.style.left = Math.max(8, Math.min(box.right - bellMenu.offsetWidth, innerWidth - bellMenu.offsetWidth - 8)) + "px";
+    bellMenu.style.top = box.bottom + 6 + "px";
+  }
+  bellBtn.addEventListener("click", () => toggleBellMenu());
+  document.addEventListener("pointerdown", (e) => {
+    if (!bellMenu.hidden && !e.target.closest("#bell-btn, #bell-menu")) toggleBellMenu(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !bellMenu.hidden) { toggleBellMenu(false); bellBtn.focus(); }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    const m = /^Digit([0-9])$/.exec(e.code);
+    if (!m) return;
+    const n = Number(m[1]);
+    if (n && !assigned[n - 1]) return;
+    e.preventDefault();
+    selectProject(n ? assigned[n - 1] : null);
+  });
+  const PIN_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/></svg>';
   const GROUP_CHEV = '<svg class="stab-group-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
   let groupSeq = 0;
-  /** Sidebar order: one header per project folder, its tabs underneath (first-opened project first).
+  // Sidebar order: "name"/"name-desc" = project folder A–Z / Z–A (chats likewise), "recent"/"oldest" = latest activity first / last.
+  // sortDays > 0 hides chats whose last activity is older than that many days (0 = show all).
+  const SORT_KEY = "kostomp-project-sort";
+  const DAYS_KEY = "kostomp-sort-days";
+  const SORTS = ["name", "name-desc", "recent", "oldest"];
+  const readLS = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const writeLS = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  let projectSort = SORTS.includes(readLS(SORT_KEY)) ? readLS(SORT_KEY) : "name";
+  let sortDays = Math.max(0, Math.floor(Number(readLS(DAYS_KEY))) || 0);
+  const sortBox = $("project-sort");
+  const sortPanel = $("sort-settings");
+  const sortGear = $("sort-settings-btn");
+  const sortDaysEl = $("sort-days");
+  function paintSortButtons() {
+    for (const b of sortBox.querySelectorAll("button[data-sort]")) b.setAttribute("aria-pressed", String(b.dataset.sort === projectSort));
+    for (const r of sortPanel.querySelectorAll("input[name=sort-by]")) r.checked = r.value === projectSort;
+    if (![...sortDaysEl.options].some((o) => Number(o.value) === sortDays)) sortDaysEl.add(new Option(`Son ${sortDays} gün`, String(sortDays)));
+    sortDaysEl.value = String(sortDays);
+  }
+  function setSort(v) {
+    if (v === projectSort) return;
+    projectSort = v;
+    writeLS(SORT_KEY, v);
+    paintSortButtons();
+    groupTabs();
+  }
+  sortBox.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-sort]");
+    if (b) setSort(b.dataset.sort);
+  });
+  sortGear.addEventListener("click", () => {
+    sortPanel.hidden = !sortPanel.hidden;
+    sortGear.setAttribute("aria-expanded", String(!sortPanel.hidden));
+  });
+  sortPanel.addEventListener("change", (e) => {
+    if (e.target.name === "sort-by") setSort(e.target.value);
+    else if (e.target === sortDaysEl) {
+      sortDays = Math.max(0, Number(sortDaysEl.value) || 0);
+      writeLS(DAYS_KEY, String(sortDays));
+      filterSide();
+    }
+  });
+  paintSortButtons();
+  const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+  const sortCmpRows = (a, b) => {
+    if (projectSort === "recent") return b.lastAt - a.lastAt;
+    if (projectSort === "oldest") return a.lastAt - b.lastAt;
+    const c = byName(a.title, b.title);
+    return projectSort === "name-desc" ? -c : c;
+  };
+  /** Sidebar order: one header per project folder, its tabs underneath, ordered by `projectSort`.
    *  Clicking a header folds its tabs; its + opens a new chat in that project. */
   function groupTabs() {
     const groups = new Map();
@@ -495,6 +841,19 @@
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(s);
     }
+    const latest = (rows) => Math.max(...rows.map((s) => s.lastAt));
+    for (const rows of groups.values()) {
+      rows.sort(sortCmpRows);
+    }
+    const ordered = [...groups].sort(([ka, ra], [kb, rb]) => {
+      if (!ka !== !kb) return ka ? -1 : 1; // folderless ("starting…") last
+      if (projectSort === "recent") return latest(rb) - latest(ra);
+      if (projectSort === "oldest") return latest(ra) - latest(rb);
+      const c = byName(baseName(ka), baseName(kb)) || byName(ka, kb);
+      return projectSort === "name-desc" ? -c : c;
+    });
+    groups.clear();
+    for (const [key, rows] of ordered) groups.set(key, rows);
     for (const [key, g] of groupEls) {
       if (groups.has(key)) continue;
       g.head.remove();
@@ -509,11 +868,14 @@
         head.setAttribute("role", "button");
         head.tabIndex = 0;
         head.innerHTML = GROUP_CHEV + '<span class="stab-group-sw" aria-hidden="true"></span><span class="stab-group-name"></span><span class="stab-group-ct"></span>';
+        const pin = document.createElement("button");
+        pin.type = "button";
+        pin.className = "stab-group-pin";
         const add = document.createElement("button");
         add.type = "button";
         add.className = "stab-group-add";
         add.textContent = "+";
-        head.append(add);
+        head.append(pin, add);
         const body = document.createElement("div");
         body.className = "stab-rows";
         body.id = "stab-rows-" + ++groupSeq;
@@ -522,11 +884,17 @@
         body.append(inner);
         const toggle = () => setCollapsed(head.dataset.key, !collapsed.has(head.dataset.key));
         head.addEventListener("click", (e) => {
-          if (e.target === add) return;
+          if (e.target.closest("button")) return;
           toggle();
         });
         head.addEventListener("keydown", (e) => {
           if (e.target === head && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggle(); }
+        });
+        pin.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const k = head.dataset.key;
+          if (assignedIndex(k) >= 0) unassignProject(k);
+          else assignProject(k);
         });
         add.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -554,10 +922,21 @@
       add.hidden = !key;
       add.title = `New chat in ${baseName(key)}`;
       add.setAttribute("aria-label", add.title);
+      const pin = head.querySelector(".stab-group-pin");
+      const slot = assignedIndex(key);
+      pin.hidden = !key;
+      pin.classList.toggle("on", slot >= 0);
+      if (slot >= 0) pin.textContent = String(slot + 1);
+      else pin.innerHTML = PIN_ICON;
+      pin.disabled = slot < 0 && assigned.length >= MAX_ASSIGNED;
+      pin.title = slot >= 0 ? `Ctrl+${slot + 1} ile atandı · tıkla: atamayı kaldır`
+        : pin.disabled ? `En fazla ${MAX_ASSIGNED} proje atanabilir` : "Projeyi Ctrl+1…9 kısayoluna ata";
+      pin.setAttribute("aria-label", pin.title);
       head.title = key;
       g.rows.append(...rows.map((s) => s.tab));
       strip.append(head, body);
     }
+    paintProjectBar();
     filterSide();
   }
 
@@ -575,6 +954,7 @@
   const emptyOf = (tab) => viewOf(tab).querySelector(".side-empty");
   for (const tab of segTabs) emptyOf(tab).dataset.none = emptyOf(tab).textContent;
   function setSideView(i, persist = true) {
+    if (segTabs[i].hidden) i = 0;
     sideView = i;
     segTabs.forEach((tab, j) => {
       tab.setAttribute("aria-selected", String(i === j));
@@ -592,8 +972,10 @@
     const q = sideSearch.value.trim().toLocaleLowerCase();
     const hit = (text) => !q || text.toLocaleLowerCase().includes(q);
     let chats = 0;
+    const cutoff = sortDays > 0 ? Date.now() - sortDays * 86400000 : 0;
     for (const s of sessions.values()) {
-      const ok = hit(s.title + "\n" + (s.cwd ? baseName(s.cwd) : ""));
+      const fresh = !cutoff || s.lastAt >= cutoff || s.status.kind === "busy" || !!s.asking;
+      const ok = fresh && inActiveProject(s) && hit(s.title + "\n" + (s.cwd ? baseName(s.cwd) : ""));
       s.tab.classList.toggle("filtered", !ok);
       if (ok) chats++;
     }
@@ -602,7 +984,9 @@
       g.head.hidden = !any;
       g.body.hidden = !any;
     }
-    emptyOf(segTabs[0]).hidden = chats > 0 || !q;
+    const chatsEmpty = emptyOf(segTabs[0]);
+    chatsEmpty.textContent = activeProject && !q ? `${baseName(activeProject)} projesinde açık sohbet yok. Ctrl+N ile yeni sohbet başlat.` : chatsEmpty.dataset.none;
+    chatsEmpty.hidden = chats > 0 || (!q && !activeProject);
     [graphOpen, designOpen].forEach((list, i) => {
       let shown = 0;
       for (const item of list.children) {
@@ -635,7 +1019,10 @@
   }));
   seg.addEventListener("keydown", (e) => {
     const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
-    let next = e.key === "Home" ? 0 : e.key === "End" ? 2 : e.key in keys ? (sideView + keys[e.key] + 3) % 3 : -1;
+    const shown = segTabs.map((_, j) => j).filter((j) => !segTabs[j].hidden);
+    const at = shown.indexOf(sideView);
+    let next = e.key === "Home" ? shown[0] : e.key === "End" ? shown[shown.length - 1]
+      : e.key in keys ? shown[(at + keys[e.key] + shown.length) % shown.length] : -1;
     if (next < 0) return;
     e.preventDefault();
     setSideView(next);
@@ -668,6 +1055,7 @@
     sideSearch.select();
   });
   setSideView(Math.min(2, Math.max(0, Number(localStorage.getItem(SIDE_VIEW_KEY)) || 0)), false);
+  paintProjectBar();
   $("graph-new").addEventListener("click", () => setSideView(1));
   $("design-new").addEventListener("click", () => setSideView(2));
 
@@ -717,6 +1105,7 @@
     }
     s.sub.append(sessionLabel(s));
     paintTime(s);
+    document.dispatchEvent(new CustomEvent("kostomp-agents"));
   }
   function paintTabs() {
     const showingPane = $("chat").classList.contains("graph-mode") || $("chat").classList.contains("design-mode");
@@ -725,6 +1114,7 @@
     for (const s of sessions.values()) {
       const selected = s.sid === focused;
       s.tab.classList.toggle("active", selected);
+      if (selected) bellDrop(s.sid);
       if (selected && s.unseen) {
         s.unseen = false;
         paintSessionStatus(s);
@@ -772,7 +1162,11 @@
     entry.api = createSession(sid, {
       status(text, kind) {
         const wasBusy = entry.status.kind === "busy";
-        if (kind !== entry.status.kind) entry.lastAt = Date.now();
+        if (kind !== entry.status.kind) {
+          entry.lastAt = Date.now();
+          entry.active = true;
+          if (projectSort === "recent" || projectSort === "oldest" || sortDays > 0) groupTabs();
+        }
         entry.status = { text, kind };
         if (wasBusy && kind !== "busy" && layout.focused !== sid) entry.unseen = true;
         if (layout.focused === sid) entry.unseen = false;
@@ -901,6 +1295,7 @@
     if (!stopped) window.KostompRpcLifecycle.stop(sid).catch(() => {});
     entry.api.dispose();
     sessions.delete(sid);
+    bellDrop(sid);
     entry.tab.remove();
     layout.remove(sid);
     entry.api.el.remove();
@@ -916,7 +1311,8 @@
     setSideView(0);
     const at = from ?? layout.focused;
     const src = sessions.get(at) ?? sessions.get(lastChatSid);
-    const cwd = src?.api.cwd ?? null;
+    let cwd = src?.api.cwd ?? null;
+    if (activeProject && !samePath(cwd, activeProject)) cwd = activeProject; // new chats stay in the selected project
     if (!zone) {
       const blank = openBlank(cwd);
       if (blank) return blank;
@@ -935,14 +1331,14 @@
     entry.api.focus();
     return entry;
   }
-  /** Open a fresh chat in `cwd` (an empty one already there is reused) and send `prompt` as if typed + Enter. Resolves to the sid. */
-  window.kostompStartChat = async ({ cwd, prompt, name } = {}) => {
+  /** Open a fresh chat in `cwd` (an empty one already there is reused) and send `prompt` (+ `images`) as if typed + Enter. Resolves to the sid. */
+  window.kostompStartChat = async ({ cwd, prompt, images, name } = {}) => {
     showView("chat");
     const entry = openBlank(cwd ?? null) ?? addSession({ cwd: cwd ?? null, resume: false, name: name ?? null });
     placeChat(entry.sid);
     entry.api.focus();
     if (cwd) window.KostompFolders.saveRecent(cwd);
-    await entry.api.submitText(prompt);
+    await entry.api.submitText(prompt, images);
     return entry.sid;
   };
   $("session-add").addEventListener("click", () => newSession());
@@ -1036,17 +1432,19 @@
   function isOpen(entry) {
     return !document.hidden && !$("chat").hidden && layout.focused === entry.sid;
   }
-  /** A turn finished in a chat that is not open: raise a toast; clicking it opens this session. */
+  /** A turn finished: file it in the bell (other projects) and raise a toast unless the chat is open; clicking it opens this session. */
   function notifyReply(entry) {
-    if (isOpen(entry)) return;
     const text = entry.api.lastAnswer().replace(/[`*_#>~|]/g, "").replace(/\s+/g, " ").trim();
     const body = text.length > 220 ? text.slice(0, 219) + "…" : text || "Yanıt hazır";
+    bellPush(entry, "reply", body);
+    if (isOpen(entry)) return;
     invoke("notify_reply", { sid: entry.sid, title: entry.title, body }).catch(() => {});
   }
   /** A question waits in `entry`: toast unless that chat is open. */
   function notifyQuestion(entry, text) {
-    if (isOpen(entry)) return;
     const body = text.replace(/[`*_#>~|]/g, "").replace(/\s+/g, " ").trim().slice(0, 220) || "Bir soru soruldu";
+    bellPush(entry, "ask", body);
+    if (isOpen(entry)) return;
     invoke("notify_reply", { sid: entry.sid, title: entry.title, body }).catch(() => {});
   }
   function openSession(entry) {
@@ -1160,10 +1558,10 @@
     layoutMenu.hidden = !next;
     layoutBtn.setAttribute("aria-expanded", String(next));
     if (next) {
-      // Body-level popover: left-aligned to the button, opening upward.
+      // Body-level popover under the titlebar button, right-aligned to it, opening downward.
       const box = layoutBtn.getBoundingClientRect();
-      layoutMenu.style.left = Math.max(8, Math.min(box.left, innerWidth - layoutMenu.offsetWidth - 8)) + "px";
-      layoutMenu.style.bottom = innerHeight - box.top + 6 + "px";
+      layoutMenu.style.left = Math.max(8, Math.min(box.right - layoutMenu.offsetWidth, innerWidth - layoutMenu.offsetWidth - 8)) + "px";
+      layoutMenu.style.top = box.bottom + 6 + "px";
       paintLayoutMenu();
       layoutMenu.querySelector(".layout-item[aria-checked=true]")?.focus();
     } else focusChat();
@@ -1344,8 +1742,6 @@
   let savedSeq = 0;
   let savedTimer = 0;
   let savedPaintFrame = 0;
-  const pathKey = (p) => p.replace(/\//g, "\\").toLowerCase();
-  const samePath = (a, b) => !!a && !!b && pathKey(a) === pathKey(b);
   const tabFor = (path) => [...sessions.values()].find((s) => samePath(s.api.sessionFile ?? s.sessionFile, path));
   /** Normalised session file -> its tab (the first, like tabFor), for checking many paths at once. */
   function tabsByPath() {
@@ -1401,8 +1797,16 @@
       }
       if (mine !== savedSeq) return;
       savedRows = list;
+      document.dispatchEvent(new CustomEvent("kostomp-agents"));
       // Titles omp assigned itself (auto-generated) only show up in the saved list: carry them onto the tabs.
       let changed = false;
+      for (const s of sessions.values()) {
+        // Resumed tabs start with lastAt = now; the saved file's mtime is the real last activity until the tab sees a turn.
+        if (s.active || !s.sessionFile) continue;
+        const t = new Date(list.find((r) => r.path === s.sessionFile)?.mtime).getTime();
+        if (Number.isFinite(t)) s.lastAt = t;
+      }
+      groupTabs();
       for (const s of sessions.values()) {
         if (s.name !== null || s.autoTitle || !s.sessionFile) continue;
         const row = list.find((r) => r.path === s.sessionFile);
@@ -1439,6 +1843,16 @@
     if (savedEl.isConnected) paintSaved();
     else savedStale = true;
   });
+  // Folded project groups of the sessions list, kept apart from the sidebar's folds.
+  const SAVED_COLLAPSED_KEY = "kostomp-saved-collapsed";
+  const savedCollapsed = new Set((() => { try { return JSON.parse(localStorage.getItem(SAVED_COLLAPSED_KEY)) ?? []; } catch { return []; } })());
+  function toggleSavedGroup(key) {
+    if (savedCollapsed.has(key)) savedCollapsed.delete(key); else savedCollapsed.add(key);
+    try { localStorage.setItem(SAVED_COLLAPSED_KEY, JSON.stringify([...savedCollapsed])); } catch {}
+    paintSaved();
+    savedList.querySelector(`.saved-group[data-key="${CSS.escape(key)}"]`)?.focus();
+  }
+  /** One header per project folder (first seen = most recent activity), its sessions underneath; a search unfolds every group. */
   function paintSaved() {
     savedStale = false;
     cancelAnimationFrame(savedPaintFrame);
@@ -1456,12 +1870,27 @@
     }
     savedList.replaceChildren();
     for (const [cwd, rows] of groups) {
+      const shut = !q && savedCollapsed.has(cwd);
       const head = document.createElement("div");
       head.className = "saved-group";
-      head.textContent = cwd ? baseName(cwd) : "(no folder)";
+      head.setAttribute("role", "button");
+      head.setAttribute("aria-expanded", String(!shut));
+      head.tabIndex = 0;
+      head.dataset.key = cwd;
       head.title = cwd;
+      head.style.setProperty("--c", cwd ? groupColor(cwd) : "var(--ink-3)");
+      head.innerHTML = GROUP_CHEV + '<span class="stab-group-sw" aria-hidden="true"></span><span class="stab-group-name"></span><span class="stab-group-ct"></span>';
+      head.querySelector(".stab-group-name").textContent = cwd ? baseName(cwd) : "(no folder)";
+      head.querySelector(".stab-group-ct").textContent = String(rows.length);
+      if (q) head.setAttribute("aria-disabled", "true");
+      else {
+        head.addEventListener("click", () => toggleSavedGroup(cwd));
+        head.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleSavedGroup(cwd); }
+        });
+      }
       savedList.append(head);
-      for (const s of rows) savedList.append(savedRow(s, tabs));
+      if (!shut) for (const s of rows) savedList.append(savedRow(s, tabs));
     }
     if (!shown.length) {
       const empty = document.createElement("div");

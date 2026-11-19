@@ -11,6 +11,11 @@ export const anonymizeHelp = {
 		"Write a shareable copy of a session and its subagents: turn contents redacted, metadata kept, paths and literals replaced by consistent mock tokens",
 } satisfies CommandMetadata;
 
+export const asyapmHelp = {
+	description:
+		"Manage AsyaPM organizations (one token each), list, read, move, or comment on AsyaPM issues, and build agent hand-off messages; prints JSON",
+} satisfies CommandMetadata;
+
 export const authHelp = {
 	description:
 		"Export or import stored provider credentials (API keys and OAuth logins) as JSON, or import Claude accounts from Worker OS",

@@ -26,9 +26,12 @@
 
   const mount = () => {
     const host = document.createElement("div");
-    const head = document.getElementById("side-head");
+    // In the shell the titlebar owns the strip and the controls sit in its right slot; pages without one
+    // (loading screen) float the controls top-right instead.
+    const head = document.getElementById("titlebar");
+    const slot = document.getElementById("wc-slot");
     // Vertical centre matches the pane pills: --edge + pill top (8px) + half pill height (14px); panes have no border.
-    host.style.cssText = "position:fixed;top:calc(var(--edge,0px) + 11.5px);right:14px;z-index:2147483647;";
+    host.style.cssText = slot ? "display:block;" : "position:fixed;top:calc(var(--edge,0px) + 11.5px);right:14px;z-index:2147483647;";
 
     const root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `
@@ -66,7 +69,7 @@
         svg { width:9px; height:9px; stroke:currentColor; fill:none; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; }
       </style>
       <div class="bar">
-        <button class="grip" title="Drag to move window" aria-label="Move window"><svg viewBox="0 0 24 24"><circle cx="8" cy="7" r="1.4"/><circle cx="16" cy="7" r="1.4"/><circle cx="8" cy="12" r="1.4"/><circle cx="16" cy="12" r="1.4"/><circle cx="8" cy="17" r="1.4"/><circle cx="16" cy="17" r="1.4"/></svg></button>
+        ${slot ? "" : '<button class="grip" title="Drag to move window" aria-label="Move window"><svg viewBox="0 0 24 24"><circle cx="8" cy="7" r="1.4"/><circle cx="16" cy="7" r="1.4"/><circle cx="8" cy="12" r="1.4"/><circle cx="16" cy="12" r="1.4"/><circle cx="8" cy="17" r="1.4"/><circle cx="16" cy="17" r="1.4"/></svg></button>'}
         <button class="min bead" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
         <button class="max bead" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 24 24">${ICON_MAX}</svg></button>
         <button class="close bead" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
@@ -90,7 +93,7 @@
     maxBtn.addEventListener("click", toggleMaximize);
     root.querySelector(".close").addEventListener("click", () => call("plugin:window|close"));
     // Keep the handle available when maximized: the OS restores the window as it is dragged.
-    root.querySelector(".grip").addEventListener("mousedown", (e) => {
+    root.querySelector(".grip")?.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
       call("plugin:window|start_dragging");
@@ -137,7 +140,7 @@
     }
     document.documentElement.appendChild(gripHost);
 
-    document.documentElement.appendChild(host);
+    (slot ?? document.documentElement).appendChild(host);
     syncMaxIcon();
   };
 

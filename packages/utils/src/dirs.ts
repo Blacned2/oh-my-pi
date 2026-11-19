@@ -960,6 +960,11 @@ export function getAgentDbPath(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "agent.db", "data");
 }
 
+/** Get the AsyaPM organizations file (~/.omp/agent/asyapm.json): per-organization API base URL and token. */
+export function getAsyapmConfigPath(agentDir?: string): string {
+	return dirs.agentSubdir(agentDir, "asyapm.json", "data");
+}
+
 /** Get the last-seen-changelog-version marker file (~/.omp/agent/last-changelog-version). */
 export function getLastChangelogVersionPath(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "last-changelog-version", "state");

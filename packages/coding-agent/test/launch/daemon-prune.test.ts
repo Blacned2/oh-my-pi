@@ -2,15 +2,23 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { TempDir } from "@oh-my-pi/pi-utils";
-import { pruneDeadDaemonRuntimeDirs } from "../../src/launch/presence";
+import {
+	type DaemonProjectPresence,
+	pruneDeadDaemonRuntimeDirs,
+	registerDaemonProjectPresence,
+} from "../../src/launch/presence";
 
 const STALE = new Date(Date.now() - 30 * 60_000);
 let deadPid = 0;
 
+/**
+ * `liveClient` registers a real presence of this process; `unlockedClientPid` writes a presence
+ * file for `pid` without its lock — what a hard-killed omp leaves behind once its pid is reused.
+ */
 async function scope(
 	root: string,
 	name: string,
-	init: { pid?: number | "dead"; clients?: number[]; stale?: boolean },
+	init: { pid?: number | "dead"; liveClient?: DaemonProjectPresence[]; unlockedClientPid?: number; stale?: boolean },
 ): Promise<string> {
 	const dir = path.join(root, name);
 	await fs.mkdir(path.join(dir, "clients"), { recursive: true });
@@ -18,7 +26,9 @@ async function scope(
 		const pid = init.pid === "dead" ? deadPid : init.pid;
 		await Bun.write(path.join(dir, "broker.pid"), JSON.stringify({ pid, instanceId: name }));
 	}
-	for (const clientPid of init.clients ?? []) {
+	if (init.liveClient) init.liveClient.push(await registerDaemonProjectPresence(dir, dir));
+	if (init.unlockedClientPid !== undefined) {
+		const clientPid = init.unlockedClientPid;
 		await Bun.write(
 			path.join(dir, "clients", `${clientPid}-x.json`),
 			JSON.stringify({ pid: clientPid, id: `${clientPid}-x`, projectDir: dir }),
@@ -40,25 +50,32 @@ describe("pruneDeadDaemonRuntimeDirs", () => {
 		using tempDir = TempDir.createSync("@omp-daemon-prune-");
 		const daemons = path.join(tempDir.path(), "run", "daemons");
 		await fs.mkdir(daemons, { recursive: true });
+		const presences: DaemonProjectPresence[] = [];
+		try {
+			const current = await scope(daemons, "aaaaaaaaaaaaaaaa", { pid: "dead", stale: true });
+			await scope(daemons, "bbbbbbbbbbbbbbbb", { pid: "dead", stale: true });
+			await scope(daemons, "cccccccccccccccc", { pid: process.pid, stale: true });
+			await scope(daemons, "dddddddddddddddd", { liveClient: presences, stale: true });
+			await scope(daemons, "eeeeeeeeeeeeeeee", { pid: "dead" });
+			// A leftover presence whose pid now belongs to a live, unrelated process.
+			await scope(daemons, "ffffffffffffffff", { unlockedClientPid: process.pid, stale: true });
+			// Machine-global daemon container must never be swept as a project scope.
+			await fs.mkdir(path.join(daemons, "global", "some-service"), { recursive: true });
+			await fs.utimes(path.join(daemons, "global"), STALE, STALE);
 
-		const current = await scope(daemons, "aaaaaaaaaaaaaaaa", { pid: "dead", stale: true });
-		await scope(daemons, "bbbbbbbbbbbbbbbb", { pid: "dead", stale: true });
-		await scope(daemons, "cccccccccccccccc", { pid: process.pid, stale: true });
-		await scope(daemons, "dddddddddddddddd", { clients: [process.pid], stale: true });
-		await scope(daemons, "eeeeeeeeeeeeeeee", { pid: "dead" });
-		// Machine-global daemon container must never be swept as a project scope.
-		await fs.mkdir(path.join(daemons, "global", "some-service"), { recursive: true });
-		await fs.utimes(path.join(daemons, "global"), STALE, STALE);
+			await pruneDeadDaemonRuntimeDirs(current);
 
-		await pruneDeadDaemonRuntimeDirs(current);
-
-		const remaining = new Set(await fs.readdir(daemons));
-		expect(remaining.has("bbbbbbbbbbbbbbbb")).toBe(false); // pruned
-		expect(remaining.has("aaaaaaaaaaaaaaaa")).toBe(true); // never prunes itself
-		expect(remaining.has("cccccccccccccccc")).toBe(true); // live broker
-		expect(remaining.has("dddddddddddddddd")).toBe(true); // live client presence
-		expect(remaining.has("eeeeeeeeeeeeeeee")).toBe(true); // within stale grace
-		expect(remaining.has("global")).toBe(true); // non-scope name skipped
+			const remaining = new Set(await fs.readdir(daemons));
+			expect(remaining.has("bbbbbbbbbbbbbbbb")).toBe(false); // pruned
+			expect(remaining.has("aaaaaaaaaaaaaaaa")).toBe(true); // never prunes itself
+			expect(remaining.has("cccccccccccccccc")).toBe(true); // live broker
+			expect(remaining.has("dddddddddddddddd")).toBe(true); // live client presence
+			expect(remaining.has("eeeeeeeeeeeeeeee")).toBe(true); // within stale grace
+			expect(remaining.has("ffffffffffffffff")).toBe(false); // reused pid does not keep a dead presence alive
+			expect(remaining.has("global")).toBe(true); // non-scope name skipped
+		} finally {
+			for (const presence of presences) await presence.close();
+		}
 	});
 
 	it("does not sweep sibling machine-global service runtimes", async () => {

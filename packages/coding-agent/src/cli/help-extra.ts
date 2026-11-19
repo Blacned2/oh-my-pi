@@ -91,6 +91,7 @@ ${chalk.bold("Available Tools (default-enabled unless noted):")}
   computer      - Native host desktop capture and input (disabled by default)
   task          - Launch sub-agents for parallel tasks
   todo          - Manage todo/task lists
+  asyapm        - AsyaPM issues per organization (when configured: ${APP_NAME} asyapm org-set)
   web_search    - Search the web
   ask           - Ask user questions (interactive mode only)
 

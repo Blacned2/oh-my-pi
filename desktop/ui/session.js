@@ -37,6 +37,7 @@
   lightbox.root.addEventListener("click", (e) => {
     if (e.target !== lightbox.img) closeLightbox(); // backdrop, caption area or the × button
   });
+  window.kostompOpenImage = openLightbox;
   // Capture phase: Esc closes the preview before the composer's Esc-to-abort sees it.
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !lightbox.root.hidden) {
@@ -819,7 +820,7 @@
           if (t.head) return row("todo-phase", t.head);
           const status = Object.hasOwn(TODO_MARK, t.status) ? t.status : "pending";
           return row("todo " + status, span("mark", TODO_MARK[status] + " "), t.content);
-        }));
+        }, { cls: "todo-list" }));
         return out;
       }
       case "task": {
@@ -860,7 +861,7 @@
           if (it.q !== undefined) return row("ask-q", it.q);
           const mark = span("mark", it.first ? (it.note ? "  ✎ " : "  → ") : "    ");
           return row(it.empty ? "ask-a empty" : "ask-a", mark, it.empty ? "—" : it.a);
-        }));
+        }, { cls: "ask-answers" }));
         if (d.timedOut) out.push(dimRow("timed out · unanswered questions kept their defaults"));
         return out;
       }
@@ -1061,20 +1062,30 @@
   // Scroll anchoring moves scrollTop down whenever a row above grows, so moving down near the tail does not by
   // itself mean the user came back: only downward input (wheel, keys, a scrollbar drag) re-pins inside the band.
   let userDownAt = -Infinity;
+  let userUpAt = -Infinity;
   let dragging = false;
   const DOWN_KEYS = new Set(["ArrowDown", "PageDown", "End", " "]);
   const UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
   el.messages.addEventListener("wheel", (e) => {
     if (e.deltaY > 0) userDownAt = performance.now();
-    else if (e.deltaY < 0) userDownAt = -Infinity;
+    else if (e.deltaY < 0) {
+      userDownAt = -Infinity;
+      userUpAt = performance.now();
+    }
   }, { passive: true });
   el.messages.addEventListener("keydown", (e) => {
-    if (UP_KEYS.has(e.key) || (e.key === " " && e.shiftKey)) userDownAt = -Infinity;
-    else if (DOWN_KEYS.has(e.key)) userDownAt = performance.now();
+    if (UP_KEYS.has(e.key) || (e.key === " " && e.shiftKey)) {
+      userDownAt = -Infinity;
+      userUpAt = performance.now();
+    } else if (DOWN_KEYS.has(e.key)) userDownAt = performance.now();
   }, { passive: true });
   el.messages.addEventListener("pointerdown", () => (dragging = true), { passive: true });
   window.addEventListener("pointerup", () => (dragging = false), { passive: true });
   window.addEventListener("pointercancel", () => (dragging = false), { passive: true });
+  // A touch scroll cancels its pointer: the touch itself keeps counting as the user's hand on the transcript.
+  el.messages.addEventListener("touchstart", () => (dragging = true), { passive: true });
+  window.addEventListener("touchend", () => (dragging = false), { passive: true });
+  window.addEventListener("touchcancel", () => (dragging = false), { passive: true });
   el.messages.addEventListener("scroll", () => {
     const m = el.messages;
     const top = m.scrollTop;
@@ -1085,8 +1096,9 @@
     const userDown = dragging || performance.now() - userDownAt < 1000;
     // A small scroll up stays inside the band; staying pinned there let the next follow snap the view back.
     if (gap <= 1 || (!up && userDown && gap < 80)) setPinned(true);
-    // Off the tail by our own scroll means rows below took their real height since: still following.
-    else if (Math.abs(top - ownScrollTop) > 1) setPinned(false);
+    // Only the user leaves the tail. A layout clamp (rows taking their real height) followed by growth also
+    // moves scrollTop away from our own scroll, and unpinning on that stopped the follow with the view at the bottom.
+    else if (up && (dragging || performance.now() - userUpAt < 1000)) setPinned(false);
   }, { passive: true });
   const tailObserver = new MutationObserver(() => scrollDown());
   tailObserver.observe(el.messages, { childList: true, subtree: true, characterData: true });
@@ -2736,6 +2748,7 @@
       const index = items.indexOf(document.activeElement);
       items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
     });
+    button.addEventListener("pointerdown", () => { button.dataset.wasOpen = String(menu.matches(":popover-open")); });
     menu.addEventListener("toggle", (event) => {
       const open = event.newState === "open";
       button.setAttribute("aria-expanded", String(open));
@@ -2869,7 +2882,9 @@
     loadMenuFiles(fileFolders[fileFolders.length - 1]);
   });
   el.projectFiles.addEventListener("click", () => {
-    if (filesMenu.matches(":popover-open")) {
+    const wasOpen = el.projectFiles.dataset.wasOpen ? el.projectFiles.dataset.wasOpen === "true" : filesMenu.matches(":popover-open");
+    delete el.projectFiles.dataset.wasOpen;
+    if (wasOpen) {
       filesMenu.hidePopover();
       return;
     }
@@ -2891,7 +2906,9 @@
     toolDock.showFile();
   });
   el.extensions.addEventListener("click", async () => {
-    if (extensionMenu.matches(":popover-open")) {
+    const wasOpen = el.extensions.dataset.wasOpen ? el.extensions.dataset.wasOpen === "true" : extensionMenu.matches(":popover-open");
+    delete el.extensions.dataset.wasOpen;
+    if (wasOpen) {
       extensionMenu.hidePopover();
       return;
     }
@@ -3879,6 +3896,7 @@
     ["Ctrl+O", "Expand or collapse tool output"],
     ["Window", ""],
     ["Ctrl+B", "Show or hide the sidebar"],
+    ["Ctrl+1…9", "Switch to the assigned project (Ctrl+0: all projects)"],
     ["Ctrl+Shift+T", "New session"],
     ["Ctrl+Shift+5", "New session split to the right"],
     ["Alt+L", "Next saved layout"],
@@ -5120,15 +5138,20 @@
   });
   function autosize() {
     const t = el.input;
-    t.style.height = "auto";
     if (!t.value) {
       // Empty: the placeholder is not content. Let rows=1 size the box and drop any stale scroll offset.
       t.style.height = "";
       t.style.overflowY = "hidden";
       t.scrollTop = 0;
     } else {
+      // Measure at height 0 while the wrapper holds its current height: collapsing the composer even
+      // for the measurement resizes the transcript, which clamps its scrollTop and makes the tail jump.
+      const wrap = t.parentElement;
+      wrap.style.height = wrap.offsetHeight + "px";
+      t.style.height = "0px";
       const h = t.scrollHeight;
       t.style.height = Math.min(h, 220) + "px";
+      wrap.style.height = "";
       t.style.overflowY = h > 220 ? "auto" : "hidden";
       if (h <= 220) t.scrollTop = 0;
     }
@@ -5678,6 +5701,18 @@
       cycleEffort();
       return;
     }
+    // Typing anywhere else in the pane goes to the composer: focus moves before the key's default action,
+    // so the character lands in the input.
+    if (!e.defaultPrevented && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey && document.activeElement !== el.input && !el.input.disabled && el.input.offsetParent !== null) {
+      const t = e.target instanceof Element ? e.target : null;
+      const editable = t?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), .dialog, .dock-panel");
+      const activates = e.key === " " && t?.closest("button, a, summary, [role='button'], [role='menuitem']");
+      if (!editable && !activates) {
+        el.input.focus({ preventScroll: true });
+        const end = el.input.value.length;
+        el.input.setSelectionRange(end, end);
+      }
+    }
     if (!e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
     if (e.code === "KeyT") {
       e.preventDefault();
@@ -5730,10 +5765,42 @@
     if (!el.tree.hidden) loadTree();
   }
   let starting = false; // rpc_start in flight: a second folder switch must not overlap it
-  let started = false; // start() ran once; until then no omp process exists for this session
-  /** Start the process with the creation-time folder and resume choice, unless it was started already or the session is closed. */
+  let started = false; // start() ran since creation or the last suspend(); until then no omp process exists for this session
+  // What the next ensureStarted() opens: the creation-time folder and resume choice, then whatever suspend() left.
+  let startDir = opts.cwd ?? null;
+  let startResume = opts.resume ?? true;
+  /** Start the process with startDir/startResume, unless it was started already or the session is closed. */
   function ensureStarted() {
-    if (!started && !disposed) start(opts.cwd ?? null, opts.resume ?? true);
+    if (!started && !disposed) start(startDir, startResume);
+  }
+  /** Nothing in this process can still produce output or wait on the user; its transcript is saved to a file. */
+  function quiescent() {
+    return started && alive && !starting && !disposed && !busy && bashRunning === 0 && pending.size === 0 && !jobsBusy &&
+      el.dialog.hidden && !attached.length && !!sessionFile &&
+      ![...agents.values()].some((a) => isRunning(a.status)) &&
+      ![...scriptRuns.values()].some((n) => n > 0);
+  }
+  /**
+   * Stop an idle process to free its memory; the next ensureStarted() resumes the same session file. Refuses
+   * (resolves false) while a turn, request, dialog, subagent, script, background job or service is still live.
+   */
+  async function suspend() {
+    if (!quiescent()) return false;
+    // The jobs deck is only polled while it shows something: ask for the current list (services included).
+    await refreshJobs();
+    if (!quiescent() || jobTree.running.length) return false;
+    startDir = cwd;
+    startResume = sessionFile;
+    started = false;
+    alive = false;
+    readyGate.die();
+    hlAskers.delete(sid);
+    syncJobsPoll();
+    clearExtUi();
+    clearPanels();
+    setStatus("suspended");
+    await window.KostompRpcLifecycle.stop(sid).catch(() => {});
+    return true;
   }
   async function start(dir, resume) {
     starting = true;
@@ -5950,12 +6017,18 @@
     refreshModels: () => { if (started) send({ id: "models", type: "get_available_models" }); },
     focus: () => el.input.focus(),
     toggleTool: (kind) => toolDock.toggle(kind),
+    /** Open this chat's AsyaPM card on the issue `key`. */
+    openIssue: (key) => {
+      renderStack();
+      void toolDock.showAsyapm(key);
+    },
     /** The session is closed for good: stop routing highlight requests to its process and drop everything still scheduled. */
     dispose: () => {
-      extensionMenu.hidePopover();
+      // A chat never shown still lives in its template's inert document, where hidePopover throws.
+      if (extensionMenu.matches(":popover-open")) extensionMenu.hidePopover();
       window.removeEventListener("resize", positionExtensions);
       document.removeEventListener("scroll", positionExtensions, true);
-      filesMenu.hidePopover();
+      if (filesMenu.matches(":popover-open")) filesMenu.hidePopover();
       window.removeEventListener("resize", positionFiles);
       document.removeEventListener("scroll", positionFiles, true);
       toolDock.dispose();
@@ -6005,20 +6078,23 @@
     lastAnswer: () => lastAnswer,
     restart: () => start(cwd, false),
     /**
-     * Wait for omp to be ready, then submit `text` through the composer exactly as Enter does.
-     * Rejects when the process failed to start or exited before it was ready.
+     * Wait for omp to be ready, then submit `text` (and `images`, `{ data, mimeType }` each) through the
+     * composer exactly as Enter does. Rejects when the process failed to start or exited before it was ready.
      */
-    async submitText(text) {
+    async submitText(text, images) {
       ensureStarted();
       const gate = readyGate;
       if (!gate.isOpen && !(await Promise.race([gate.promise.then(() => true), gate.dead.then(() => false)]))) {
         throw new Error("omp exited before it was ready");
       }
       setInput(String(text ?? ""));
+      for (const i of images ?? []) attached.push({ data: i.data, mimeType: i.mimeType, src: imageSrc(i) });
       submit();
     },
     /** Start the omp process on first use; later calls, and calls after dispose, do nothing. */
     ensureStarted,
+    /** Stop the process while it is idle (resolves true if it did); the next use resumes the same session file. */
+    suspend,
     /** `new_session` in the running process (starts the process again when it has exited). */
     newSession,
     /** `switch_session` to a saved session file; resolves true when the transcript changed. */

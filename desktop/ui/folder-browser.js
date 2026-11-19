@@ -221,15 +221,6 @@
     }
     async function init() {
       const recent = loadRecent();
-      if (recent.length) {
-        side.append(mk("h6", "", "Recent projects"));
-        for (const d of recent.slice(0, 5)) {
-          const b = mk("button", "fb-it", folderName(d));
-          b.type = "button"; b.title = d; b.dataset.path = d;
-          b.addEventListener("click", () => load(d));
-          side.append(b);
-        }
-      }
       let places = [];
       try { places = await invoke("list_places"); } catch {}
       for (const [h, kind] of [["Places", "place"], ["Drives", "drive"]]) {
@@ -240,6 +231,15 @@
           const b = mk("button", "fb-it", p.name);
           b.type = "button"; b.title = p.path; b.dataset.path = p.path;
           b.addEventListener("click", () => load(p.path));
+          side.append(b);
+        }
+      }
+      if (recent.length) {
+        side.append(mk("h6", "", "Recent projects"));
+        for (const d of recent.slice(0, 5)) {
+          const b = mk("button", "fb-it", folderName(d));
+          b.type = "button"; b.title = d; b.dataset.path = d;
+          b.addEventListener("click", () => load(d));
           side.append(b);
         }
       }

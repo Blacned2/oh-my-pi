@@ -11,6 +11,8 @@
 - RPC hosts can list background jobs with `get_async_jobs` and cancel one with `cancel_async_job`; the desktop UI shows subagents and background jobs as independent toggles at the top right of the chat
 - RPC `get_async_jobs` now lists services the session started with `bash name=…` (dev servers, watchers), and `cancel_async_job` stops them, so the desktop Background panel shows them
 - RPC mode adds `delete_session` (`path`), which permanently deletes a closed saved session and its artifacts; it refuses the current session and sessions another omp process owns
+- AsyaPM integration: `omp asyapm` stores one token per organization in `asyapm.json` (each validated against `/me` before saving) and lists, reads, moves, or comments on issues as JSON; the `asyapm` tool (setting `asyapm.enabled`, present when an organization is configured) gives the agent the same operations; the desktop app adds an AsyaPM sidebar panel (issues, detail, status change, comment, "Ajana ver") that can be switched off in Settings → AsyaPM
+- Desktop AsyaPM "Ajana ver" now opens the chat in a repository folder remembered per AsyaPM project and sends the issue's details, comments, and images in the first message, with an optional instruction and a per-project note; `omp asyapm brief` prints that message and its images as JSON, and the `asyapm` tool's `issue` op attaches embedded images instead of exposing their signed URLs
 
 ### Changed
 
@@ -21,9 +23,12 @@
 - Desktop welcome screen now offers an open heading and four quick-start cards, arranged in two columns or stacked in narrow panes
 - `ask` prompts show their position (`(2/3)`) when a form has several questions; the desktop UI renders it as a "Question 2 of 3" header with progress dots and stacked option cards
 - Desktop session status now glows and pulses around the initial avatar instead of a right-side badge; close buttons sit at the far right
+- Desktop chats and design boards that stay hidden and idle for 10 minutes stop their omp process (one `bun.exe` each); opening or using them again resumes the same session
 
 ### Fixed
 
+- Fixed project daemon brokers (`bun.exe … __omp_worker_daemon_broker`) running forever after an omp process was killed and its PID was reused by another program
+- Closing or restarting a desktop chat now lets omp exit cleanly before force-killing it, so services other chats in the same project started keep running
 - Desktop workspace toolbar icons no longer show individual borders.
 - Desktop shows the selected project in the left composer picker and moves shortcut hints beside the composer instead of the top of the chat.
 - RPC `set_thinking_level` and `cycle_thinking_level` now save the pick into the `default` model role, so new desktop sessions start on the chosen effort instead of the stale `:high` suffix

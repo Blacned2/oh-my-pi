@@ -26,15 +26,48 @@
 </head>
 <body>
 <div class="blobs" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
+<header class="titlebar" id="titlebar">
+  <button type="button" id="app-btn" class="app-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="app-menu">Kostomp<i id="app-dot" class="app-dot" aria-hidden="true" hidden></i></button>
+  <button type="button" id="project-btn" class="app-btn project-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="project-menu" title="Projeler (Ctrl+0…9)">
+    <kbd id="project-btn-kbd" aria-hidden="true">0</kbd><span id="project-btn-name" class="pbar-name">Tümü</span>
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+  </button>
+  <div class="spacer"></div>
+      <div class="tb-tools" role="group" aria-label="Shell controls">
+        <button type="button" id="bell-btn" class="bead bell-btn" title="Bildirimler" aria-label="Bildirimler" aria-haspopup="menu" aria-expanded="false" aria-controls="bell-menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>
+        </button>
+        <button type="button" id="theme" class="bead" title="Theme"></button>
+        <div class="color-anchor">
+          <button type="button" id="color-btn" class="bead" title="Ekrandan renk seç (Esc iptal)" aria-label="Ekrandan renk seç">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 5.5l4 4"/><path d="M17 3.5a2.1 2.1 0 0 1 3 3l-2 2-3-3z"/><path d="M15 8.5L6.5 17 4 20l3-2.5L15.5 9"/></svg>
+          </button>
+          <span id="color-note" class="color-note" role="status" aria-live="polite" hidden></span>
+        </div>
+        <div class="layout-anchor">
+          <button type="button" id="layout-btn" class="bead" aria-label="Layouts" aria-haspopup="menu" aria-expanded="false" aria-controls="layout-menu" title="Layouts (Alt+L switches)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="M12 4v16M12 10h8.5"/></svg>
+            <span class="layout-dot" aria-hidden="true"></span>
+          </button>
+        </div>
+        <button type="button" id="gear" class="bead" title="Settings" aria-label="Settings" aria-controls="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+  <div class="wc-slot" id="wc-slot"></div>
+</header>
+<div id="app-menu" class="tb-pop glass ovf-menu" role="menu" aria-label="Kostomp" hidden>
+  <div id="app-version" class="app-version"></div>
+  <button type="button" id="update" class="ovf-item" role="menuitem" hidden></button>
+</div>
 <div id="layout-menu" class="layout-menu tb-pop glass" role="menu" aria-label="Layouts" hidden></div>
+<div id="project-menu" class="tb-pop glass ovf-menu" role="menu" aria-label="Atanmış projeler" hidden></div>
+<div id="bell-menu" class="tb-pop glass ovf-menu bell-menu" role="menu" aria-label="Bildirimler" hidden></div>
 <div id="compose-menu" class="tb-pop glass ovf-menu" role="menu" aria-label="New" hidden></div>
 
 <main>
 <div class="shell">
     <aside id="sidebar" class="sidebar glass" aria-label="Sidebar">
-      <div class="side-head" id="side-head">
-        <button type="button" id="update" class="link update" hidden></button>
-      </div>
       <nav class="tabs" id="tabs" role="tablist" aria-label="Views" data-view="chat">
         <span class="thumb" aria-hidden="true"></span>
         <button type="button" role="tab" id="tab-chat" data-view="chat" aria-controls="chat" aria-selected="true" title="Chat">
@@ -85,6 +118,34 @@
       </div>
       <div class="side-scroll">
         <section id="side-view-sessions" class="side-view" role="tabpanel" aria-labelledby="sessions-open">
+          <div id="project-sort" class="side-sort" role="group" aria-label="Sort projects">
+            <span class="side-sort-label">Sırala</span>
+            <button type="button" data-sort="name" aria-pressed="true" title="Projeler ada göre (A–Z)">Ad</button>
+            <button type="button" data-sort="recent" aria-pressed="false" title="Projeler son etkinliğe göre (en yeni üstte)">Tarih</button>
+            <button type="button" id="sort-settings-btn" class="side-sort-gear" aria-label="Sıralama ayarları" aria-expanded="false" aria-controls="sort-settings" title="Sıralama ve süre ayarları">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+            </button>
+          </div>
+          <div id="sort-settings" class="side-sort-panel" hidden>
+            <fieldset>
+              <legend>Sıralama</legend>
+              <label><input type="radio" name="sort-by" value="name"> Ad (A–Z)</label>
+              <label><input type="radio" name="sort-by" value="name-desc"> Ad (Z–A)</label>
+              <label><input type="radio" name="sort-by" value="recent"> Tarih (en yeni üstte)</label>
+              <label><input type="radio" name="sort-by" value="oldest"> Tarih (en eski üstte)</label>
+            </fieldset>
+            <label class="side-sort-days">Gösterilecek süre
+              <select id="sort-days">
+                <option value="0">Tümü</option>
+                <option value="1">Son 1 gün</option>
+                <option value="3">Son 3 gün</option>
+                <option value="7">Son 7 gün</option>
+                <option value="14">Son 14 gün</option>
+                <option value="30">Son 30 gün</option>
+                <option value="90">Son 90 gün</option>
+              </select>
+            </label>
+          </div>
           <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Open chats" aria-orientation="vertical"></div>
           <p class="side-empty">No chats match.</p>
         </section>
@@ -100,18 +161,6 @@
           </div>
           <p class="side-empty">No open designs. Click Designs again to browse all boards.</p>
         </section>
-      </div>
-      <div class="side-tools" role="group" aria-label="Shell controls">
-        <button type="button" id="theme" class="bead" title="Theme"></button>
-        <div class="layout-anchor">
-          <button type="button" id="layout-btn" class="bead" aria-label="Layouts" aria-haspopup="menu" aria-expanded="false" aria-controls="layout-menu" title="Layouts (Alt+L switches)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="M12 4v16M12 10h8.5"/></svg>
-            <span class="layout-dot" aria-hidden="true"></span>
-          </button>
-        </div>
-        <button type="button" id="gear" class="bead" title="Settings" aria-label="Settings" aria-controls="settings">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
       </div>
       <footer id="side-accounts" class="side-accounts" aria-label="Claude accounts" hidden>
         <div id="side-accounts-menu" class="acct-menu"><div>
@@ -506,5 +555,6 @@
 <script src="graph-map.js"></script>
 <script src="graph.js"></script>
 <script src="design.js"></script>
+<script src="asyapm.js"></script>
 </body>
 </html>

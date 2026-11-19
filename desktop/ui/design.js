@@ -1690,6 +1690,24 @@ addEventListener("message",e=>{const d=e.data;if(e.source!==parent||!d)return;if
     dropAgent(b);
   }
 
+  // A board's design agent idle and out of sight this long gives its omp process (one bun.exe) back;
+  // the next send starts it again and `--continue` resumes the board's conversation.
+  const AGENT_IDLE_MS = 10 * 60_000;
+  setInterval(() => {
+    const now = Date.now();
+    for (const b of boards.values()) {
+      const run = b.run;
+      if (!run.proc || isBusy(b) || (designMode && current === b)) {
+        run.idleSince = 0;
+        continue;
+      }
+      run.idleSince ||= now;
+      if (now - run.idleSince < AGENT_IDLE_MS) continue;
+      run.idleSince = 0;
+      dropAgent(b);
+    }
+  }, 60_000);
+
   async function ensureAgent(b) {
     const run = b.run;
     if (!b.data.model) await refreshDesigner(); // a change under Settings → Agents applies to the next start

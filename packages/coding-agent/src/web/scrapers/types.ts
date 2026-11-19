@@ -291,6 +291,8 @@ export async function loadPage(url: string, options: LoadPageOptions = {}): Prom
 
 /** Module-level Turndown instance — built lazily on first use. */
 let turndownPromise: Promise<TurndownService> | undefined;
+/** The current call's {@link HtmlToMarkdownOptions.image}; set only while one synchronous conversion runs. */
+let imageReplacement: ((src: string) => string) | undefined;
 
 function getTurndown(): Promise<TurndownService> {
 	turndownPromise ||= initTurndown();
@@ -300,17 +302,32 @@ function getTurndown(): Promise<TurndownService> {
 async function initTurndown(): Promise<TurndownService> {
 	// Lazy import keeps turndown/turndown-plugin-gfm off the startup graph.
 	const { createTurndown } = await import("../../utils/turndown");
-	return createTurndown();
+	const turndown = createTurndown();
+	turndown.addRule("imageReplacement", {
+		filter: node => imageReplacement !== undefined && node.nodeName === "IMG",
+		replacement: (_content, node) => imageReplacement?.(node.getAttribute("src")?.trim() ?? "") ?? "",
+	});
+	return turndown;
+}
+
+export interface HtmlToMarkdownOptions {
+	/** Markdown for each `<img>`, given its decoded `src` (possibly ""); default `![alt](src)`. */
+	image?: (src: string) => string;
 }
 
 /**
  * Convert HTML to markdown using Turndown with GFM support.
  * Strips script/style tags before conversion.
  */
-export async function htmlToBasicMarkdown(html: string): Promise<string> {
+export async function htmlToBasicMarkdown(html: string, options?: HtmlToMarkdownOptions): Promise<string> {
 	const cleaned = html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "");
 	const turndown = await getTurndown();
-	return turndown.turndown(cleaned).trim();
+	imageReplacement = options?.image;
+	try {
+		return turndown.turndown(cleaned).trim();
+	} finally {
+		imageReplacement = undefined;
+	}
 }
 
 /**

@@ -10,13 +10,20 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::windows::process::CommandExt;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::CREATE_NO_WINDOW;
+
+/// How long omp gets to exit on stdin EOF before its tree is force-killed. An idle omp exits in well
+/// under a second; the clean path matters because it removes its daemon presence and leaves the
+/// project's shared daemon broker running, while a tree kill also kills that broker (and the
+/// services other sessions started through it) when this process happened to spawn it.
+const EXIT_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub struct RpcState {
@@ -31,17 +38,28 @@ struct Session {
     child: Option<Child>,
     /// Feeds the writer thread that owns the child's stdin; dropping it closes stdin.
     stdin: Option<Sender<String>>,
-    /// Unique per start so a stale reader thread cannot report the exit of a newer process
-    /// that reuses the same session id.
-    generation: u64,
+    /// Cleared when the UI stops the process, so its reader threads forward nothing more: no frames
+    /// from its shutdown and no `rpc-exit` (that event reports only exits the UI did not ask for).
+    live: Arc<AtomicBool>,
 }
 
-static GENERATION: AtomicU64 = AtomicU64::new(0);
-
-/// Blocks until the process tree has exited; never call it with the `sessions` lock held.
-fn stop(session: &mut Session) {
-    session.stdin = None; // writer drains its queue, then EOF: omp drains and exits by itself
-    if let Some(mut child) = session.child.take() {
+/// Blocks until every process tree has exited; never call it with the `sessions` lock held.
+/// Closes all stdins first and shares one grace period, so stopping many sessions costs one wait.
+fn stop_all(sessions: Vec<Session>) {
+    let mut children = Vec::new();
+    for mut session in sessions {
+        session.live.store(false, Ordering::SeqCst);
+        session.stdin = None; // writer drains its queue, then EOF: omp drains and exits by itself
+        children.extend(session.child.take());
+    }
+    let deadline = Instant::now() + EXIT_GRACE;
+    while !children.is_empty() && Instant::now() < deadline {
+        children.retain_mut(|child| !matches!(child.try_wait(), Ok(Some(_))));
+        if !children.is_empty() {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    for mut child in children {
         let _ = Command::new("taskkill")
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
             .creation_flags(CREATE_NO_WINDOW)
@@ -104,9 +122,7 @@ pub async fn rpc_start(
         // The old process must have exited before the new one spawns: a resume needs the session
         // lease it holds.
         let old = state.sessions.lock().unwrap().remove(&id);
-        if let Some(mut old) = old {
-            stop(&mut old);
-        }
+        stop_all(old.into_iter().collect());
 
         let mut cmd = crate::runtime::omp_command()?;
         cmd.args(["--mode", "rpc-ui"]);
@@ -139,19 +155,19 @@ pub async fn rpc_start(
 
         let stdout = child.stdout.take().ok_or("no stdout")?;
         let stderr = child.stderr.take().ok_or("no stderr")?;
-        let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+        let live = Arc::new(AtomicBool::new(true));
         state.sessions.lock().unwrap().insert(
             id.clone(),
             Session {
                 stdin: child.stdin.take().map(spawn_writer),
                 child: Some(child),
-                generation,
+                live: live.clone(),
             },
         );
 
-        // Started only after the insert: the exit check below looks its generation up in the map.
         let out_app = app.clone();
         let out_id = id.clone();
+        let out_live = live.clone();
         std::thread::spawn(move || {
             let mut reader = BufReader::with_capacity(64 * 1024, stdout);
             let mut lines: Vec<String> = Vec::new();
@@ -181,19 +197,12 @@ pub async fn rpc_start(
                         break;
                     }
                 }
-                if !lines.is_empty() {
+                if !lines.is_empty() && out_live.load(Ordering::SeqCst) {
                     let _ = out_app.emit("rpc-frames", (&out_id, &lines));
-                    lines.clear();
                 }
+                lines.clear();
             }
-            let current = out_app
-                .state::<RpcState>()
-                .sessions
-                .lock()
-                .unwrap()
-                .get(&out_id)
-                .map(|s| s.generation);
-            if current == Some(generation) {
+            if out_live.load(Ordering::SeqCst) {
                 let _ = out_app.emit("rpc-exit", &out_id);
             }
         });
@@ -201,7 +210,9 @@ pub async fn rpc_start(
         let err_app = app.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                let _ = err_app.emit("rpc-stderr", (&id, line));
+                if live.load(Ordering::SeqCst) {
+                    let _ = err_app.emit("rpc-stderr", (&id, line));
+                }
             }
         });
 
@@ -544,9 +555,7 @@ pub async fn rpc_stop(app: AppHandle, id: String) -> Result<(), String> {
         let state = app.state::<RpcState>();
         let _lifecycle = state.lifecycle.lock().unwrap();
         let session = state.sessions.lock().unwrap().remove(&id);
-        if let Some(mut session) = session {
-            stop(&mut session);
-        }
+        stop_all(session.into_iter().collect());
     })
     .await
     .map_err(|e| e.to_string())
@@ -557,7 +566,5 @@ pub fn shutdown(app: &AppHandle) {
     let state = app.state::<RpcState>();
     let _lifecycle = state.lifecycle.lock().unwrap();
     let sessions: Vec<Session> = state.sessions.lock().unwrap().drain().map(|(_, s)| s).collect();
-    for mut session in sessions {
-        stop(&mut session);
-    }
+    stop_all(sessions);
 }

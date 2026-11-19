@@ -142,6 +142,7 @@
     providers: '<path d="M12 22v-5M9 8V2M15 8V2M18 8v5a6 6 0 0 1-12 0V8z"/>',
     graph: '<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.5 6h7M7.2 8.2l3.6 7.6M16.8 8.2l-3.6 7.6"/>',
     design: '<path d="M12 19l7-7 3 3-7 7z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18z"/><path d="M2 2l7.6 7.6"/><circle cx="11" cy="11" r="2"/>',
+    asyapm: '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M9 4v16M15 4v16"/>',
     other: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   };
   const PAGE_KEY = "kostomp-settings-page";
@@ -167,6 +168,7 @@
   navButton("extensions", "Extensions");
   navButton("graph", "Graph");
   navButton("design", "Design");
+  navButton("asyapm", "AsyaPM");
   nav.append(h("div", { class: "set-sep", role: "separator" }));
   for (const [id, label] of OMP_TABS) navButton(id, label);
 
@@ -219,6 +221,7 @@
     else if (id === "agents") renderAgentsPage();
     else if (id === "graph") renderGraphPage();
     else if (id === "design") renderDesignPage();
+    else if (id === "asyapm") renderAsyapmPage();
     else if (id === "extensions") renderExtensionsPage();
     else renderOmpPage(id);
   }
@@ -1778,6 +1781,88 @@
     paintDesignNote();
     body.append(waitBox("Reading the skill pool…"));
     drawDesign();
+  }
+
+  // ---- AsyaPM page: panel switch + organizations (stored by `omp asyapm`, see asyapm_cli) ----
+  const ASYAPM_PANEL_KEY = "kostomp-asyapm-panel"; // "0" = panel off; absent = on (read by app.js)
+  const asyapmCall = (args, stdin) => invoke("asyapm_cli", { args, stdin: stdin ?? null });
+
+  function renderAsyapmPage() {
+    const group = (title, ...rows) => h("section", { class: "set-group" }, h("h2", { text: title }), ...rows);
+    const errMsg = (x) => String(x && x.message ? x.message : x);
+    const orgsBody = h("div", {});
+    const result = h("div", { hidden: true });
+    let busy = false;
+
+    const on = () => localStorage.getItem(ASYAPM_PANEL_KEY) !== "0";
+    const panelSwitch = toggle("Show the AsyaPM button in the panel dock", (value) => {
+      localStorage.setItem(ASYAPM_PANEL_KEY, value ? "1" : "0");
+      panelSwitch.setAttribute("aria-checked", String(value));
+      window.dispatchEvent(new Event("kostomp-asyapm-panel-change"));
+    });
+    panelSwitch.setAttribute("aria-checked", String(on()));
+
+    const note = (text, ok) => { result.hidden = !text; result.className = ok ? "set-foot" : "row-err"; result.textContent = text || ""; };
+    const orgsChanged = () => window.dispatchEvent(new Event("kostomp-asyapm-orgs-change"));
+
+    async function drawOrgs() {
+      orgsBody.replaceChildren(waitBox("Reading organizations…"));
+      let orgs;
+      try { orgs = await asyapmCall(["orgs"]); }
+      catch (x) {
+        if (page === "asyapm") orgsBody.replaceChildren(h("div", { class: "row-err", text: errMsg(x) }),
+          h("button", { type: "button", class: "btn", text: "Try again", onclick: drawOrgs }));
+        return;
+      }
+      if (page !== "asyapm") return;
+      orgsBody.replaceChildren(...(orgs.length ? orgs.map((o) => row(o.name,
+        `${o.baseUrl} · token ${o.tokenPrefix}…`,
+        h("button", { type: "button", class: "btn", text: "Remove", disabled: busy, onclick: async () => {
+          busy = true; note("");
+          for (const b of pageEl.querySelectorAll("button")) b.disabled = true;
+          try { await asyapmCall(["org-remove", "--name", o.name]); note(`Removed ${o.name}. New agent sessions will not see it.`, true); orgsChanged(); }
+          catch (x) { note(errMsg(x)); }
+          busy = false;
+          if (page === "asyapm") drawOrgs();
+        } }))) : [h("p", { class: "set-empty", text: "No organizations yet. Add one below." })]));
+    }
+
+    const nameField = h("input", { type: "text", class: "field", placeholder: "Organization name", spellcheck: "false", autocomplete: "off" });
+    const tokenField = h("input", { type: "password", class: "field", placeholder: "API token", spellcheck: "false", autocomplete: "off" });
+    const urlField = h("input", { type: "text", class: "field", placeholder: "https://api.asyapm.com", spellcheck: "false", autocomplete: "off" });
+    const saveBtn = h("button", { type: "button", class: "btn", text: "Validate and save", onclick: async () => {
+      const name = nameField.value.trim();
+      const token = tokenField.value.trim();
+      const baseUrl = urlField.value.trim();
+      if (!name || !token) { note("Name and token are required."); return; }
+      saveBtn.disabled = true;
+      note("Validating the token…", true);
+      try {
+        const args = ["org-set", "--name", name];
+        if (baseUrl) args.push("--base-url", baseUrl);
+        const r = await asyapmCall(args, token); // the token travels on stdin, never in argv
+        const scopes = r.me && Array.isArray(r.me.scopes) ? r.me.scopes.join(", ") : "";
+        note(`Saved ${r.name} (${r.baseUrl}, token ${r.tokenPrefix}…).` + (scopes ? ` Scopes: ${scopes}.` : "") +
+          " The agent's asyapm tool picks this up in new sessions.", true);
+        tokenField.value = "";
+        orgsChanged();
+        if (page === "asyapm") drawOrgs();
+      } catch (x) { note(errMsg(x)); }
+      saveBtn.disabled = false;
+    } });
+
+    pageEl.append(
+      h("h1", { text: "AsyaPM" }),
+      h("p", { class: "set-lead", text: "Browse and update AsyaPM issues from the panel dock (top right of a chat), and let the agent's asyapm tool work with the same organizations." }),
+      group("Panel", row("Show the AsyaPM panel", "Adds an AsyaPM button beside Terminal, Changes, Browser and Files. Takes effect immediately.", panelSwitch)),
+      group("Organizations", orgsBody),
+      group("Add or replace an organization",
+        row("Name", "An existing name is replaced.", nameField),
+        row("Token", "Checked against the server before it is saved; stored by omp, not by this app.", tokenField),
+        row("Base URL", "Leave empty for the default.", urlField),
+        h("div", {}, saveBtn), result),
+      h("p", { class: "set-foot", text: "Agent sessions that are already running keep the organizations they started with; new sessions use the changes." }));
+    drawOrgs();
   }
 
   // ---- start ------------------------------------------------------------
